@@ -1,0 +1,47 @@
+import pandas as pd
+from corrsleuth.validation.input import validate_pair
+from corrsleuth.metrics import (
+    compute_pearson, compute_spearman, compute_kendall,
+    compute_distance_correlation, compute_mutual_information
+)
+
+def test_core_metrics():
+    df = pd.DataFrame({"x": [1, 2, 3, 4, 5], "y": [2, 4, 5, 4, 5]})
+    pair = validate_pair(df, "x", "y")
+    
+    p = compute_pearson(pair)
+    assert p.name == "pearson"
+    assert p.value is not None
+    
+    s = compute_spearman(pair)
+    assert s.name == "spearman"
+    assert s.value is not None
+    
+    k = compute_kendall(pair)
+    assert k.name == "kendall_tau_b"
+    assert k.value is not None
+
+def test_optional_metrics():
+    df = pd.DataFrame({"x": [1, 2, 3, 4, 5], "y": [2, 4, 5, 4, 5]})
+    pair = validate_pair(df, "x", "y")
+    
+    dc = compute_distance_correlation(pair, mode="standard")
+    assert dc.available is True
+    assert dc.value is not None
+    
+    mi = compute_mutual_information(pair, mode="standard")
+    assert mi.available is True
+    assert mi.value is not None
+
+def test_optional_metrics_downsampling_override():
+    df = pd.DataFrame({"x": range(100), "y": range(100)})
+    pair = validate_pair(df, "x", "y")
+    
+    # Cap at 50
+    dc1 = compute_distance_correlation(pair, mode="standard", max_n_for_dcor=50)
+    assert any("n_used > 50" in w for w in pair.warnings)
+    
+    # Disable cap
+    pair2 = validate_pair(df, "x", "y")
+    dc2 = compute_distance_correlation(pair2, mode="standard", max_n_for_dcor=None)
+    assert not any("n_used >" in w for w in pair2.warnings)

@@ -1,0 +1,11 @@
+pandas
+numpy
+scipy
+matplotlib
+
+[dev]
+pytest
+
+[standard]
+dcor
+scikit-learn
