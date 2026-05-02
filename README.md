@@ -161,6 +161,7 @@ installation lightweight:
 - `biweight_midcorrelation`: A median/MAD-based robust correlation.
 - `pearson_median_clipped_20pct`: Pearson after clipping deviations around each median at the 80th percentile.
 - `chatterjee_xi`: Chatterjee's coefficient of correlation, an *asymmetric* measure that captures whether `Y` is a (noisy) function of `X`. Range is approximately `[0, 1]`; values near 1 indicate a strong functional relationship. Detects U-shape and other dependencies that Pearson and Spearman miss.
+- `chatterjee_xi_reverse`: Same statistic in the opposite direction (`ξ(Y → X)`). For target scans this is the candidate→target direction, which is usually the one feature-engineering users want.
 
 These are robustness and dependence diagnostics, not definitive replacements
 for Pearson or visual inspection. The robust correlations are most useful when
@@ -174,10 +175,16 @@ sensitivity calculation so users see one consistent trim value.
 
 `chatterjee_xi` is reported as `ξ(pair.x → pair.y)`, so for a profile
 called as `profile_pair(df, "x", "y")` the value answers "is `y` a function
-of `x`?". The metric is asymmetric — `ξ(Y → X)` can differ — and converges
-slowly on small samples (returns `None` with a warning when `n_used < 20`).
-See [docs/phase4-nonlinear-metrics-design-note.md](docs/phase4-nonlinear-metrics-design-note.md) for the rationale and the
-candidates that were considered and deferred.
+of `x`?". `chatterjee_xi_reverse` reports the same statistic with the
+arguments swapped (`ξ(pair.y → pair.x)`), so target scans get both the
+target→candidate direction (`chatterjee_xi`) and the candidate→target
+direction (`chatterjee_xi_reverse`) without an extra call. The metric
+converges slowly on small samples and returns `None` with a warning when
+`n_used < 20`. The value is invariant to the row order of the underlying
+DataFrame: ties on `X` are broken lexicographically by `Y` so the result
+depends only on the multiset of `(x, y)` pairs. See
+[docs/phase4-nonlinear-metrics-design-note.md](docs/phase4-nonlinear-metrics-design-note.md)
+for the rationale and the candidates that were considered and deferred.
 
 ## API Reference
 
@@ -260,7 +267,7 @@ The object returned by `scan_target()`.
 - `.summary(top_n=5, include_caveat=True)`: Section-structured text overview. Pattern sections (`Strongest near-linear relationships`, `Potential monotonic nonlinear relationships`, `Potential nonmonotonic relationships`, `Possible outlier-driven relationships`, `Weak or no pairwise relationships`) are emitted only when populated, each capped at `top_n`. A cross-cutting `Variables Pearson may underrate` section lists variables whose `rank_linear_gap` or `nonmonotonic_gap` exceeds 0.20. `Variables with missingness or tie warnings` surfaces columns whose validation warnings mention ties, missingness, low unique ratios, small samples, or constant inputs. `Skipped or failed` lists non-numeric / errored columns. The output is deterministic; entries within each section are sorted by `disagreement_score` descending.
 - `.to_frame()`: One row per inspected column with variable, target, status, pattern, disagreement score, warnings, recommendations, and per-metric value columns. Skipped or errored rows leave metric columns NaN and populate `error_type` / `error_message`.
 - `.pearson_underrated(threshold=0.20)`: Returns a DataFrame of variables where Pearson may understate the relationship. The ranking is directional: Spearman, Kendall, or standard-mode nonmonotonic evidence must exceed Pearson by more than `threshold`, so outlier/leverage cases where Pearson is stronger than rank metrics are excluded. Rows include metric values, explicit excess-over-Pearson gap values, raw `nonmonotonic_gap`, pattern, disagreement score, and warnings, sorted by strongest evidence.
-- `.plot_top(n=12, sort_by="disagreement_score", patterns=None, ncols=3, figsize=None, show=False)`: Compact gallery of the top-`n` target relationships as a Matplotlib `Figure`. `sort_by` accepts `"disagreement_score"` (raw value descending) or a metric name (`pearson`, `spearman`, `kendall_tau_b`, `distance_correlation`, `mutual_information`, or a deep-mode robust metric, or `chatterjee_xi`; sorted by absolute value descending). `patterns=` filters to specific diagnostic labels and accepts either a single string or an iterable. Each panel is a scatter of the candidate column versus the target, titled with the column name, pattern, and key metric values. When fewer than `n` variables match, the unused grid slots are hidden; an empty filter yields a placeholder figure rather than raising.
+- `.plot_top(n=12, sort_by="disagreement_score", patterns=None, ncols=3, figsize=None, show=False)`: Compact gallery of the top-`n` target relationships as a Matplotlib `Figure`. `sort_by` accepts `"disagreement_score"` (raw value descending) or a metric name (`pearson`, `spearman`, `kendall_tau_b`, `distance_correlation`, `mutual_information`, or a deep-mode robust metric, `chatterjee_xi`, or `chatterjee_xi_reverse`; sorted by absolute value descending). `patterns=` filters to specific diagnostic labels and accepts either a single string or an iterable. Each panel is a scatter of the candidate column versus the target, titled with the column name, pattern, and key metric values. When fewer than `n` variables match, the unused grid slots are hidden; an empty filter yields a placeholder figure rather than raising.
 
 ## License
 

@@ -120,9 +120,10 @@ function of `X`.
 - Slow asymptotic convergence — for `n < ~20` the empirical value has
   high variance. We gate this with a `_MIN_N_FOR_CHATTERJEE_XI = 20` check
   + warning, matching the style used for the robust metrics.
-- Tie-breaking in `X` and `Y` matters; we use stable sort + ordinal
-  ranking for determinism. Heavy ties bias the estimate slightly, but the
-  existing `high_tie_rate` warning already flags those datasets.
+- Tie-breaking in `X` matters; we use lexicographic `(x, y)` sorting plus
+  ordinal Y-ranking so the value is invariant to the row order of the input
+  DataFrame. Heavy-tie datasets are already flagged by the existing
+  `high_tie_rate` warning.
 
 **Verdict: Implement.** Implemented in `corrsleuth/metrics/nonlinear.py`
 in the same PR as this note. Surfaces as `chatterjee_xi` in
@@ -207,18 +208,12 @@ Conventions applied:
 
 ## Open questions for the reviewer
 
-1. **Default direction.** This PR plots `ξ(X → Y)` where `X` is `pair.x`
-   and `Y` is `pair.y`. For target scans `scan_target(target=…)` calls
-   `profile_pair(target, col)`, so the reported ξ is `ξ(target → col)` —
-   i.e. "is the candidate column a function of the target?". The other
-   direction (`ξ(col → target)` — "is the target a function of this
-   candidate?") is arguably what an analyst doing feature selection
-   wants. Three options to consider as a follow-up:
-   - leave as-is and document clearly,
-   - swap inside `scan_target` so target scans report `ξ(col → target)`,
-   - emit both directions as separate columns in `mode="deep"` results.
-
-   Not changing this in this PR — flagging for design feedback.
+1. **Default direction. Resolved during review** — both directions are now
+   computed in deep mode. `chatterjee_xi` is `ξ(pair.x → pair.y)` and
+   `chatterjee_xi_reverse` is `ξ(pair.y → pair.x)`. For target scans, the
+   reverse direction is `ξ(candidate → target)` — the one feature-engineering
+   users typically want when prioritizing predictors. Both names are valid
+   `sort_by` keys for `report.plot_top()`.
 2. **Heuristic interaction.** ξ is currently diagnostic-only and does
    not feed `apply_heuristics`. Worth a follow-up ticket to consider
    whether `nonmonotonic_dependence` should be assignable in deep mode
@@ -232,4 +227,3 @@ Conventions applied:
 - Heuristic changes that consume ξ.
 - Bootstrap / stability for ξ (could plug into Ticket 2.1's framework
   later if reviewer wants).
-- Bidirectional ξ output (option (3) above).

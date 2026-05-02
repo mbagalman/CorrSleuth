@@ -85,6 +85,7 @@ _VALID_SORT_KEYS: tuple[str, ...] = (
     "biweight_midcorrelation",
     "pearson_median_clipped_20pct",
     "chatterjee_xi",
+    "chatterjee_xi_reverse",
 )
 
 

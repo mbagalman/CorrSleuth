@@ -12,7 +12,7 @@ from corrsleuth.metrics import (
     compute_distance_correlation, compute_mutual_information,
     compute_trimmed_pearson, compute_winsorized_pearson,
     compute_biweight_midcorrelation, compute_median_clipped_pearson,
-    compute_chatterjee_xi,
+    compute_chatterjee_xi, compute_chatterjee_xi_reverse,
 )
 
 def test_core_metrics():
@@ -309,4 +309,43 @@ def test_chatterjee_xi_only_appears_in_deep_mode():
     deep_metrics = set(profile_pair(df, "x", "y", mode="deep").metrics["metric"])
 
     assert "chatterjee_xi" not in lite_metrics
+    assert "chatterjee_xi_reverse" not in lite_metrics
     assert "chatterjee_xi" in deep_metrics
+    assert "chatterjee_xi_reverse" in deep_metrics
+
+
+def test_chatterjee_xi_is_invariant_to_row_order_with_x_ties():
+    """Shuffling the input rows must not change ξ — the metric should be a
+    function of the (x, y) multiset, not the row order."""
+    rng = np.random.default_rng(0)
+    n = 200
+    # Heavy ties on x via discretization; y stays continuous.
+    x = rng.integers(0, 5, size=n).astype(float)
+    y = rng.normal(size=n)
+    df = pd.DataFrame({"x": x, "y": y})
+
+    forward_xi = compute_chatterjee_xi(validate_pair(df, "x", "y"))
+    reverse_xi = compute_chatterjee_xi_reverse(validate_pair(df, "x", "y"))
+
+    df_shuffled = df.sample(frac=1, random_state=7).reset_index(drop=True)
+    fwd_shuf = compute_chatterjee_xi(validate_pair(df_shuffled, "x", "y"))
+    rev_shuf = compute_chatterjee_xi_reverse(validate_pair(df_shuffled, "x", "y"))
+
+    assert forward_xi.value == fwd_shuf.value
+    assert reverse_xi.value == rev_shuf.value
+
+
+def test_chatterjee_xi_exposes_both_directions_in_a_single_deep_call():
+    """For Y = X^2 the forward direction should be high (Y is a function of X)
+    and the reverse direction should be lower (X is not a function of Y)."""
+    rng = np.random.default_rng(0)
+    n = 500
+    x = rng.uniform(-3, 3, size=n)
+    y = x**2 + rng.normal(0, 0.05, size=n)
+
+    deep = profile_pair(pd.DataFrame({"x": x, "y": y}), "x", "y", mode="deep")
+    metrics = {row["metric"]: row["value"] for _, row in deep.metrics.iterrows()}
+
+    assert metrics["chatterjee_xi"] > 0.80
+    assert metrics["chatterjee_xi_reverse"] < 0.50
+    assert metrics["chatterjee_xi"] - metrics["chatterjee_xi_reverse"] > 0.40
