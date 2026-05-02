@@ -653,9 +653,11 @@ Acceptance criteria:
 
 Priority: Phase 3 / High
 
-Status: In review
+Status: Complete
 
-Implementation notes from this PR:
+Completed in: `c41618a Add Pearson underrated target ranking`
+
+Completion notes:
 
 - Added `CorrSleuthTargetReport.pearson_underrated(threshold=0.20)`.
 - The ranking is directional: it includes variables only when Spearman, Kendall, or standard-mode nonmonotonic evidence exceeds Pearson by more than the threshold. This keeps outlier/leverage cases where Pearson is stronger than rank metrics out of the ranking.
@@ -703,9 +705,11 @@ Phase 4 adds more statistics only when they improve diagnosis. Avoid turning Cor
 
 Priority: Phase 4 / Medium
 
-Status: In review
+Status: Complete
 
-Implementation notes from this PR:
+Completed in: `b232d5a Add deep robust correlation metrics`
+
+Completion notes:
 
 - Added `mode="deep"` to `profile_pair()`.
 - Deep mode computes the lite metrics plus four no-new-dependency robust correlation diagnostics: `pearson_trimmed_1pct`, `pearson_winsorized_1pct`, `biweight_midcorrelation`, and `pearson_median_clipped_20pct`.
