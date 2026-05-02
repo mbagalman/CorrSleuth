@@ -1,3 +1,7 @@
+import matplotlib
+matplotlib.use("Agg")  # noqa: E402  (must be set before pyplot import)
+import matplotlib.pyplot as plt  # noqa: E402
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -331,6 +335,137 @@ def test_scan_summary_pearson_underrate_excludes_leverage_pattern():
         next_break = summary.find("\n\n", underrate_idx)
         section = summary[underrate_idx : next_break if next_break != -1 else len(summary)]
         assert "leverage" not in section
+
+
+def _ranked_pearson_df(n: int = 100, random_state: int = 0) -> pd.DataFrame:
+    """DataFrame with three columns of intentionally different abs(pearson)."""
+    rng = np.random.default_rng(random_state)
+    target = rng.uniform(-3, 3, size=n)
+    return pd.DataFrame({
+        "target": target,
+        "strong_lin": target + rng.normal(0, 0.05, size=n),  # near-perfect linear
+        "medium_lin": target + rng.normal(0, 0.50, size=n),  # moderate
+        "weak_lin": target + rng.normal(0, 2.0, size=n),     # weak
+    })
+
+
+def test_plot_top_returns_figure_with_scatter_panels():
+    df = _ranked_pearson_df()
+    report = scan_target(df, "target")
+    fig = report.plot_top(n=3, ncols=3)
+    try:
+        assert isinstance(fig, plt.Figure)
+        # Three panels expected (nrows=1, ncols=3)
+        assert len(fig.axes) == 3
+        non_empty_titles = [ax.get_title() for ax in fig.axes if ax.get_title()]
+        assert len(non_empty_titles) == 3
+        # Suptitle should reference the target name and the sort key
+        assert "target" in fig._suptitle.get_text()
+    finally:
+        plt.close(fig)
+
+
+def test_plot_top_filters_by_patterns():
+    df = _ranked_pearson_df()
+    report = scan_target(df, "target")
+    # All three columns are designed to land near_linear, so the filter
+    # should yield panels equal to the count of near_linear successes
+    near_linear_columns = [
+        e.column for e in report.successes if e.result.pattern == "near_linear"
+    ]
+    fig = report.plot_top(patterns=["near_linear"], ncols=3)
+    try:
+        non_empty_titles = [ax.get_title() for ax in fig.axes if ax.get_title()]
+        assert len(non_empty_titles) == len(near_linear_columns)
+        # And no panel for an excluded pattern
+        weak_fig = report.plot_top(patterns=["weak_or_no_relationship"], ncols=3)
+        try:
+            visible_text = [
+                t.get_text()
+                for ax in weak_fig.axes
+                for t in ax.texts
+            ]
+            assert any("No variables to plot" in t for t in visible_text)
+        finally:
+            plt.close(weak_fig)
+    finally:
+        plt.close(fig)
+
+
+def test_plot_top_normalizes_string_patterns():
+    df = _ranked_pearson_df()
+    report = scan_target(df, "target")
+    fig_str = report.plot_top(patterns="near_linear", ncols=3)
+    fig_list = report.plot_top(patterns=["near_linear"], ncols=3)
+    try:
+        titles_str = [ax.get_title() for ax in fig_str.axes if ax.get_title()]
+        titles_list = [ax.get_title() for ax in fig_list.axes if ax.get_title()]
+        assert titles_str == titles_list
+    finally:
+        plt.close(fig_str)
+        plt.close(fig_list)
+
+
+def test_plot_top_handles_fewer_than_n_variables():
+    df = _build_clean_df()  # has 2 numeric non-target columns
+    report = scan_target(df, "target")
+    fig = report.plot_top(n=10, ncols=3)
+    try:
+        # 1 row × 3 cols of axes; 2 populated, 1 hidden
+        assert len(fig.axes) == 3
+        non_empty_titles = [ax.get_title() for ax in fig.axes if ax.get_title()]
+        assert len(non_empty_titles) == 2
+    finally:
+        plt.close(fig)
+
+
+def test_plot_top_returns_placeholder_figure_when_no_matches():
+    df = _build_clean_df()
+    report = scan_target(df, "target")
+    fig = report.plot_top(patterns=["nonmonotonic_dependence"])
+    try:
+        assert isinstance(fig, plt.Figure)
+        all_text = [
+            t.get_text() for ax in fig.axes for t in ax.texts
+        ]
+        assert any("No variables to plot" in t for t in all_text)
+    finally:
+        plt.close(fig)
+
+
+def test_plot_top_sort_by_metric_ranks_panels_by_absolute_value():
+    df = _ranked_pearson_df()
+    report = scan_target(df, "target")
+    fig = report.plot_top(n=3, sort_by="pearson", ncols=3)
+    try:
+        # First panel should have the highest |pearson| -> "strong_lin"
+        first_title = fig.axes[0].get_title()
+        assert first_title.startswith("strong_lin")
+        # Last visible panel should be "weak_lin"
+        non_empty = [ax for ax in fig.axes if ax.get_title()]
+        assert non_empty[-1].get_title().startswith("weak_lin")
+    finally:
+        plt.close(fig)
+
+
+def test_plot_top_rejects_invalid_n_or_ncols():
+    df = _build_clean_df()
+    report = scan_target(df, "target")
+    with pytest.raises(InputError, match="positive integer"):
+        report.plot_top(n=0)
+    with pytest.raises(InputError, match="positive integer"):
+        report.plot_top(n=-1)
+    with pytest.raises(InputError, match="positive integer"):
+        report.plot_top(ncols=0)
+    with pytest.raises(InputError, match="positive integer"):
+        report.plot_top(n=True)
+
+
+def test_plot_top_rejects_invalid_sort_by():
+    df = _build_clean_df()
+    report = scan_target(df, "target")
+    with pytest.raises(InputError, match="Unknown sort_by"):
+        report.plot_top(sort_by="bogus_metric")
 
 
 def test_scan_summary_rejects_invalid_top_n():
