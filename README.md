@@ -104,18 +104,19 @@ By examining where these metrics **agree or disagree**, CorrSleuth assigns a heu
 
 ## Scope
 
-CorrSleuth v0.1 focuses on one workflow: numeric-vs-numeric pairwise profiling.
+CorrSleuth focuses on numeric pairwise profiling and target-oriented scans.
 
 In scope:
 - Profiling one numeric pair with `profile_pair()`.
+- Scanning every numeric column against a single target with `scan_target()`.
 - Lite metrics: Pearson, Spearman, and Kendall tau-b.
 - Standard metrics: Distance Correlation and Mutual Information.
 - Heuristic diagnostic labels, warnings, recommendations, and diagnostic plots.
 - Deterministic simulated relationships through `make_relationship()`.
 
-Out of scope for v0.1:
+Out of scope for now:
 - Categorical or mixed-type variables.
-- Full correlation matrices or target scans.
+- Full correlation matrices.
 - HTML reports.
 - Scikit-learn transformers or automated model fitting.
 - Causal inference.
@@ -186,6 +187,44 @@ The object returned by `profile_pair()`.
 - `.bootstrap_label_counts`: Optional diagnostic label counts from bootstrap samples.
 - `.stability_label`: Optional `"low"`, `"medium"`, or `"high"` stability label.
 - `.to_dict()` / `.to_frame()`: Serializes the output for downstream pipelines.
+
+### `scan_target()`
+Profile every eligible numeric predictor against a single numeric target column.
+
+```python
+def scan_target(
+    data: pd.DataFrame,
+    target: str,
+    *,
+    columns: Sequence[str] | None = None, # Restrict scan to these columns
+    mode: str = "lite",                   # Forwarded to profile_pair
+    missing: str = "pairwise",            # Forwarded to profile_pair
+    errors: str = "warn",                 # "warn" captures per-column failures, "raise" propagates
+    max_pairs: int | None = None,         # Cap on columns profiled
+    sample_size: int | None = None,       # Optional one-time row downsample
+    progress: bool = False,               # Use tqdm if installed; documented no-op otherwise
+    random_state: int = 42,
+    **profile_pair_kwargs,                # e.g. bootstrap=, include_caveat=
+) -> CorrSleuthTargetReport
+```
+
+Quick example:
+
+```python
+report = cs.scan_target(df, target="sales")
+print(report.summary())
+report.to_frame()  # one row per profiled or skipped column
+```
+
+Non-numeric or missing columns listed in `columns=` are recorded as `skipped` entries with `error_type` and `error_message` rather than aborting the scan. With `errors="warn"` (default), exceptions raised by `profile_pair()` are captured as `error` entries. Use `errors="raise"` to fail fast.
+
+### `CorrSleuthTargetReport`
+The object returned by `scan_target()`.
+- `.target`: Name of the target column.
+- `.entries`: List of `TargetScanEntry` objects, one per inspected column.
+- `.successes` / `.failures`: Convenience splits.
+- `.summary()`: Compact text overview with pattern counts.
+- `.to_frame()`: One row per inspected column with variable, target, status, pattern, disagreement score, warnings, recommendations, and per-metric value columns. Skipped or errored rows leave metric columns NaN and populate `error_type` / `error_message`.
 
 ## License
 

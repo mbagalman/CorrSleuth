@@ -453,6 +453,18 @@ Phase 3 is where CorrSleuth becomes a regular tool rather than a pairwise helper
 
 Priority: Phase 3 / Highest
 
+Status: In review
+
+Implementation notes from current branch:
+
+- New `corrsleuth.scan` module exposes `scan_target`, `CorrSleuthTargetReport`, and `TargetScanEntry`; all three are re-exported from the top-level `corrsleuth` package.
+- `scan_target()` profiles every numeric column other than the target. Non-numeric or missing columns listed in `columns=` are recorded as `status="skipped"` entries with `error_type`/`error_message` populated; non-numeric columns are silently filtered when `columns=None`.
+- `errors="warn"` (default) captures per-column `profile_pair` exceptions as `status="error"` entries so the scan continues. `errors="raise"` propagates the first failure.
+- Optional knobs `columns=`, `max_pairs=`, `sample_size=`, and `random_state=` are wired up. `progress=True` uses `tqdm` when available and is a documented no-op otherwise.
+- `**profile_pair_kwargs` are forwarded so callers can request bootstrap diagnostics or pass `include_caveat=False` for whole-scan workflows.
+- `report.to_frame()` returns one row per inspected column with variable, target, status, pattern, disagreement score, warnings, recommendations, and one column per metric (`metric_pearson`, `metric_spearman`, `metric_kendall_tau_b`, etc.). Skipped/errored rows leave metric columns NaN.
+- `report.summary()` ships a compact pattern-count overview; the richer section structure described in Ticket 3.2 is intentionally deferred.
+
 Goal:
 
 Add a target-oriented scanning workflow that profiles every eligible numeric predictor against one target column.
