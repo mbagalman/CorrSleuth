@@ -119,6 +119,47 @@ def test_summary_can_hide_caveat():
     summary_text = res.summary(include_caveat=False)
 
     assert "Caveat:" not in summary_text
+
+
+def test_pair_result_to_markdown_includes_core_sections():
+    df = make_relationship("linear_positive", n=100, random_state=42)
+    res = profile_pair(df, "x", "y")
+
+    markdown = res.to_markdown()
+
+    assert markdown.startswith("# CorrSleuth Pair Report: `x` vs `y`")
+    assert "**Primary pattern:** `near_linear`" in markdown
+    assert "## Metrics" in markdown
+    assert "| Metric | Value |" in markdown
+    assert "| pearson |" in markdown
+    assert "## Diagnostics" in markdown
+    assert "| disagreement_score |" in markdown
+    assert "## Warnings" in markdown
+    assert "## Recommendations" in markdown
+    assert "## Caveat" in markdown
+    assert "causally without proper design" in markdown
+
+
+def test_pair_result_to_markdown_can_hide_caveat():
+    df = make_relationship("linear_positive", n=100, random_state=42)
+    res = profile_pair(df, "x", "y")
+
+    markdown = res.to_markdown(include_caveat=False)
+
+    assert "## Caveat" not in markdown
+    assert "causally without proper design" not in markdown
+
+
+def test_pair_result_to_markdown_includes_bootstrap_sections():
+    df = make_relationship("linear_positive", n=80, random_state=42)
+    res = profile_pair(df, "x", "y", bootstrap=10, random_state=123)
+
+    markdown = res.to_markdown(include_caveat=False)
+
+    assert "## Bootstrap Intervals" in markdown
+    assert "| Metric | CI low | CI high | Successful samples | Metric set |" in markdown
+    assert "## Pattern Stability" in markdown
+    assert "| Stability | Label | Metric set | Samples | Label counts |" in markdown
     
 def test_plot_returns_figure():
     df = make_relationship("linear_positive", n=100)

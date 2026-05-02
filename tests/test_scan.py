@@ -177,6 +177,53 @@ def test_scan_target_summary_can_suppress_caveat():
     assert "Caveat:" not in report.summary(include_caveat=False)
 
 
+def test_target_report_to_markdown_includes_grouped_sections():
+    rng = np.random.default_rng(0)
+    n = 200
+    target = np.exp(rng.uniform(0.1, 10, size=n))
+    df = pd.DataFrame({
+        "target": target,
+        "log_shape": np.log(target) + rng.normal(0, 0.1, size=n),
+        "linear_match": target + rng.normal(0, 0.1, size=n),
+        "noise": rng.normal(0, 1, size=n),
+        "label": ["a", "b"] * (n // 2),
+    })
+
+    report = scan_target(df, "target", columns=["log_shape", "linear_match", "noise", "label"])
+    markdown = report.to_markdown(top_n=2)
+
+    assert markdown.startswith("# CorrSleuth Target Report: `target`")
+    assert "## Overview" in markdown
+    assert "| Profiled | Errored | Skipped |" in markdown
+    assert "## Strongest near-linear relationships" in markdown
+    assert "## Potential monotonic nonlinear relationships" in markdown
+    assert "## Weak or no pairwise relationships" in markdown
+    assert "## Variables Pearson may underrate" in markdown
+    assert "## Skipped or failed" in markdown
+    assert "| Variable | Pattern | Pearson | Spearman | Disagreement | Warnings |" in markdown
+    assert "log_shape" in markdown
+    assert "label" in markdown
+    assert "## Caveat" in markdown
+    assert "Pairwise association does not imply causation" in markdown
+
+
+def test_target_report_to_markdown_can_suppress_caveat():
+    df = _build_clean_df()
+    report = scan_target(df, "target")
+
+    markdown = report.to_markdown(include_caveat=False)
+
+    assert "## Caveat" not in markdown
+
+
+def test_target_report_to_markdown_rejects_invalid_top_n():
+    df = _build_clean_df()
+    report = scan_target(df, "target")
+
+    with pytest.raises(InputError, match="positive integer"):
+        report.to_markdown(top_n=0)
+
+
 def test_scan_summary_includes_pattern_sections_when_present():
     # Use a target derived from x to make monotonic_log appear as monotonic_nonlinear
     rng = np.random.default_rng(0)
