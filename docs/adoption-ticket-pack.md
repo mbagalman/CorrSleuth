@@ -598,14 +598,16 @@ Acceptance criteria:
 
 Priority: Phase 3 / Medium
 
-Status: In review
+Status: Complete
 
-Implementation notes from current branch:
+Completed in: `2ec24df Add plot_top() gallery for target scan reports (#6)`
+
+Completion notes:
 
 - `CorrSleuthTargetReport.plot_top(n=12, sort_by="disagreement_score", patterns=None, ncols=3, figsize=None, show=False)` returns a Matplotlib `Figure` with up to `n` scatter panels.
 - `sort_by` accepts `"disagreement_score"` (raw value descending) or a known metric name (`pearson`, `spearman`, `kendall_tau_b`, `distance_correlation`, `mutual_information`); metric keys are sorted by absolute value descending. Unknown values raise `InputError`.
 - `patterns=` filters by diagnostic label and normalizes a single string to a one-element list.
-- Each panel uses alpha-blended scatter for n ≤ 5000 and hexbin above; titled with `column_name\npattern | p=… s=…`. Suptitle includes the target name and the active sort key.
+- Each panel uses alpha-blended scatter for n ≤ 5000 and hexbin above; the candidate column is plotted on the x-axis and the target on the y-axis (EDA predictor-vs-target convention). Title is `column_name\npattern | p=… s=…`; suptitle includes the target name and the active sort key.
 - When fewer than `n` candidates match, unused grid slots are hidden via `set_axis_off()`. When zero candidates match, the function returns a single-axis figure with a `"No variables to plot."` placeholder rather than raising.
 - `n` and `ncols` are validated as positive integers; booleans, zero, negatives, and floats all raise `InputError`.
 
