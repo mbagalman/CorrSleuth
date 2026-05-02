@@ -159,8 +159,17 @@ def profile_pair(
     include_caveat: bool = True,        # Includes causal caveats in explanations
     max_n_for_dcor: int | None = 20000, # Downsampling cap for Distance Correlation
     random_state: int = 42,             # Seed for downsampling and MI estimator
+    bootstrap: int | None = None,       # Optional bootstrap interval count
+    bootstrap_metrics: str = "lite",    # "lite", "standard", or metric names
+    max_n_for_bootstrap: int | None = 5000,
 ) -> CorrSleuthResult
 ```
+
+Set `bootstrap=500` to compute approximate 95% bootstrap intervals for
+Pearson, Spearman, and Kendall tau-b. Bootstrap intervals are disabled by
+default. Even in `mode="standard"`, bootstrap uses lite metrics unless you
+explicitly pass `bootstrap_metrics="standard"`, because distance correlation
+and mutual information can be expensive to resample.
 
 ### `CorrSleuthResult`
 The object returned by `profile_pair()`.
@@ -168,6 +177,7 @@ The object returned by `profile_pair()`.
 - `.summary()`: Returns a string summary of the metrics, label, warnings, recommendations, and caveat.
 - `.explain()`: Returns a plain-English narrative interpreting the results.
 - `.plot(show=False)`: Generates a 1x3 Matplotlib diagnostic figure.
+- `.bootstrap_intervals`: Optional bootstrap interval table when requested.
 - `.to_dict()` / `.to_frame()`: Serializes the output for downstream pipelines.
 
 ## License

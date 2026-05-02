@@ -160,6 +160,8 @@ def test_serialization():
     assert "pattern" in frame.columns
     assert "value" in frame.columns
     assert len(frame) >= 3 # at least core metrics
+    assert res.bootstrap_intervals is None
+    assert d["bootstrap_intervals"] is None
 
 
 def test_result_exposes_structured_diagnostics():
@@ -191,6 +193,70 @@ def test_serialization_includes_nested_and_flattened_diagnostics():
     assert "diagnostic_pearson_trimmed" in frame.columns
     assert "diagnostic_pearson_trim_delta" in frame.columns
     assert frame["diagnostic_rank_linear_gap"].iloc[0] == pytest.approx(0.0)
+
+
+def test_bootstrap_intervals_are_deterministic_and_serialized():
+    df = make_relationship("linear_positive", n=80, random_state=42)
+
+    res1 = profile_pair(df, "x", "y", bootstrap=25, random_state=123)
+    res2 = profile_pair(df, "x", "y", bootstrap=25, random_state=123)
+
+    assert res1.bootstrap_intervals is not None
+    assert list(res1.bootstrap_intervals["metric"]) == [
+        "pearson",
+        "spearman",
+        "kendall_tau_b",
+    ]
+    pd.testing.assert_frame_equal(res1.bootstrap_intervals, res2.bootstrap_intervals)
+    assert (res1.bootstrap_intervals["ci_low"] <= res1.bootstrap_intervals["ci_high"]).all()
+
+    summary = res1.summary(include_caveat=False)
+    assert "Bootstrap intervals:" in summary
+    assert "pearson" in summary
+
+    as_dict = res1.to_dict()
+    assert as_dict["bootstrap_intervals"] is not None
+
+    frame = res1.to_frame()
+    assert "bootstrap_ci_low" in frame.columns
+    assert "bootstrap_ci_high" in frame.columns
+    assert "bootstrap_pearson_ci_low" in frame.columns
+    assert "bootstrap_spearman_ci_high" in frame.columns
+
+
+def test_standard_mode_bootstrap_defaults_to_lite_metrics():
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
+    df = make_relationship("u_shape", n=80, random_state=42)
+
+    res = profile_pair(df, "x", "y", mode="standard", bootstrap=10, random_state=123)
+
+    assert res.bootstrap_intervals is not None
+    assert set(res.bootstrap_intervals["metric"]) == {
+        "pearson",
+        "spearman",
+        "kendall_tau_b",
+    }
+
+
+def test_standard_bootstrap_metrics_require_explicit_opt_in():
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
+    df = make_relationship("u_shape", n=80, random_state=42)
+
+    res = profile_pair(
+        df,
+        "x",
+        "y",
+        mode="standard",
+        bootstrap=5,
+        bootstrap_metrics="standard",
+        random_state=123,
+    )
+
+    assert res.bootstrap_intervals is not None
+    assert "distance_correlation" in set(res.bootstrap_intervals["metric"])
+    assert "mutual_information" in set(res.bootstrap_intervals["metric"])
 
 def test_constant_input_safe_rendering():
     df = pd.DataFrame({"x": [1, 1, 1, 1], "y": [1, 2, 3, 4]})

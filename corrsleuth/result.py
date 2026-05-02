@@ -53,6 +53,7 @@ class CorrSleuthResult:
         recommendations: List[str],
         disagreement_score: float,
         diagnostics: Optional[MetricDiagnostics] = None,
+        bootstrap_intervals: Optional[pd.DataFrame] = None,
         _clean_x: Optional[pd.Series] = None,
         _clean_y: Optional[pd.Series] = None,
         _include_caveat: bool = True
@@ -73,6 +74,7 @@ class CorrSleuthResult:
             pearson_trimmed=None,
             pearson_trim_delta=None,
         )
+        self.bootstrap_intervals = bootstrap_intervals
         self._clean_x = _clean_x
         self._clean_y = _clean_y
         self._include_caveat = _include_caveat
@@ -107,6 +109,17 @@ class CorrSleuthResult:
             f"  pearson_kendall_gap      : {self._format_value(self.diagnostics.pearson_kendall_gap)}",
             f"  pearson_trim_delta       : {self._format_value(self.diagnostics.pearson_trim_delta)}",
         ])
+
+        if self.bootstrap_intervals is not None and not self.bootstrap_intervals.empty:
+            lines.extend(["", "Bootstrap intervals:"])
+            for _, row in self.bootstrap_intervals.iterrows():
+                low = self._format_value(row["ci_low"])
+                high = self._format_value(row["ci_high"])
+                lines.append(
+                    f"  {row['metric'].ljust(25)}: [{low}, {high}] "
+                    f"(n={int(row['n_success'])}/{int(row['n_bootstrap'])}, "
+                    f"{row['metric_set']})"
+                )
 
         if self.warnings:
             lines.append("\nWarnings:")
@@ -155,6 +168,11 @@ class CorrSleuthResult:
             "metrics": self.metrics.to_dict(orient="records"),
             "disagreement_score": self.disagreement_score,
             "diagnostics": self.diagnostics.to_dict(),
+            "bootstrap_intervals": (
+                None
+                if self.bootstrap_intervals is None
+                else self.bootstrap_intervals.to_dict(orient="records")
+            ),
             "warnings": self.warnings,
             "recommendations": self.recommendations
         }
@@ -169,4 +187,14 @@ class CorrSleuthResult:
         df['pattern'] = self.pattern
         for key, value in self.diagnostics.to_dict().items():
             df[f"diagnostic_{key}"] = value
+        if self.bootstrap_intervals is not None and not self.bootstrap_intervals.empty:
+            intervals = self.bootstrap_intervals.set_index("metric")
+            df["bootstrap_ci_low"] = df["metric"].map(intervals["ci_low"])
+            df["bootstrap_ci_high"] = df["metric"].map(intervals["ci_high"])
+            df["bootstrap_n_success"] = df["metric"].map(intervals["n_success"])
+            df["bootstrap_n"] = df["metric"].map(intervals["n_bootstrap"])
+            for metric, row in intervals.iterrows():
+                safe_metric = str(metric).replace(" ", "_")
+                df[f"bootstrap_{safe_metric}_ci_low"] = row["ci_low"]
+                df[f"bootstrap_{safe_metric}_ci_high"] = row["ci_high"]
         return df

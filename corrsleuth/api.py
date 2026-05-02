@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Sequence
 
 import pandas as pd
 import scipy.stats as stats
@@ -11,6 +11,7 @@ from corrsleuth.metrics import (
     compute_kendall,
     compute_distance_correlation,
     compute_mutual_information,
+    compute_bootstrap_intervals,
 )
 from corrsleuth.heuristics import apply_heuristics, detect_metric_warnings
 from corrsleuth.exceptions import InputError
@@ -99,6 +100,9 @@ def profile_pair(
     include_caveat: bool = True,
     max_n_for_dcor: Optional[int] = 20000,
     random_state: int = 42,
+    bootstrap: Optional[int] = None,
+    bootstrap_metrics: str | Sequence[str] = "lite",
+    max_n_for_bootstrap: Optional[int] = 5000,
 ) -> CorrSleuthResult:
     """Profile the pairwise relationship between two numeric variables.
 
@@ -124,6 +128,16 @@ def profile_pair(
         Seed used for distance-correlation downsampling and the
         mutual-information estimator. Held fixed by default so repeated runs on
         the same input return the same numbers.
+    bootstrap : int or None, default None
+        Number of bootstrap resamples to use for approximate metric intervals.
+        Disabled by default.
+    bootstrap_metrics : {"lite", "standard"} or sequence of str, default "lite"
+        Metric set to bootstrap. ``"lite"`` bootstraps Pearson, Spearman, and
+        Kendall tau-b even when the main profile uses ``mode="standard"``.
+        ``"standard"`` explicitly opts in to bootstrapping distance correlation
+        and mutual information.
+    max_n_for_bootstrap : int or None, default 5000
+        Cap on rows sampled per bootstrap replicate. ``None`` disables the cap.
     """
     if mode not in ("lite", "standard"):
         if mode == "deep":
@@ -185,6 +199,13 @@ def profile_pair(
 
     disagreement_score = abs(abs_p - abs_s) + max(0.0, dc - max(abs_p, abs_s))
     diagnostics = _build_diagnostics(metrics_map, disagreement_score, outlier_sensitivity)
+    bootstrap_intervals = compute_bootstrap_intervals(
+        pair,
+        bootstrap=bootstrap,
+        bootstrap_metrics=bootstrap_metrics,
+        random_state=random_state,
+        max_n_for_bootstrap=max_n_for_bootstrap,
+    )
 
     return CorrSleuthResult(
         x_name=x,
@@ -195,6 +216,7 @@ def profile_pair(
         recommendations=heuristic_result.recommendations,
         disagreement_score=disagreement_score,
         diagnostics=diagnostics,
+        bootstrap_intervals=bootstrap_intervals,
         _clean_x=pair.x,
         _clean_y=pair.y,
         _include_caveat=include_caveat,

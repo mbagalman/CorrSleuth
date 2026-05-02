@@ -286,6 +286,16 @@ Phase 2 makes CorrSleuth more trustworthy. These features help users understand 
 
 Priority: Phase 2 / High
 
+Status: In review
+
+Implementation notes from current branch:
+
+- `profile_pair()` now accepts `bootstrap`, `bootstrap_metrics`, and `max_n_for_bootstrap`.
+- Bootstrap intervals are opt-in and deterministic via `random_state`.
+- The default bootstrap metric set is lite metrics only, including when `mode="standard"` is used.
+- Standard metric bootstrapping requires explicit `bootstrap_metrics="standard"`.
+- Results expose `result.bootstrap_intervals`; `summary()`, `to_dict()`, and `to_frame()` include bootstrap interval output.
+
 Goal:
 
 Allow users to estimate uncertainty around core metrics using bootstrap resampling.
