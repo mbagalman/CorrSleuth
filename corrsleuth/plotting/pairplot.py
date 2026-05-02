@@ -40,10 +40,13 @@ def plot_pair(result, show: bool = False):
         n_lowess = min(n, 1000)
         import numpy as np
         idx = np.random.choice(n, n_lowess, replace=False) if n > n_lowess else np.arange(n)
-        z = lowess(y.values[idx], x.values[idx], frac=0.3)
-        # sort for plotting line
-        order = np.argsort(z[:, 0])
-        ax_scatter.plot(z[order, 0], z[order, 1], color="darkorange", linewidth=2)
+        try:
+            z = lowess(y[idx], x[idx], frac=0.3)
+            # sort for plotting line
+            order = np.argsort(z[:, 0])
+            ax_scatter.plot(z[order, 0], z[order, 1], color="darkorange", linewidth=2)
+        except Exception:
+            pass
     except ImportError:
         pass
         

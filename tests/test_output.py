@@ -66,3 +66,17 @@ def test_plotting_uses_clean_data():
     fig = res.plot()
     # It shouldn't crash or plot zeroes if it stored clean data properly
     assert isinstance(fig, plt.Figure)
+
+def test_plot_lowess_optional(monkeypatch):
+    import sys
+    from pathlib import Path
+    
+    # Add tests directory to sys.path so our fake statsmodels is importable
+    tests_dir = str(Path(__file__).parent)
+    monkeypatch.syspath_prepend(tests_dir)
+    
+    df = make_relationship("linear_positive", n=100)
+    res = profile_pair(df, "x", "y")
+    
+    fig = res.plot(show=False)
+    assert isinstance(fig, plt.Figure)
