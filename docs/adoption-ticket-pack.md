@@ -543,17 +543,19 @@ Acceptance criteria:
 
 Priority: Phase 3 / High
 
-Status: In review
+Status: Complete
 
-Implementation notes from current branch:
+Completed in: `0548b0c Add section-structured target scan summary (#5)`
+
+Completion notes:
 
 - `CorrSleuthTargetReport.summary(top_n=5, include_caveat=True)` now emits a fixed-order, section-structured overview. Pattern sections (`Strongest near-linear relationships`, `Potential monotonic nonlinear relationships`, `Potential nonmonotonic relationships`, `Possible outlier-driven relationships`, `Weak or no pairwise relationships`) appear only when populated.
 - An `Other or inconclusive` catch-all surfaces variables whose pattern is outside the explicit set (`low_power_or_uncertain`, `mixed_or_ambiguous`, `not_computable`).
-- Cross-cutting sections: `Variables Pearson may underrate` (entries with `rank_linear_gap` or `nonmonotonic_gap` > 0.20) and `Variables with missingness or tie warnings` (warnings matching tie rate, missing data, low unique ratio, small sample, or constant input).
+- Cross-cutting sections: `Variables Pearson may underrate` (directional — rank metrics or `nonmonotonic_gap` must exceed Pearson by more than 0.20, so leverage-driven variables stay out) and `Variables with missingness or tie warnings` (warnings matching tie rate, missing data, low unique ratio, small sample, or constant input).
 - `Skipped or failed` summarizes columns recorded as `status="skipped"` or `status="error"`.
 - Within every section, entries are sorted by `disagreement_score` descending with column name as a tiebreaker; output is deterministic.
 - The non-causal caveat is appended by default and can be suppressed with `include_caveat=False`.
-- `top_n` caps each section independently.
+- `top_n` is validated as a positive integer (raises `InputError` for `0`, negatives, booleans, or floats) and caps each section independently.
 
 Goal:
 
