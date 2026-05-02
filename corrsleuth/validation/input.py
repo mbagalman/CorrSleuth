@@ -24,6 +24,11 @@ class CleanPair:
     flags: List[str]          # machine-readable
     warnings: List[str]       # raw validation warnings only
 
+
+def is_constant_series(series: pd.Series) -> bool:
+    return series.nunique() <= 1 or series.std() == 0
+
+
 def validate_pair(data: pd.DataFrame, x: str, y: str, missing: str = "pairwise") -> CleanPair:
     if x not in data.columns:
         raise InputError(f"Column '{x}' not found in data.")
@@ -73,8 +78,8 @@ def validate_pair(data: pd.DataFrame, x: str, y: str, missing: str = "pairwise")
     x_unique_ratio = x_clean.nunique() / n_used
     y_unique_ratio = y_clean.nunique() / n_used
     
-    x_is_constant = x_clean.std() == 0 or x_clean.nunique() <= 1
-    y_is_constant = y_clean.std() == 0 or y_clean.nunique() <= 1
+    x_is_constant = is_constant_series(x_clean)
+    y_is_constant = is_constant_series(y_clean)
     
     if missing_ratio > 0.5:
         flags.append("high_missingness")

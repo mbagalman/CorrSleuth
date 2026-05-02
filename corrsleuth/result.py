@@ -193,8 +193,5 @@ class CorrSleuthResult:
             df["bootstrap_ci_high"] = df["metric"].map(intervals["ci_high"])
             df["bootstrap_n_success"] = df["metric"].map(intervals["n_success"])
             df["bootstrap_n"] = df["metric"].map(intervals["n_bootstrap"])
-            for metric, row in intervals.iterrows():
-                safe_metric = str(metric).replace(" ", "_")
-                df[f"bootstrap_{safe_metric}_ci_low"] = row["ci_low"]
-                df[f"bootstrap_{safe_metric}_ci_high"] = row["ci_high"]
+            df["bootstrap_sample_size"] = df["metric"].map(intervals["sample_size"])
         return df

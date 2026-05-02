@@ -9,7 +9,7 @@ from corrsleuth.metrics.optional import (
     compute_distance_correlation,
     compute_mutual_information,
 )
-from corrsleuth.validation.input import CleanPair
+from corrsleuth.validation.input import CleanPair, is_constant_series
 
 _LITE_BOOTSTRAP_METRICS = ("pearson", "spearman", "kendall_tau_b")
 _STANDARD_BOOTSTRAP_METRICS = (
@@ -45,6 +45,14 @@ def _resolve_bootstrap_metrics(bootstrap_metrics: str | Sequence[str]) -> tuple[
     return requested
 
 
+def _metric_set_label(
+    bootstrap_metrics: str | Sequence[str], metric_names: Sequence[str]
+) -> str:
+    if isinstance(bootstrap_metrics, str):
+        return bootstrap_metrics
+    return ",".join(sorted(metric_names))
+
+
 def _bootstrap_sample_pair(pair: CleanPair, idx) -> CleanPair:
     x = pd.Series(pair.x.to_numpy()[idx], name=pair.x_name)
     y = pd.Series(pair.y.to_numpy()[idx], name=pair.y_name)
@@ -60,8 +68,8 @@ def _bootstrap_sample_pair(pair: CleanPair, idx) -> CleanPair:
         missing_ratio=0.0,
         x_unique_ratio=x.nunique() / n_used if n_used else 0.0,
         y_unique_ratio=y.nunique() / n_used if n_used else 0.0,
-        x_is_constant=x.nunique() <= 1,
-        y_is_constant=y.nunique() <= 1,
+        x_is_constant=is_constant_series(x),
+        y_is_constant=is_constant_series(y),
         flags=[],
         warnings=[],
     )
@@ -90,12 +98,12 @@ def compute_bootstrap_intervals(
     random_state: int,
     max_n_for_bootstrap: Optional[int],
 ) -> Optional[pd.DataFrame]:
-    if bootstrap is None or bootstrap == 0:
+    if bootstrap is None:
         return None
     if isinstance(bootstrap, bool) or not isinstance(bootstrap, int):
-        raise InputError("bootstrap must be a non-negative integer or None.")
-    if bootstrap < 0:
-        raise InputError("bootstrap must be a non-negative integer or None.")
+        raise InputError("bootstrap must be a positive integer or None.")
+    if bootstrap < 1:
+        raise InputError("bootstrap must be a positive integer or None.")
     if (
         max_n_for_bootstrap is not None
         and (
@@ -109,6 +117,7 @@ def compute_bootstrap_intervals(
     metric_names = _resolve_bootstrap_metrics(bootstrap_metrics)
     if not metric_names:
         raise InputError("bootstrap_metrics must include at least one metric.")
+    metric_set = _metric_set_label(bootstrap_metrics, metric_names)
 
     sample_size = pair.n_used
     if max_n_for_bootstrap is not None and sample_size > max_n_for_bootstrap:
@@ -151,16 +160,22 @@ def compute_bootstrap_intervals(
                 "ci_high": ci_high,
                 "n_success": len(metric_values),
                 "n_bootstrap": bootstrap,
-                "metric_set": (
-                    bootstrap_metrics if isinstance(bootstrap_metrics, str) else "custom"
-                ),
+                "sample_size": sample_size,
+                "metric_set": metric_set,
             }
         )
 
-    if any(row["n_success"] < bootstrap for row in records):
+    incomplete_metrics = [
+        row["metric"]
+        for row in records
+        if row["n_success"] == 0 or row["n_success"] / bootstrap < 0.95
+    ]
+    if incomplete_metrics:
         pair.warnings.append(
-            "Some bootstrap samples produced non-computable metrics; intervals use "
-            "the computable samples only."
+            "Bootstrap intervals for "
+            + ", ".join(incomplete_metrics)
+            + " used fewer than 95% of requested samples because some resamples "
+            + "were non-computable."
         )
 
     return pd.DataFrame(records)

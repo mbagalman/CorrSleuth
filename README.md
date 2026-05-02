@@ -165,11 +165,14 @@ def profile_pair(
 ) -> CorrSleuthResult
 ```
 
-Set `bootstrap=500` to compute approximate 95% bootstrap intervals for
+Set `bootstrap=200` to compute approximate 95% bootstrap intervals for
 Pearson, Spearman, and Kendall tau-b. Bootstrap intervals are disabled by
 default. Even in `mode="standard"`, bootstrap uses lite metrics unless you
 explicitly pass `bootstrap_metrics="standard"`, because distance correlation
-and mutual information can be expensive to resample.
+and mutual information can be expensive to resample. Standard bootstrap metrics
+require the `[standard]` extras even when the main `profile_pair()` call uses
+`mode="lite"`. Higher bootstrap counts and standard metrics can take many
+seconds on larger datasets, especially with distance correlation.
 
 ### `CorrSleuthResult`
 The object returned by `profile_pair()`.

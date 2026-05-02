@@ -4,6 +4,7 @@ from corrsleuth.datasets import make_relationship
 from corrsleuth.api import profile_pair
 import matplotlib.pyplot as plt
 import pandas as pd
+from corrsleuth.exceptions import InputError
 from corrsleuth.result import CorrSleuthResult
 
 
@@ -220,8 +221,9 @@ def test_bootstrap_intervals_are_deterministic_and_serialized():
     frame = res1.to_frame()
     assert "bootstrap_ci_low" in frame.columns
     assert "bootstrap_ci_high" in frame.columns
-    assert "bootstrap_pearson_ci_low" in frame.columns
-    assert "bootstrap_spearman_ci_high" in frame.columns
+    assert "bootstrap_sample_size" in frame.columns
+    assert "bootstrap_pearson_ci_low" not in frame.columns
+    assert "bootstrap_spearman_ci_high" not in frame.columns
 
 
 def test_standard_mode_bootstrap_defaults_to_lite_metrics():
@@ -257,6 +259,60 @@ def test_standard_bootstrap_metrics_require_explicit_opt_in():
     assert res.bootstrap_intervals is not None
     assert "distance_correlation" in set(res.bootstrap_intervals["metric"])
     assert "mutual_information" in set(res.bootstrap_intervals["metric"])
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"bootstrap": -1}, "positive integer"),
+        ({"bootstrap": 0}, "positive integer"),
+        ({"bootstrap": False}, "positive integer"),
+        ({"bootstrap": 5, "bootstrap_metrics": "bogus"}, "bootstrap_metrics"),
+        ({"bootstrap": 5, "bootstrap_metrics": []}, "at least one metric"),
+        ({"bootstrap": 5, "bootstrap_metrics": ["pearson", "bogus"]}, "Unsupported"),
+        ({"bootstrap": 5, "max_n_for_bootstrap": 0}, "positive integer"),
+    ],
+)
+def test_bootstrap_invalid_inputs_raise(kwargs, message):
+    df = make_relationship("linear_positive", n=80, random_state=42)
+
+    with pytest.raises(InputError, match=message):
+        profile_pair(df, "x", "y", **kwargs)
+
+
+def test_bootstrap_sequence_metric_set_is_preserved():
+    df = make_relationship("linear_positive", n=80, random_state=42)
+
+    res = profile_pair(
+        df,
+        "x",
+        "y",
+        bootstrap=10,
+        bootstrap_metrics=["pearson"],
+        random_state=123,
+    )
+
+    assert res.bootstrap_intervals is not None
+    assert list(res.bootstrap_intervals["metric"]) == ["pearson"]
+    assert res.bootstrap_intervals["metric_set"].iloc[0] == "pearson"
+
+
+def test_bootstrap_cap_warning_reaches_result_and_records_sample_size():
+    df = make_relationship("linear_positive", n=80, random_state=42)
+
+    res = profile_pair(
+        df,
+        "x",
+        "y",
+        bootstrap=10,
+        random_state=123,
+        max_n_for_bootstrap=40,
+    )
+
+    assert res.bootstrap_intervals is not None
+    assert set(res.bootstrap_intervals["sample_size"]) == {40}
+    assert any("Bootstrap samples are capped at 40 rows" in w for w in res.warnings)
+
 
 def test_constant_input_safe_rendering():
     df = pd.DataFrame({"x": [1, 1, 1, 1], "y": [1, 2, 3, 4]})
