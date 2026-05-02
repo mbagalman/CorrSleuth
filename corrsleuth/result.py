@@ -74,6 +74,10 @@ class CorrSleuthResult:
         self._clean_y = _clean_y
         self._include_caveat = _include_caveat
 
+    @staticmethod
+    def _format_value(value: Optional[float]) -> str:
+        return f"{value:.3f}" if value is not None and pd.notna(value) else "NA"
+
     def summary(self, include_caveat: bool = None) -> str:
         """
         Returns a tabular view of metrics and the primary label.
@@ -88,9 +92,18 @@ class CorrSleuthResult:
             "Metrics:"
         ]
         for _, row in self.metrics.iterrows():
-            val_str = f"{row['value']:.3f}" if pd.notna(row['value']) else "NA"
+            val_str = self._format_value(row["value"])
             lines.append(f"  {row['metric'].ljust(25)}: {val_str}")
-            
+
+        lines.extend([
+            "",
+            "Diagnostics:",
+            f"  disagreement_score       : {self._format_value(self.diagnostics.disagreement_score)}",
+            f"  rank_linear_gap          : {self._format_value(self.diagnostics.rank_linear_gap)}",
+            f"  nonmonotonic_gap         : {self._format_value(self.diagnostics.nonmonotonic_gap)}",
+            f"  pearson_kendall_gap      : {self._format_value(self.diagnostics.pearson_kendall_gap)}",
+        ])
+
         if self.warnings:
             lines.append("\nWarnings:")
             for w in self.warnings:

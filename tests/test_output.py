@@ -101,8 +101,23 @@ def test_summary():
     
     summary_text = res.summary()
     assert "Relationship Profile: x vs y" in summary_text
+    assert "Primary pattern:" in summary_text
     assert "Metrics:" in summary_text
+    assert "Diagnostics:" in summary_text
+    assert "disagreement_score" in summary_text
+    assert "rank_linear_gap" in summary_text
+    assert "nonmonotonic_gap" in summary_text
+    assert "Recommendations:" in summary_text
     assert "Caveat:" in summary_text
+
+
+def test_summary_can_hide_caveat():
+    df = make_relationship("linear_positive", n=100)
+    res = profile_pair(df, "x", "y")
+
+    summary_text = res.summary(include_caveat=False)
+
+    assert "Caveat:" not in summary_text
     
 def test_plot_returns_figure():
     df = make_relationship("linear_positive", n=100)

@@ -130,6 +130,16 @@ Acceptance criteria:
 
 Priority: Phase 1 / Medium
 
+Status: Complete
+
+Completed in: `pending commit`
+
+Completion notes:
+
+- `summary()` now includes a dedicated diagnostics section with disagreement score and key metric gaps.
+- Summary rendering continues to handle unavailable or non-computable values as `NA`.
+- Tests assert the summary includes relationship identity, pattern, metrics, diagnostics, recommendations, and caveat behavior.
+
 Goal:
 
 Make `result.summary()` a compact but complete analyst-readable report.
