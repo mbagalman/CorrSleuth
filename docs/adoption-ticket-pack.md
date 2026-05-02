@@ -750,17 +750,19 @@ Acceptance criteria:
 
 Priority: Phase 4 / Medium
 
-Status: In review
+Status: Complete
 
-Implementation notes from this PR:
+Completed in: `bfaa5c4 Add Chatterjee's xi to deep mode + Phase 4 design note (#9)`
+
+Completion notes:
 
 - Added a design note at [docs/phase4-nonlinear-metrics-design-note.md](phase4-nonlinear-metrics-design-note.md) comparing HSIC, Hoeffding's D, Chatterjee's ξ, MGC (via `hyppo`), and MIC (via `minepy`) against the ticket's six criteria.
 - Implemented Chatterjee's ξ as the recommended primary candidate. It has no new dependency, runs in O(n log n), and adds an *asymmetric* dependence measure that complements the existing symmetric `dcor` / mutual information.
-- New module `corrsleuth/metrics/nonlinear.py` exposing `compute_chatterjee_xi`. Exported from the metrics package.
-- Wired into `mode="deep"` (alongside the robust correlations from Ticket 4.1) and added to `_VALID_SORT_KEYS` in `corrsleuth/scan.py` so target reports can sort `plot_top()` by ξ.
-- Constant inputs return `None`; samples below `n=20` return `None` with a single small-sample warning. Determinism via stable sort + ordinal Y-ranking; heavy-tie datasets are already flagged by the existing `high_tie_rate` warning.
+- New module `corrsleuth/metrics/nonlinear.py` exposes both `compute_chatterjee_xi` (`ξ(pair.x → pair.y)`) and `compute_chatterjee_xi_reverse` (`ξ(pair.y → pair.x)`), so target scans get both target→candidate and candidate→target evidence in a single call.
+- Wired into `mode="deep"` (alongside the robust correlations from Ticket 4.1) and both directions added to `_VALID_SORT_KEYS` in `corrsleuth/scan.py` so target reports can sort `plot_top()` by either direction.
+- Constant inputs return `None`; samples below `n=20` return `None` with a single small-sample warning. Tie handling uses `np.lexsort((y, x))` so the value is invariant to the row order of the input DataFrame (only the multiset of `(x, y)` pairs matters). Heavy-tie datasets are already flagged by the existing `high_tie_rate` warning.
 - HSIC, Hoeffding's D, and MGC are deferred (with reasons in the design note); MIC is rejected on license + contested-utility grounds.
-- Tests cover clean-linear behavior, U-shape detection (where Pearson/Spearman miss), asymmetry on many-to-one relationships, near-zero on independent data, constant input, the small-sample guard, and lite-vs-deep gating.
+- Tests cover clean-linear behavior, U-shape detection (where Pearson/Spearman miss), asymmetry on many-to-one relationships, near-zero on independent data, constant input, the small-sample guard, lite-vs-deep gating, both-directions-in-one-call, and row-order invariance under X-ties.
 
 Goal:
 
