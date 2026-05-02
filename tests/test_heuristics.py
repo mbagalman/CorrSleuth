@@ -1,7 +1,7 @@
 import pytest
 from corrsleuth.datasets import make_relationship
 from corrsleuth.api import profile_pair
-from corrsleuth.heuristics.classifier import apply_heuristics
+from corrsleuth.heuristics.classifier import apply_heuristics, detect_metric_warnings
 from corrsleuth.result import MetricResult
 
 def test_canonical_shapes_lite():
@@ -11,6 +11,8 @@ def test_canonical_shapes_lite():
     assert res.pattern == "near_linear"
 
 def test_canonical_shapes_standard():
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
     # U Shape -> nonmonotonic_dependence
     df = make_relationship("u_shape", n=500, noise=0.1, random_state=42)
     res = profile_pair(df, "x", "y", mode="standard")
@@ -58,6 +60,31 @@ def test_outlier_driven_uses_trim_sensitivity():
     assert res.diagnostics.pearson_trim_delta is not None
     assert res.diagnostics.pearson_trim_delta > 0.20
     assert any("trimming extreme" in warning for warning in res.warnings)
+
+
+def test_detect_metric_warnings_flags_conflicting_signs():
+    metrics = {
+        "pearson": MetricResult("pearson", 0.6, True),
+        "spearman": MetricResult("spearman", -0.5, True),
+    }
+    warnings = detect_metric_warnings(metrics)
+    assert any("conflicting directions" in w for w in warnings)
+
+
+def test_detect_metric_warnings_silent_when_below_threshold():
+    metrics = {
+        "pearson": MetricResult("pearson", 0.2, True),
+        "spearman": MetricResult("spearman", -0.25, True),
+    }
+    assert detect_metric_warnings(metrics) == []
+
+
+def test_detect_metric_warnings_silent_on_aligned_signs():
+    metrics = {
+        "pearson": MetricResult("pearson", 0.6, True),
+        "spearman": MetricResult("spearman", 0.5, True),
+    }
+    assert detect_metric_warnings(metrics) == []
 
 
 def test_stable_trim_sensitivity_avoids_outlier_label():

@@ -1,6 +1,8 @@
-import pandas as pd
 from typing import Optional
+
+import pandas as pd
 import scipy.stats as stats
+
 from corrsleuth.result import CorrSleuthResult, MetricDiagnostics
 from corrsleuth.validation.input import validate_pair
 from corrsleuth.metrics import (
@@ -8,9 +10,10 @@ from corrsleuth.metrics import (
     compute_spearman,
     compute_kendall,
     compute_distance_correlation,
-    compute_mutual_information
+    compute_mutual_information,
 )
-from corrsleuth.heuristics import apply_heuristics
+from corrsleuth.heuristics import apply_heuristics, detect_metric_warnings
+from corrsleuth.exceptions import InputError
 
 
 def _metric_value(metrics_map, metric_name: str) -> Optional[float]:
@@ -18,7 +21,9 @@ def _metric_value(metrics_map, metric_name: str) -> Optional[float]:
     return metric.value if metric and metric.value is not None else None
 
 
-def _compute_outlier_sensitivity(pair, baseline_pearson: Optional[float]) -> dict[str, Optional[float | str]]:
+def _compute_outlier_sensitivity(
+    pair, baseline_pearson: Optional[float]
+) -> dict:
     if baseline_pearson is None:
         return {"status": "unavailable", "trimmed": None, "delta": None}
 
@@ -31,10 +36,7 @@ def _compute_outlier_sensitivity(pair, baseline_pearson: Optional[float]) -> dic
     x_high = pair.x.quantile(0.99)
     y_low = pair.y.quantile(0.01)
     y_high = pair.y.quantile(0.99)
-    mask = (
-        pair.x.between(x_low, x_high)
-        & pair.y.between(y_low, y_high)
-    )
+    mask = pair.x.between(x_low, x_high) & pair.y.between(y_low, y_high)
     x_trimmed = pair.x[mask]
     y_trimmed = pair.y[mask]
 
@@ -50,7 +52,9 @@ def _compute_outlier_sensitivity(pair, baseline_pearson: Optional[float]) -> dic
     return {"status": status, "trimmed": trimmed_pearson, "delta": delta}
 
 
-def _build_diagnostics(metrics_map, disagreement_score: float, outlier_sensitivity=None) -> MetricDiagnostics:
+def _build_diagnostics(
+    metrics_map, disagreement_score: float, outlier_sensitivity=None
+) -> MetricDiagnostics:
     pearson = _metric_value(metrics_map, "pearson")
     spearman = _metric_value(metrics_map, "spearman")
     kendall = _metric_value(metrics_map, "kendall_tau_b")
@@ -85,6 +89,7 @@ def _build_diagnostics(metrics_map, disagreement_score: float, outlier_sensitivi
         pearson_trim_delta=outlier_sensitivity.get("delta") if outlier_sensitivity else None,
     )
 
+
 def profile_pair(
     data: pd.DataFrame,
     x: str,
@@ -92,67 +97,95 @@ def profile_pair(
     mode: str = "lite",
     missing: str = "pairwise",
     include_caveat: bool = True,
-    max_n_for_dcor: Optional[int] = 20000
+    max_n_for_dcor: Optional[int] = 20000,
+    random_state: int = 42,
 ) -> CorrSleuthResult:
+    """Profile the pairwise relationship between two numeric variables.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Source data containing both columns.
+    x, y : str
+        Column names of the numeric variables to profile.
+    mode : {"lite", "standard"}, default "lite"
+        ``"lite"`` computes Pearson, Spearman, and Kendall tau-b.
+        ``"standard"`` additionally computes distance correlation and mutual
+        information; requires the ``corrsleuth[standard]`` extras.
+    missing : {"pairwise", "listwise", "raise"}, default "pairwise"
+        Missing-value policy for the selected pair.
+    include_caveat : bool, default True
+        Whether ``summary()`` and ``explain()`` include the non-causal caveat
+        by default.
+    max_n_for_dcor : int or None, default 20000
+        Cap above which distance-correlation input is downsampled. ``None``
+        disables the cap.
+    random_state : int, default 42
+        Seed used for distance-correlation downsampling and the
+        mutual-information estimator. Held fixed by default so repeated runs on
+        the same input return the same numbers.
     """
-    Profiles the relationship between two numeric variables.
-    """
-    if mode not in ["lite", "standard"]:
+    if mode not in ("lite", "standard"):
         if mode == "deep":
             raise NotImplementedError("mode='deep' is not implemented in v0.1.")
-        raise ValueError(f"Unknown mode: {mode}")
+        raise InputError(
+            f"Unknown mode: '{mode}'. Supported modes are 'lite' and 'standard'."
+        )
 
     # 1. Validation
     pair = validate_pair(data, x, y, missing=missing)
-    
+
     # 2. Compute Metrics
-    metrics_map = {}
-    metrics_map["pearson"] = compute_pearson(pair)
-    metrics_map["spearman"] = compute_spearman(pair)
-    metrics_map["kendall_tau_b"] = compute_kendall(pair)
-    
+    metrics_map = {
+        "pearson": compute_pearson(pair),
+        "spearman": compute_spearman(pair),
+        "kendall_tau_b": compute_kendall(pair),
+    }
+
     if mode == "standard":
-        metrics_map["distance_correlation"] = compute_distance_correlation(pair, mode=mode, max_n_for_dcor=max_n_for_dcor)
-        metrics_map["mutual_information"] = compute_mutual_information(pair, mode=mode)
-        
+        metrics_map["distance_correlation"] = compute_distance_correlation(
+            pair,
+            mode=mode,
+            max_n_for_dcor=max_n_for_dcor,
+            random_state=random_state,
+        )
+        metrics_map["mutual_information"] = compute_mutual_information(
+            pair, mode=mode, random_state=random_state
+        )
+
+    # 3. Outlier sensitivity check (informs the leverage label)
     baseline_pearson = _metric_value(metrics_map, "pearson")
     outlier_sensitivity = _compute_outlier_sensitivity(pair, baseline_pearson)
     if outlier_sensitivity["status"] == "sensitive":
         pair.flags.append("pearson_trim_sensitive")
         pair.warnings.append(
-            "Pearson changes materially after trimming extreme x/y values; the apparent linear association may be leverage-sensitive."
+            "Pearson changes materially after trimming extreme x/y values; "
+            "the apparent linear association may be leverage-sensitive."
         )
     elif outlier_sensitivity["status"] == "stable":
         pair.flags.append("pearson_trim_stable")
     else:
         pair.flags.append("outlier_sensitivity_unavailable")
 
-    # 3. Apply Heuristics
+    # 4. Apply heuristics and metric-agreement warnings
     heuristic_result = apply_heuristics(metrics_map, pair.flags, pair.n_used)
-    
-    p = _metric_value(metrics_map, "pearson")
-    s = _metric_value(metrics_map, "spearman")
-    
-    if p is not None and s is not None and abs(p) > 0.3 and abs(s) > 0.3:
-        if (p > 0 and s < 0) or (p < 0 and s > 0):
-            pair.warnings.append("Pearson and Spearman have conflicting directions; inspect the scatter plot and check for nonlinearity, segments, or leverage points.")
-            
-    # 4. Construct Result
-    # Create the DataFrame
-    records = []
-    for k, v in metrics_map.items():
-        if v.available:
-            records.append({"metric": k, "value": v.value})
+    pair.warnings.extend(detect_metric_warnings(metrics_map))
+
+    # 5. Build outputs
+    records = [
+        {"metric": name, "value": metric.value}
+        for name, metric in metrics_map.items()
+        if metric.available
+    ]
     metrics_df = pd.DataFrame(records)
-    
-    # Calculate disagreement score
-    p = abs(_metric_value(metrics_map, "pearson") or 0.0)
-    s = abs(_metric_value(metrics_map, "spearman") or 0.0)
+
+    abs_p = abs(_metric_value(metrics_map, "pearson") or 0.0)
+    abs_s = abs(_metric_value(metrics_map, "spearman") or 0.0)
     dc = _metric_value(metrics_map, "distance_correlation") or 0.0
-    
-    disagreement_score = abs(p - s) + max(0.0, dc - s)
+
+    disagreement_score = abs(abs_p - abs_s) + max(0.0, dc - max(abs_p, abs_s))
     diagnostics = _build_diagnostics(metrics_map, disagreement_score, outlier_sensitivity)
-    
+
     return CorrSleuthResult(
         x_name=x,
         y_name=y,
@@ -164,5 +197,5 @@ def profile_pair(
         diagnostics=diagnostics,
         _clean_x=pair.x,
         _clean_y=pair.y,
-        _include_caveat=include_caveat
+        _include_caveat=include_caveat,
     )

@@ -1,6 +1,9 @@
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import scipy.stats as stats
+
+_LOWESS_SUBSAMPLE_SEED = 42
 
 
 def _format_value(value) -> str:
@@ -46,13 +49,16 @@ def plot_pair(result, show: bool = False):
     try:
         import statsmodels.api as sm
         lowess = sm.nonparametric.lowess
-        # Subsample for LOWESS if too large to avoid hanging
+        # Subsample for LOWESS to keep large-n plots responsive. Seeded so
+        # repeated plot() calls produce the same smoother.
         n_lowess = min(n, 1000)
-        import numpy as np
-        idx = np.random.choice(n, n_lowess, replace=False) if n > n_lowess else np.arange(n)
+        if n > n_lowess:
+            rng = np.random.default_rng(_LOWESS_SUBSAMPLE_SEED)
+            idx = rng.choice(n, n_lowess, replace=False)
+        else:
+            idx = np.arange(n)
         try:
             z = lowess(y[idx], x[idx], frac=0.3)
-            # sort for plotting line
             order = np.argsort(z[:, 0])
             ax_scatter.plot(z[order, 0], z[order, 1], color="darkorange", linewidth=2)
         except Exception:

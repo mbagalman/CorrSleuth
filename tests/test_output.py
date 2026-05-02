@@ -216,13 +216,38 @@ def test_plotting_uses_clean_data():
 def test_plot_lowess_optional(monkeypatch):
     import sys
     from pathlib import Path
-    
+
     # Add tests directory to sys.path so our fake statsmodels is importable
     tests_dir = str(Path(__file__).parent)
     monkeypatch.syspath_prepend(tests_dir)
-    
+
     df = make_relationship("linear_positive", n=100)
     res = profile_pair(df, "x", "y")
-    
+
     fig = res.plot(show=False)
     assert isinstance(fig, plt.Figure)
+
+
+def test_plot_lowess_subsample_is_deterministic(monkeypatch):
+    """When n exceeds the LOWESS subsample cap, repeated plot() calls must
+    produce the same smoother (seeded RNG, not the global numpy state)."""
+    import sys
+    from pathlib import Path
+
+    monkeypatch.syspath_prepend(str(Path(__file__).parent))
+
+    # n=2000 > 1000 LOWESS cap, so the subsample path is exercised
+    df = make_relationship("linear_positive", n=2000, random_state=42)
+    res = profile_pair(df, "x", "y")
+
+    fig1 = res.plot(show=False)
+    fig2 = res.plot(show=False)
+
+    lines1 = fig1.axes[0].get_lines()
+    lines2 = fig2.axes[0].get_lines()
+    assert lines1 and lines2, "expected a LOWESS line on the scatter axis"
+    for line1, line2 in zip(lines1, lines2):
+        x1, y1 = line1.get_data()
+        x2, y2 = line2.get_data()
+        assert np.array_equal(x1, x2)
+        assert np.array_equal(y1, y2)

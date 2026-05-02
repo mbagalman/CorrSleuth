@@ -137,7 +137,9 @@ pip install corrsleuth[standard]
 
 If those dependencies are not available, CorrSleuth raises `OptionalDependencyError` instead of silently skipping metrics.
 
-For Distance Correlation, CorrSleuth downsamples to 20,000 rows by default when `n_used` is larger than that cap and records a warning. Use `max_n_for_dcor=None` to disable this cap.
+For Distance Correlation, CorrSleuth downsamples to 20,000 rows by default when `n_used` is larger than that cap and records a warning. Use `max_n_for_dcor=None` to disable this cap. The downsample is seeded by `random_state` (default `42`), so repeated runs on the same input return the same number.
+
+If you call `mode="standard"` without installing the extras, CorrSleuth raises `OptionalDependencyError` with install instructions rather than silently skipping metrics.
 
 ## API Reference
 
@@ -149,10 +151,11 @@ def profile_pair(
     data: pd.DataFrame,
     x: str,
     y: str,
-    mode: str = "lite",           # "lite" or "standard"
-    missing: str = "pairwise",    # "pairwise", "listwise", or "raise"
-    include_caveat: bool = True,  # Includes causal caveats in explanations
-    max_n_for_dcor: int | None = 20000  # Downsampling cap for Distance Correlation
+    mode: str = "lite",                 # "lite" or "standard"
+    missing: str = "pairwise",          # "pairwise", "listwise", or "raise"
+    include_caveat: bool = True,        # Includes causal caveats in explanations
+    max_n_for_dcor: int | None = 20000, # Downsampling cap for Distance Correlation
+    random_state: int = 42,             # Seed for downsampling and MI estimator
 ) -> CorrSleuthResult
 ```
 

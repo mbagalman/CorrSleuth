@@ -61,8 +61,11 @@ def validate_pair(data: pd.DataFrame, x: str, y: str, missing: str = "pairwise")
     flags = []
     warnings = []
     
-    if n_used == 0:
-        raise InputError("No valid data points remaining after handling missing values.")
+    if n_used < 2:
+        raise InputError(
+            f"At least 2 valid observations are required to profile a relationship; "
+            f"got n_used={n_used} after handling missing values."
+        )
         
     x_clean = df_pair[x].astype(float)
     y_clean = df_pair[y].astype(float)

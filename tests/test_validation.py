@@ -28,6 +28,18 @@ def test_validation_missing_data_invalid():
     with pytest.raises(InputError, match="Unsupported missing mode"):
         validate_pair(df, "x", "y", missing="invalid")
 
+def test_validation_requires_at_least_two_observations():
+    df = pd.DataFrame({"x": [1.0, np.nan, np.nan], "y": [1.0, np.nan, np.nan]})
+    with pytest.raises(InputError, match="At least 2 valid observations"):
+        validate_pair(df, "x", "y")
+
+
+def test_validation_rejects_all_nan_columns():
+    df = pd.DataFrame({"x": [np.nan] * 5, "y": [1.0, 2.0, 3.0, 4.0, 5.0]})
+    with pytest.raises(InputError, match="At least 2 valid observations"):
+        validate_pair(df, "x", "y")
+
+
 def test_validation_non_numeric():
     df = pd.DataFrame({"x": [1, 2], "y": ["a", "b"]})
     with pytest.raises(InputError, match="is not numeric"):

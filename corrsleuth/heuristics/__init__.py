@@ -1,3 +1,3 @@
-from .classifier import apply_heuristics
+from .classifier import apply_heuristics, detect_metric_warnings
 
-__all__ = ["apply_heuristics"]
+__all__ = ["apply_heuristics", "detect_metric_warnings"]
