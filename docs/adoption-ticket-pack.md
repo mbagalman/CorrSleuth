@@ -750,6 +750,18 @@ Acceptance criteria:
 
 Priority: Phase 4 / Medium
 
+Status: In review
+
+Implementation notes from this PR:
+
+- Added a design note at [docs/phase4-nonlinear-metrics-design-note.md](phase4-nonlinear-metrics-design-note.md) comparing HSIC, Hoeffding's D, Chatterjee's ξ, MGC (via `hyppo`), and MIC (via `minepy`) against the ticket's six criteria.
+- Implemented Chatterjee's ξ as the recommended primary candidate. It has no new dependency, runs in O(n log n), and adds an *asymmetric* dependence measure that complements the existing symmetric `dcor` / mutual information.
+- New module `corrsleuth/metrics/nonlinear.py` exposing `compute_chatterjee_xi`. Exported from the metrics package.
+- Wired into `mode="deep"` (alongside the robust correlations from Ticket 4.1) and added to `_VALID_SORT_KEYS` in `corrsleuth/scan.py` so target reports can sort `plot_top()` by ξ.
+- Constant inputs return `None`; samples below `n=20` return `None` with a single small-sample warning. Determinism via stable sort + ordinal Y-ranking; heavy-tie datasets are already flagged by the existing `high_tie_rate` warning.
+- HSIC, Hoeffding's D, and MGC are deferred (with reasons in the design note); MIC is rejected on license + contested-utility grounds.
+- Tests cover clean-linear behavior, U-shape detection (where Pearson/Spearman miss), asymmetry on many-to-one relationships, near-zero on independent data, constant input, the small-sample guard, and lite-vs-deep gating.
+
 Goal:
 
 Research and optionally implement additional nonlinear dependence measures for `deep` mode.
