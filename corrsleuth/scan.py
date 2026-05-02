@@ -261,12 +261,103 @@ class CorrSleuthTargetReport:
 
         return "\n".join(lines)
 
+    def pearson_underrated(
+        self, threshold: float = _PEARSON_UNDERRATE_GAP
+    ) -> pd.DataFrame:
+        """Return variables where Pearson may understate the relationship.
+
+        The ranking is directional: a variable is included only when rank-based
+        metrics or standard-mode nonmonotonic evidence exceed Pearson by more
+        than ``threshold``. This keeps outlier/leverage cases, where Pearson is
+        stronger than rank metrics, out of the ranking.
+
+        Parameters
+        ----------
+        threshold : float, default 0.20
+            Minimum positive gap required for inclusion. The default matches
+            the cross-cutting summary section.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per included variable, sorted by strongest evidence. The
+            frame includes metric values, directional gap values, the primary
+            diagnostic pattern, disagreement score, and warnings. The
+            ``nonmonotonic_gap`` column stores the raw diagnostic value; only
+            its positive portion contributes to ``pearson_underrate_score``.
+        """
+        if (
+            isinstance(threshold, bool)
+            or not isinstance(threshold, (int, float))
+            or pd.isna(threshold)
+            or threshold < 0
+        ):
+            raise InputError("threshold must be a non-negative number.")
+
+        columns = [
+            "variable",
+            "target",
+            "pattern",
+            "pearson_underrate_score",
+            "spearman_excess_over_pearson",
+            "kendall_excess_over_pearson",
+            "nonmonotonic_gap",
+            "disagreement_score",
+            "metric_pearson",
+            "metric_spearman",
+            "metric_kendall_tau_b",
+            "metric_distance_correlation",
+            "metric_mutual_information",
+            "warnings",
+        ]
+
+        rows: List[Dict[str, Any]] = []
+        for entry in self.successes:
+            metrics = self._metrics_map(entry)
+            components = self._directional_underrate_components(entry)
+            score = components["score"]
+
+            if score <= threshold:
+                continue
+
+            rows.append(
+                {
+                    "variable": entry.column,
+                    "target": self.target,
+                    "pattern": entry.result.pattern,
+                    "pearson_underrate_score": score,
+                    "spearman_excess_over_pearson": components[
+                        "spearman_excess_over_pearson"
+                    ],
+                    "kendall_excess_over_pearson": components[
+                        "kendall_excess_over_pearson"
+                    ],
+                    "nonmonotonic_gap": components["nonmonotonic_gap"],
+                    "disagreement_score": entry.result.disagreement_score,
+                    "metric_pearson": metrics.get("pearson"),
+                    "metric_spearman": metrics.get("spearman"),
+                    "metric_kendall_tau_b": metrics.get("kendall_tau_b"),
+                    "metric_distance_correlation": metrics.get("distance_correlation"),
+                    "metric_mutual_information": metrics.get("mutual_information"),
+                    "warnings": "; ".join(entry.result.warnings)
+                    if entry.result.warnings
+                    else "",
+                }
+            )
+
+        frame = pd.DataFrame(rows, columns=columns)
+        if not frame.empty:
+            frame = frame.sort_values(
+                by=["pearson_underrate_score", "disagreement_score", "variable"],
+                ascending=[False, False, True],
+                kind="mergesort",
+            ).reset_index(drop=True)
+        return frame
+
     @staticmethod
     def _format_pattern_entry(entry: TargetScanEntry) -> str:
         result = entry.result
-        metrics = {
-            row["metric"]: row["value"] for _, row in result.metrics.iterrows()
-        }
+        metrics = CorrSleuthTargetReport._metrics_map(entry)
 
         def _fmt(value: Any) -> str:
             if value is None or pd.isna(value):
@@ -281,36 +372,66 @@ class CorrSleuthTargetReport:
         )
 
     @staticmethod
+    def _metrics_map(entry: TargetScanEntry) -> Dict[str, Any]:
+        return {
+            row["metric"]: row["value"]
+            for _, row in entry.result.metrics.iterrows()
+        }
+
+    @staticmethod
+    def _positive_abs_gap(value: Any, baseline_abs: Optional[float]) -> float:
+        if baseline_abs is None or value is None or pd.isna(value):
+            return 0.0
+        return max(0.0, abs(float(value)) - baseline_abs)
+
+    @classmethod
+    def _directional_underrate_components(
+        cls, entry: TargetScanEntry
+    ) -> Dict[str, Optional[float]]:
+        metrics = cls._metrics_map(entry)
+        pearson = metrics.get("pearson")
+        abs_p = (
+            abs(pearson)
+            if pearson is not None and not pd.isna(pearson)
+            else None
+        )
+
+        spearman_gap = cls._positive_abs_gap(metrics.get("spearman"), abs_p)
+        kendall_gap = cls._positive_abs_gap(metrics.get("kendall_tau_b"), abs_p)
+
+        raw_nonmonotonic_gap = entry.result.diagnostics.nonmonotonic_gap
+        nonmonotonic_gap = (
+            None
+            if raw_nonmonotonic_gap is None or pd.isna(raw_nonmonotonic_gap)
+            else float(raw_nonmonotonic_gap)
+        )
+        nonmonotonic_contribution = (
+            max(0.0, nonmonotonic_gap) if nonmonotonic_gap is not None else 0.0
+        )
+
+        score = max(spearman_gap, kendall_gap, nonmonotonic_contribution)
+        return {
+            "score": score,
+            "spearman_excess_over_pearson": spearman_gap,
+            "kendall_excess_over_pearson": kendall_gap,
+            "nonmonotonic_gap": nonmonotonic_gap,
+        }
+
+    @classmethod
+    def _directional_underrate_score(cls, entry: TargetScanEntry) -> float:
+        return float(cls._directional_underrate_components(entry)["score"])
+
+    @staticmethod
     def _pearson_underrate_gap(entry: TargetScanEntry) -> float:
         """Directional gap: positive only when rank/dCor metrics exceed Pearson.
 
         ``rank_linear_gap`` is symmetric (``abs(abs(p) - abs(s))``), so it would
         treat ``Pearson >> Spearman`` (often outlier-driven) the same as
-        ``Spearman >> Pearson``. This helper instead computes the signed
-        difference ``abs(rank_metric) - abs(pearson)`` and the already-directional
-        ``nonmonotonic_gap``, so leverage-driven entries do not surface here.
+        ``Spearman >> Pearson``. This helper delegates to the same clamped
+        directional score used by :meth:`pearson_underrated`, so leverage-driven
+        entries do not surface here.
         """
-        metrics = {
-            row["metric"]: row["value"]
-            for _, row in entry.result.metrics.iterrows()
-        }
-        pearson = metrics.get("pearson")
-        spearman = metrics.get("spearman")
-        kendall = metrics.get("kendall_tau_b")
-
-        candidates: List[float] = []
-        if pearson is not None and not pd.isna(pearson):
-            abs_p = abs(pearson)
-            if spearman is not None and not pd.isna(spearman):
-                candidates.append(abs(spearman) - abs_p)
-            if kendall is not None and not pd.isna(kendall):
-                candidates.append(abs(kendall) - abs_p)
-
-        nonmonotonic_gap = entry.result.diagnostics.nonmonotonic_gap
-        if nonmonotonic_gap is not None:
-            candidates.append(nonmonotonic_gap)
-
-        return max(candidates) if candidates else 0.0
+        return CorrSleuthTargetReport._directional_underrate_score(entry)
 
     @classmethod
     def _is_pearson_underrate(cls, entry: TargetScanEntry) -> bool:
@@ -472,10 +593,7 @@ class CorrSleuthTargetReport:
     def _sort_value(entry: TargetScanEntry, sort_by: str) -> float:
         if sort_by == "disagreement_score":
             return float(entry.result.disagreement_score)
-        metrics = {
-            row["metric"]: row["value"]
-            for _, row in entry.result.metrics.iterrows()
-        }
+        metrics = CorrSleuthTargetReport._metrics_map(entry)
         value = metrics.get(sort_by)
         if value is None or pd.isna(value):
             return 0.0
@@ -483,10 +601,7 @@ class CorrSleuthTargetReport:
 
     @staticmethod
     def _panel_title(entry: TargetScanEntry) -> str:
-        metrics = {
-            row["metric"]: row["value"]
-            for _, row in entry.result.metrics.iterrows()
-        }
+        metrics = CorrSleuthTargetReport._metrics_map(entry)
         pearson = metrics.get("pearson")
         spearman = metrics.get("spearman")
 
