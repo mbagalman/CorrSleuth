@@ -234,7 +234,7 @@ Priority: Phase 1 / Medium
 
 Status: Complete
 
-Completed in: `pending commit`
+Completed in: `de4e7cc Strengthen diagnostic plot panel`
 
 Completion notes:
 
