@@ -20,6 +20,16 @@ Phase 1 keeps the v0.1 promise narrow: one excellent pairwise profiler. These ti
 
 Priority: Phase 1 / High
 
+Status: Complete
+
+Completed in: `b374fd8 Add adoption roadmap and metric-aware explanations`
+
+Completion notes:
+
+- `result.explain()` now passes result metrics into the explanation generator.
+- Explanations include metric-aware context for `near_linear`, `monotonic_nonlinear`, `nonmonotonic_dependence`, `possible_outlier_or_leverage`, and `weak_or_no_relationship`.
+- Tests cover the required label-specific explanation paths.
+
 Goal:
 
 Make `result.explain()` describe the metric pattern that led to the diagnostic label, not just the label's generic meaning.
@@ -66,6 +76,17 @@ Acceptance criteria:
 ### Ticket 1.2 - Add Structured Metric Agreement Diagnostics to the Result
 
 Priority: Phase 1 / High
+
+Status: Complete
+
+Completed in: `a065ba0 Add structured metric diagnostics`
+
+Completion notes:
+
+- Added public `result.diagnostics` using a `MetricDiagnostics` dataclass.
+- `to_dict()` now includes nested diagnostics.
+- `to_frame()` now includes flattened `diagnostic_*` columns for pandas-friendly downstream use.
+- Lite-mode results represent standard-only diagnostic components, such as `nonmonotonic_gap`, explicitly as unavailable.
 
 Goal:
 
