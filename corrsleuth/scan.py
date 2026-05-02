@@ -70,6 +70,18 @@ _SUMMARY_CAVEAT = (
     "with proper analysis."
 )
 
+#: Valid ``sort_by`` keys for :meth:`CorrSleuthTargetReport.plot_top`. Metric
+#: names are sorted by absolute value descending; ``disagreement_score`` is
+#: sorted by raw value descending.
+_VALID_SORT_KEYS: tuple[str, ...] = (
+    "disagreement_score",
+    "pearson",
+    "spearman",
+    "kendall_tau_b",
+    "distance_correlation",
+    "mutual_information",
+)
+
 
 @dataclass
 class TargetScanEntry:
@@ -318,6 +330,176 @@ class CorrSleuthTargetReport:
             if any(k in warning for k in _RELIABILITY_WARNING_KEYWORDS):
                 return warning
         return entry.result.warnings[0] if entry.result.warnings else ""
+
+    def plot_top(
+        self,
+        n: int = 12,
+        sort_by: str = "disagreement_score",
+        patterns: Optional[Sequence[str]] = None,
+        ncols: int = 3,
+        figsize: Optional[tuple[float, float]] = None,
+        show: bool = False,
+    ) -> Any:
+        """Return a Matplotlib ``Figure`` with up to ``n`` scatter panels.
+
+        Each panel shows the raw scatter for one inspected pair, titled with
+        the candidate column name, the assigned diagnostic pattern, and key
+        metric values. Empty axes are hidden when fewer than
+        ``ncols * ceil(n/ncols)`` panels are filled.
+
+        Parameters
+        ----------
+        n : int, default 12
+            Maximum number of panels. Must be a positive integer.
+        sort_by : str, default ``"disagreement_score"``
+            Either ``"disagreement_score"`` (sorted by raw value descending) or
+            a metric name (``"pearson"``, ``"spearman"``, ``"kendall_tau_b"``,
+            ``"distance_correlation"``, ``"mutual_information"``); metric keys
+            are sorted by absolute value descending.
+        patterns : sequence of str, optional
+            Only include entries whose ``pattern`` is in this set. A single
+            string is normalized to a one-element list. ``None`` (default)
+            includes all successful entries.
+        ncols : int, default 3
+            Panels per row. Must be a positive integer.
+        figsize : tuple of (float, float), optional
+            Figure size in inches. Defaults to ``(4*ncols, 3*nrows)``.
+        show : bool, default False
+            If True, call ``plt.show()`` before returning the figure.
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+            A figure even when no variables match — in that case it contains a
+            single placeholder axis with a "No variables to plot" message.
+        """
+        if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+            raise InputError("n must be a positive integer.")
+        if isinstance(ncols, bool) or not isinstance(ncols, int) or ncols < 1:
+            raise InputError("ncols must be a positive integer.")
+        if sort_by not in _VALID_SORT_KEYS:
+            raise InputError(
+                f"Unknown sort_by: {sort_by!r}. Supported values are "
+                f"{_VALID_SORT_KEYS}."
+            )
+
+        if isinstance(patterns, str):
+            patterns = [patterns]
+
+        candidates = [
+            e for e in self.successes
+            if e.result._clean_x is not None and e.result._clean_y is not None
+        ]
+        if patterns is not None:
+            pattern_set = set(patterns)
+            candidates = [e for e in candidates if e.result.pattern in pattern_set]
+
+        candidates.sort(key=lambda e: (-self._sort_value(e, sort_by), e.column))
+        candidates = candidates[:n]
+
+        import math
+
+        import matplotlib.pyplot as plt
+
+        if not candidates:
+            fig, ax = plt.subplots(figsize=figsize or (6, 4))
+            ax.text(
+                0.5, 0.5,
+                "No variables to plot.",
+                ha="center", va="center",
+                transform=ax.transAxes,
+                fontsize=12, color="dimgray",
+            )
+            ax.set_axis_off()
+            fig.suptitle(
+                f"Target scan: {self.target}",
+                fontsize=12, fontweight="bold",
+            )
+            if show:
+                plt.show()
+            return fig
+
+        nrows = math.ceil(len(candidates) / ncols)
+        if figsize is None:
+            figsize = (4 * ncols, 3 * nrows)
+
+        fig, axes = plt.subplots(nrows, ncols, figsize=figsize, squeeze=False)
+        flat_axes = axes.flatten()
+
+        for ax, entry in zip(flat_axes, candidates):
+            result = entry.result
+            # scan_target() calls profile_pair(data, target, col), so
+            # _clean_x holds the target's data and _clean_y holds the
+            # candidate's. EDA convention puts the candidate (predictor) on x
+            # and the target on y, so swap here.
+            target_data = result._clean_x.values
+            candidate_data = result._clean_y.values
+            n_pts = len(candidate_data)
+
+            if n_pts > 5000:
+                ax.hexbin(
+                    candidate_data, target_data,
+                    gridsize=30, cmap="Blues", mincnt=1,
+                )
+            else:
+                alpha = min(1.0, 100 / n_pts) if n_pts > 0 else 1.0
+                ax.scatter(
+                    candidate_data, target_data,
+                    alpha=alpha, edgecolor="none",
+                    color="steelblue", s=8,
+                )
+
+            ax.set_title(self._panel_title(entry), fontsize=9)
+            ax.set_xlabel(entry.column, fontsize=8)
+            ax.set_ylabel(self.target, fontsize=8)
+            ax.tick_params(labelsize=7)
+
+        for ax in flat_axes[len(candidates):]:
+            ax.set_axis_off()
+
+        fig.suptitle(
+            f"Target scan: {self.target} (top by {sort_by})",
+            fontsize=12, fontweight="bold",
+        )
+        fig.tight_layout(rect=[0, 0, 1, 0.96])
+
+        if show:
+            plt.show()
+
+        return fig
+
+    @staticmethod
+    def _sort_value(entry: TargetScanEntry, sort_by: str) -> float:
+        if sort_by == "disagreement_score":
+            return float(entry.result.disagreement_score)
+        metrics = {
+            row["metric"]: row["value"]
+            for _, row in entry.result.metrics.iterrows()
+        }
+        value = metrics.get(sort_by)
+        if value is None or pd.isna(value):
+            return 0.0
+        return abs(float(value))
+
+    @staticmethod
+    def _panel_title(entry: TargetScanEntry) -> str:
+        metrics = {
+            row["metric"]: row["value"]
+            for _, row in entry.result.metrics.iterrows()
+        }
+        pearson = metrics.get("pearson")
+        spearman = metrics.get("spearman")
+
+        def _fmt(value: Any) -> str:
+            if value is None or pd.isna(value):
+                return "NA"
+            return f"{value:.2f}"
+
+        return (
+            f"{entry.column}\n"
+            f"{entry.result.pattern} | "
+            f"p={_fmt(pearson)} s={_fmt(spearman)}"
+        )
 
 
 def _iter_with_progress(items: Sequence[str], progress: bool):
