@@ -448,6 +448,34 @@ def test_plot_top_sort_by_metric_ranks_panels_by_absolute_value():
         plt.close(fig)
 
 
+def test_plot_top_uses_candidate_on_x_and_target_on_y():
+    rng = np.random.default_rng(0)
+    n = 50
+    df = pd.DataFrame({
+        "y_target": rng.uniform(-3, 3, size=n),
+        "predictor_a": rng.normal(size=n),
+        "predictor_b": rng.normal(size=n),
+    })
+    df["predictor_a"] = df["y_target"] + rng.normal(0, 0.1, size=n)
+
+    report = scan_target(df, "y_target")
+    fig = report.plot_top(n=2, ncols=2)
+    try:
+        for ax in fig.axes:
+            if not ax.get_title():
+                continue
+            xlabel = ax.get_xlabel()
+            ylabel = ax.get_ylabel()
+            assert ylabel == "y_target", (
+                f"target should be on y-axis; got xlabel={xlabel!r}, ylabel={ylabel!r}"
+            )
+            assert xlabel in {"predictor_a", "predictor_b"}, (
+                f"candidate column expected on x-axis; got xlabel={xlabel!r}"
+            )
+    finally:
+        plt.close(fig)
+
+
 def test_plot_top_rejects_invalid_n_or_ncols():
     df = _build_clean_df()
     report = scan_target(df, "target")

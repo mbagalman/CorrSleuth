@@ -428,23 +428,30 @@ class CorrSleuthTargetReport:
 
         for ax, entry in zip(flat_axes, candidates):
             result = entry.result
-            x = result._clean_x.values
-            y = result._clean_y.values
-            n_pts = len(x)
+            # scan_target() calls profile_pair(data, target, col), so
+            # _clean_x holds the target's data and _clean_y holds the
+            # candidate's. EDA convention puts the candidate (predictor) on x
+            # and the target on y, so swap here.
+            target_data = result._clean_x.values
+            candidate_data = result._clean_y.values
+            n_pts = len(candidate_data)
 
             if n_pts > 5000:
-                ax.hexbin(x, y, gridsize=30, cmap="Blues", mincnt=1)
+                ax.hexbin(
+                    candidate_data, target_data,
+                    gridsize=30, cmap="Blues", mincnt=1,
+                )
             else:
                 alpha = min(1.0, 100 / n_pts) if n_pts > 0 else 1.0
                 ax.scatter(
-                    x, y,
+                    candidate_data, target_data,
                     alpha=alpha, edgecolor="none",
                     color="steelblue", s=8,
                 )
 
             ax.set_title(self._panel_title(entry), fontsize=9)
-            ax.set_xlabel(result.x_name, fontsize=8)
-            ax.set_ylabel(result.y_name, fontsize=8)
+            ax.set_xlabel(entry.column, fontsize=8)
+            ax.set_ylabel(self.target, fontsize=8)
             ax.tick_params(labelsize=7)
 
         for ax in flat_axes[len(candidates):]:
