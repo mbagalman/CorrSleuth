@@ -806,16 +806,21 @@ Phase 5 helps CorrSleuth fit into shared analysis workflows.
 
 Priority: Phase 5 / Medium
 
-Status: In review
+Status: Complete
 
-Implementation notes from this PR:
+Completed in: `dc9c2cb Add Markdown exports for results and target reports (#10)`
+
+Completion notes:
 
 - Added `CorrSleuthResult.to_markdown(include_caveat=None)`.
 - Added `CorrSleuthTargetReport.to_markdown(top_n=5, include_caveat=True)`.
 - Pairwise Markdown includes primary pattern, metric table, diagnostic table, warnings, recommendations, caveat, and optional bootstrap interval / pattern stability sections.
 - Target-report Markdown preserves the grouped workflow from `summary()`: overview counts, populated pattern sections, other/inconclusive, Pearson-underrated, reliability warnings, skipped/failed, and caveat.
 - Markdown tables are generated internally for deterministic output and do not depend on pandas' optional `tabulate` support.
-- Tests cover pairwise sections, bootstrap sections, target grouped sections, caveat suppression, and `top_n` validation.
+- `escape_markdown_cell` covers the GFM-significant character set (`|`, `\`, `_`, `*`, `` ` ``, `[`, `]`) and is array-safe via a try/except wrapper around `pd.isna`, so identifiers like `near_linear` no longer render as emphasis in stricter renderers.
+- `bootstrap_label_counts` is rendered inline as `near_linear: 8; monotonic_nonlinear: 2` (sorted by count desc, label asc) instead of leaking the raw dict repr into a table cell.
+- The `_SUMMARY_CAVEAT` constant was split into a reusable `_SUMMARY_CAVEAT_BODY` so `summary()` and `to_markdown()` derive the caveat text from one source.
+- Tests cover pairwise sections, bootstrap sections, target grouped sections, the cross-cutting Pearson-underrate / reliability-warning sections, the Other-or-inconclusive catch-all, caveat suppression, `top_n` validation, the `escape_markdown_cell` contract (including array values), and a deterministic snapshot of the target-report Markdown.
 
 Goal:
 
