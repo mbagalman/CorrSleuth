@@ -406,6 +406,16 @@ Acceptance criteria:
 
 Priority: Phase 2 / Medium
 
+Status: In review
+
+Implementation notes from current branch:
+
+- `CleanPair` now exposes `x_tie_rate` and `y_tie_rate` alongside the existing unique-ratio fields.
+- A new `compute_tie_rate` helper in `corrsleuth.validation.input` returns the share of observations whose value is shared with at least one other row.
+- `validate_pair` emits a per-variable warning (naming the affected column) when a tie rate exceeds 30%, and adds a deduplicated `high_tie_rate` flag to `pair.flags`.
+- The existing `low_unique_ratio` flag and warning are preserved for backward compatibility; the new tie-rate warning is more specific (per-variable, with the rate quoted).
+- Bootstrap replicates compute tie rates on the resampled series so the heuristic context stays consistent across iterations.
+
 Goal:
 
 Improve reliability warnings for small samples, low unique-value ratios, and ties.

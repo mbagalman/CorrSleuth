@@ -401,6 +401,17 @@ def test_compute_bootstrap_intervals_wrapper_returns_only_intervals():
     assert set(intervals["metric"]) == {"pearson", "spearman", "kendall_tau_b"}
 
 
+def test_high_tie_rate_warning_reaches_result():
+    df = pd.DataFrame({
+        "category": [0, 1, 2] * 33 + [0],
+        "score": np.linspace(0, 1, 100),
+    })
+    res = profile_pair(df, "category", "score")
+
+    matching = [w for w in res.warnings if "category" in w and "tie rate" in w]
+    assert matching, f"expected tie-rate warning for 'category' in result, got {res.warnings}"
+
+
 def test_constant_input_safe_rendering():
     df = pd.DataFrame({"x": [1, 1, 1, 1], "y": [1, 2, 3, 4]})
     res = profile_pair(df, "x", "y")
