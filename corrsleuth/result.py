@@ -1,6 +1,11 @@
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import pandas as pd
+from corrsleuth.utils.markdown import (
+    escape_markdown_cell,
+    format_markdown_value,
+    markdown_table,
+)
 
 if TYPE_CHECKING:
     from corrsleuth.metrics.bootstrap import BootstrapStability
@@ -201,6 +206,106 @@ class CorrSleuthResult:
             raise ValueError("Cleaned data was not preserved in this result object, so plotting is unavailable.")
         from corrsleuth.plotting.pairplot import plot_pair
         return plot_pair(self, show=show)
+
+    def to_markdown(self, include_caveat: Optional[bool] = None) -> str:
+        """Return a compact Markdown report for sharing in notebooks or docs."""
+        if include_caveat is None:
+            include_caveat = self._include_caveat
+
+        lines = [
+            f"# CorrSleuth Pair Report: `{self.x_name}` vs `{self.y_name}`",
+            "",
+            f"**Primary pattern:** `{self.pattern}`",
+            "",
+            "## Metrics",
+            markdown_table(
+                ["Metric", "Value"],
+                [
+                    [row["metric"], format_markdown_value(row["value"])]
+                    for _, row in self.metrics.iterrows()
+                ],
+            ),
+            "",
+            "## Diagnostics",
+            markdown_table(
+                ["Diagnostic", "Value"],
+                [
+                    ["disagreement_score", format_markdown_value(self.diagnostics.disagreement_score)],
+                    ["rank_linear_gap", format_markdown_value(self.diagnostics.rank_linear_gap)],
+                    ["nonmonotonic_gap", format_markdown_value(self.diagnostics.nonmonotonic_gap)],
+                    ["pearson_kendall_gap", format_markdown_value(self.diagnostics.pearson_kendall_gap)],
+                    ["pearson_trim_delta", format_markdown_value(self.diagnostics.pearson_trim_delta)],
+                ],
+            ),
+        ]
+
+        if self.bootstrap_intervals is not None and not self.bootstrap_intervals.empty:
+            lines.extend(
+                [
+                    "",
+                    "## Bootstrap Intervals",
+                    markdown_table(
+                        ["Metric", "CI low", "CI high", "Successful samples", "Metric set"],
+                        [
+                            [
+                                row["metric"],
+                                format_markdown_value(row["ci_low"]),
+                                format_markdown_value(row["ci_high"]),
+                                f"{int(row['n_success'])}/{int(row['n_bootstrap'])}",
+                                row["metric_set"],
+                            ]
+                            for _, row in self.bootstrap_intervals.iterrows()
+                        ],
+                    ),
+                ]
+            )
+
+        if self.bootstrap_stability is not None:
+            stability = self.bootstrap_stability
+            lines.extend(
+                [
+                    "",
+                    "## Pattern Stability",
+                    markdown_table(
+                        ["Stability", "Label", "Metric set", "Samples", "Label counts"],
+                        [
+                            [
+                                format_markdown_value(stability.pattern_stability),
+                                stability.stability_label,
+                                stability.metric_set,
+                                f"{int(stability.n_iterations)}/{int(stability.n_bootstrap)}",
+                                self._format_label_counts(
+                                    stability.bootstrap_label_counts
+                                ),
+                            ]
+                        ],
+                    ),
+                ]
+            )
+
+        lines.extend(["", "## Warnings"])
+        if self.warnings:
+            lines.extend(f"- {escape_markdown_cell(w)}" for w in self.warnings)
+        else:
+            lines.append("- None")
+
+        lines.extend(["", "## Recommendations"])
+        if self.recommendations:
+            lines.extend(f"- {escape_markdown_cell(r)}" for r in self.recommendations)
+        else:
+            lines.append("- None")
+
+        if include_caveat:
+            from corrsleuth.heuristics.explanations import _CAVEAT
+
+            lines.extend(["", "## Caveat", _CAVEAT])
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_label_counts(label_counts: Dict[str, int]) -> str:
+        items = sorted(label_counts.items(), key=lambda item: (-item[1], item[0]))
+        return "; ".join(f"{label}: {count}" for label, count in items)
 
     def to_dict(self) -> Dict[str, Any]:
         """

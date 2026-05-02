@@ -806,6 +806,17 @@ Phase 5 helps CorrSleuth fit into shared analysis workflows.
 
 Priority: Phase 5 / Medium
 
+Status: In review
+
+Implementation notes from this PR:
+
+- Added `CorrSleuthResult.to_markdown(include_caveat=None)`.
+- Added `CorrSleuthTargetReport.to_markdown(top_n=5, include_caveat=True)`.
+- Pairwise Markdown includes primary pattern, metric table, diagnostic table, warnings, recommendations, caveat, and optional bootstrap interval / pattern stability sections.
+- Target-report Markdown preserves the grouped workflow from `summary()`: overview counts, populated pattern sections, other/inconclusive, Pearson-underrated, reliability warnings, skipped/failed, and caveat.
+- Markdown tables are generated internally for deterministic output and do not depend on pandas' optional `tabulate` support.
+- Tests cover pairwise sections, bootstrap sections, target grouped sections, caveat suppression, and `top_n` validation.
+
 Goal:
 
 Allow pairwise and target reports to export compact Markdown summaries.

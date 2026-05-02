@@ -177,6 +177,133 @@ def test_scan_target_summary_can_suppress_caveat():
     assert "Caveat:" not in report.summary(include_caveat=False)
 
 
+def test_target_report_to_markdown_includes_grouped_sections():
+    rng = np.random.default_rng(0)
+    n = 200
+    target = np.exp(rng.uniform(0.1, 10, size=n))
+    df = pd.DataFrame({
+        "target": target,
+        "log_shape": np.log(target) + rng.normal(0, 0.1, size=n),
+        "linear_match": target + rng.normal(0, 0.1, size=n),
+        "noise": rng.normal(0, 1, size=n),
+        "label": ["a", "b"] * (n // 2),
+    })
+
+    report = scan_target(df, "target", columns=["log_shape", "linear_match", "noise", "label"])
+    markdown = report.to_markdown(top_n=2)
+
+    assert markdown.startswith("# CorrSleuth Target Report: `target`")
+    assert "## Overview" in markdown
+    assert "| Profiled | Errored | Skipped |" in markdown
+    assert "## Strongest near-linear relationships" in markdown
+    assert "## Potential monotonic nonlinear relationships" in markdown
+    assert "## Weak or no pairwise relationships" in markdown
+    assert "## Variables Pearson may underrate" in markdown
+    assert "## Skipped or failed" in markdown
+    assert "| Variable | Pattern | Pearson | Spearman | Disagreement | Warnings |" in markdown
+    assert "log\\_shape" in markdown
+    assert "label" in markdown
+    assert "## Caveat" in markdown
+    assert "Pairwise association does not imply causation" in markdown
+
+
+def test_target_report_to_markdown_is_deterministic_with_snapshot():
+    df = _build_clean_df()
+    report = scan_target(df, "target")
+
+    first = report.to_markdown(include_caveat=False)
+    second = report.to_markdown(include_caveat=False)
+
+    assert first == second
+    assert first == "\n".join([
+        "# CorrSleuth Target Report: `target`",
+        "",
+        "## Overview",
+        "| Profiled | Errored | Skipped |",
+        "| --- | --- | --- |",
+        "| 2 | 0 | 0 |",
+        "",
+        "## Strongest near-linear relationships",
+        "| Variable | Pattern | Pearson | Spearman | Disagreement | Warnings |",
+        "| --- | --- | --- | --- | --- | --- |",
+        "| linear | near\\_linear | 0.981 | 0.976 | 0.005 |  |",
+        "",
+        "## Weak or no pairwise relationships",
+        "| Variable | Pattern | Pearson | Spearman | Disagreement | Warnings |",
+        "| --- | --- | --- | --- | --- | --- |",
+        "| noise | weak\\_or\\_no\\_relationship | 0.008 | 0.039 | 0.031 |  |",
+    ])
+
+
+def test_target_report_to_markdown_lists_reliability_warning_section():
+    rng = np.random.default_rng(0)
+    n = 200
+    df = pd.DataFrame({
+        "target": rng.normal(size=n),
+        "discrete": (rng.integers(0, 12, size=n)).astype(float),
+        "clean": rng.normal(size=n),
+    })
+    report = scan_target(df, "target")
+
+    markdown = report.to_markdown(include_caveat=False)
+
+    assert "## Variables with missingness or tie warnings" in markdown
+    reliability_idx = markdown.index("## Variables with missingness or tie warnings")
+    section = markdown[reliability_idx:]
+    assert "discrete" in section
+    assert "tie rate" in section
+    assert "clean" not in section
+
+
+def test_target_report_to_markdown_omits_empty_cross_cutting_sections():
+    rng = np.random.default_rng(0)
+    n = 200
+    target = rng.uniform(-3, 3, size=n)
+    df = pd.DataFrame({
+        "target": target,
+        "linear": target + rng.normal(0, 0.1, size=n),
+    })
+    report = scan_target(df, "target")
+
+    markdown = report.to_markdown(include_caveat=False)
+
+    assert "## Variables Pearson may underrate" not in markdown
+    assert "## Variables with missingness or tie warnings" not in markdown
+    assert "## Skipped or failed" not in markdown
+
+
+def test_target_report_to_markdown_includes_other_or_inconclusive():
+    rng = np.random.default_rng(0)
+    n = 25
+    df = pd.DataFrame({
+        "target": rng.normal(size=n),
+        "candidate": rng.normal(size=n),
+    })
+    report = scan_target(df, "target")
+
+    markdown = report.to_markdown(include_caveat=False)
+
+    assert "## Other or inconclusive" in markdown
+    assert "low\\_power\\_or\\_uncertain" in markdown
+
+
+def test_target_report_to_markdown_can_suppress_caveat():
+    df = _build_clean_df()
+    report = scan_target(df, "target")
+
+    markdown = report.to_markdown(include_caveat=False)
+
+    assert "## Caveat" not in markdown
+
+
+def test_target_report_to_markdown_rejects_invalid_top_n():
+    df = _build_clean_df()
+    report = scan_target(df, "target")
+
+    with pytest.raises(InputError, match="positive integer"):
+        report.to_markdown(top_n=0)
+
+
 def test_scan_summary_includes_pattern_sections_when_present():
     # Use a target derived from x to make monotonic_log appear as monotonic_nonlinear
     rng = np.random.default_rng(0)

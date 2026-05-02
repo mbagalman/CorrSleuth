@@ -15,6 +15,11 @@ import pandas as pd
 from corrsleuth.api import profile_pair
 from corrsleuth.exceptions import InputError
 from corrsleuth.result import CorrSleuthResult
+from corrsleuth.utils.markdown import (
+    escape_markdown_cell,
+    format_markdown_value,
+    markdown_table,
+)
 
 
 _VALID_ERRORS_POLICIES = ("warn", "raise")
@@ -64,11 +69,12 @@ _RELIABILITY_WARNING_KEYWORDS: tuple[str, ...] = (
     "constant",
 )
 
-_SUMMARY_CAVEAT = (
-    "Caveat: Pairwise association does not imply causation or predictive "
+_SUMMARY_CAVEAT_BODY = (
+    "Pairwise association does not imply causation or predictive "
     "usefulness by itself. Always inspect the diagnostic plots and validate "
     "with proper analysis."
 )
+_SUMMARY_CAVEAT = f"Caveat: {_SUMMARY_CAVEAT_BODY}"
 
 #: Valid ``sort_by`` keys for :meth:`CorrSleuthTargetReport.plot_top`. Metric
 #: names are sorted by absolute value descending; ``disagreement_score`` is
@@ -267,6 +273,112 @@ class CorrSleuthTargetReport:
 
         return "\n".join(lines)
 
+    def to_markdown(self, top_n: int = 5, include_caveat: bool = True) -> str:
+        """Return a deterministic Markdown report for a target scan."""
+        if isinstance(top_n, bool) or not isinstance(top_n, int) or top_n < 1:
+            raise InputError("top_n must be a positive integer.")
+
+        lines = [
+            f"# CorrSleuth Target Report: `{self.target}`",
+            "",
+            "## Overview",
+            markdown_table(
+                ["Profiled", "Errored", "Skipped"],
+                [
+                    [
+                        len(self.successes),
+                        sum(1 for e in self.entries if e.status == "error"),
+                        sum(1 for e in self.entries if e.status == "skipped"),
+                    ]
+                ],
+            ),
+        ]
+
+        for pattern, title in _PATTERN_SECTIONS:
+            section_entries = [e for e in self.successes if e.result.pattern == pattern]
+            if not section_entries:
+                continue
+            section_entries.sort(
+                key=lambda e: (-e.result.disagreement_score, e.column)
+            )
+            lines.extend(["", f"## {title}"])
+            lines.append(self._markdown_entries_table(section_entries[:top_n]))
+
+        listed_patterns = {pattern for pattern, _ in _PATTERN_SECTIONS}
+        other_entries = [
+            e for e in self.successes if e.result.pattern not in listed_patterns
+        ]
+        if other_entries:
+            other_entries.sort(
+                key=lambda e: (-e.result.disagreement_score, e.column)
+            )
+            lines.extend(["", "## Other or inconclusive"])
+            lines.append(self._markdown_entries_table(other_entries[:top_n]))
+
+        underrate = [e for e in self.successes if self._is_pearson_underrate(e)]
+        if underrate:
+            underrate.sort(
+                key=lambda e: (-self._pearson_underrate_gap(e), e.column)
+            )
+            lines.extend(["", "## Variables Pearson may underrate"])
+            lines.append(
+                markdown_table(
+                    ["Variable", "Pattern", "Gap", "Pearson", "Spearman"],
+                    [
+                        [
+                            entry.column,
+                            entry.result.pattern,
+                            format_markdown_value(self._pearson_underrate_gap(entry)),
+                            format_markdown_value(
+                                self._metrics_map(entry).get("pearson")
+                            ),
+                            format_markdown_value(
+                                self._metrics_map(entry).get("spearman")
+                            ),
+                        ]
+                        for entry in underrate[:top_n]
+                    ],
+                )
+            )
+
+        warned = [e for e in self.successes if self._has_reliability_warning(e)]
+        if warned:
+            warned.sort(key=lambda e: e.column)
+            lines.extend(["", "## Variables with missingness or tie warnings"])
+            lines.append(
+                markdown_table(
+                    ["Variable", "Warning"],
+                    [
+                        [entry.column, self._primary_reliability_warning(entry)]
+                        for entry in warned[:top_n]
+                    ],
+                )
+            )
+
+        skipped_or_failed = [e for e in self.entries if e.status != "ok"]
+        if skipped_or_failed:
+            skipped_or_failed.sort(key=lambda e: (e.status, e.column))
+            lines.extend(["", "## Skipped or failed"])
+            lines.append(
+                markdown_table(
+                    ["Variable", "Status", "Detail", "Message"],
+                    [
+                        [
+                            entry.column,
+                            entry.status,
+                            entry.error_type or "unknown",
+                            entry.error_message or "",
+                        ]
+                        for entry in skipped_or_failed[:top_n]
+                    ],
+                )
+            )
+
+        if include_caveat:
+            lines.extend(["", "## Caveat", _SUMMARY_CAVEAT_BODY])
+
+        return "\n".join(lines)
+
     def pearson_underrated(
         self, threshold: float = _PEARSON_UNDERRATE_GAP
     ) -> pd.DataFrame:
@@ -375,6 +487,28 @@ class CorrSleuthTargetReport:
             f"(pearson={_fmt(metrics.get('pearson'))}, "
             f"spearman={_fmt(metrics.get('spearman'))}, "
             f"disagreement={result.disagreement_score:.2f})"
+        )
+
+    @staticmethod
+    def _markdown_entries_table(entries: List[TargetScanEntry]) -> str:
+        rows = []
+        for entry in entries:
+            metrics = CorrSleuthTargetReport._metrics_map(entry)
+            rows.append(
+                [
+                    entry.column,
+                    entry.result.pattern,
+                    format_markdown_value(metrics.get("pearson")),
+                    format_markdown_value(metrics.get("spearman")),
+                    format_markdown_value(entry.result.disagreement_score),
+                    "; ".join(escape_markdown_cell(w) for w in entry.result.warnings)
+                    if entry.result.warnings
+                    else "",
+                ]
+            )
+        return markdown_table(
+            ["Variable", "Pattern", "Pearson", "Spearman", "Disagreement", "Warnings"],
+            rows,
         )
 
     @staticmethod
