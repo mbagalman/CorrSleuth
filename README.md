@@ -78,3 +78,44 @@ df = make_relationship("independent")
 result = cs.profile_pair(df, "x", "y")
 # Pattern: weak_or_no_relationship
 ```
+
+## How It Works
+
+CorrSleuth takes a fundamentally different approach to bivariate analysis. Instead of relying on a single metric, it computes multiple complementary association measures and compares them:
+
+1. **Pearson**: Captures linear correlation.
+2. **Spearman**: Captures monotonic (rank-based) correlation.
+3. **Kendall tau-b**: A robust rank correlation that handles ties well.
+4. **Distance Correlation** *(Standard mode)*: Captures non-linear dependencies.
+5. **Mutual Information** *(Standard mode)*: Captures arbitrary statistical dependence.
+
+By examining where these metrics **agree or disagree**, CorrSleuth assigns a heuristic diagnostic label (e.g., `monotonic_nonlinear` if Spearman is high but Pearson is low, or `nonmonotonic_dependence` if Distance Correlation is high but Spearman is low).
+
+## API Reference
+
+### `profile_pair()`
+The main entry point for profiling a numeric pair.
+
+```python
+def profile_pair(
+    data: pd.DataFrame,
+    x: str,
+    y: str,
+    mode: str = "lite",           # "lite" or "standard"
+    missing: str = "pairwise",    # "pairwise", "listwise", or "raise"
+    include_caveat: bool = True,  # Includes causal caveats in explanations
+    max_n_for_dcor: int = 20000   # Downsampling cap for Distance Correlation
+) -> CorrSleuthResult
+```
+
+### `CorrSleuthResult`
+The object returned by `profile_pair()`.
+- `.pattern`: The assigned heuristic label (e.g., `"near_linear"`).
+- `.summary()`: Returns a printed tabular summary of the metrics.
+- `.explain()`: Returns a plain-English narrative interpreting the results.
+- `.plot(show=False)`: Generates a 1x3 Matplotlib diagnostic figure.
+- `.to_dict()` / `.to_frame()`: Serializes the output for downstream pipelines.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
