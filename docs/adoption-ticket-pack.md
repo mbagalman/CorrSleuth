@@ -180,7 +180,7 @@ Priority: Phase 1 / High
 
 Status: Complete
 
-Completed in: `pending commit`
+Completed in: `ce6cc6e Integrate outlier sensitivity diagnostic`
 
 Completion notes:
 
