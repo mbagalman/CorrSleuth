@@ -286,9 +286,11 @@ Phase 2 makes CorrSleuth more trustworthy. These features help users understand 
 
 Priority: Phase 2 / High
 
-Status: In review
+Status: Complete
 
-Implementation notes from current branch:
+Completed in: `f0f596a Add bootstrap metric intervals` (refined in `6c17890 Address bootstrap interval review`)
+
+Completion notes:
 
 - `profile_pair()` now accepts `bootstrap`, `bootstrap_metrics`, and `max_n_for_bootstrap`.
 - Bootstrap intervals are opt-in and deterministic via `random_state`.
@@ -353,7 +355,7 @@ Priority: Phase 2 / High
 
 Status: Complete
 
-Completed in: `6c17890 Address bootstrap interval review`
+Completed in: `48b8bf7 Add bootstrap pattern stability (#2)`
 
 Completion notes:
 
@@ -361,7 +363,8 @@ Completion notes:
 - Stability uses the same `bootstrap_metrics` policy as metric intervals.
 - Results expose `result.pattern_stability`, `result.bootstrap_label_counts`, `result.stability_label`, and `result.bootstrap_stability`.
 - `summary()`, `explain()`, `to_dict()`, and `to_frame()` include stability output when available.
-- Lite-only stability adds a caution when the original standard-mode label is `nonmonotonic_dependence`.
+- Lite-only stability adds a caution when the original label is in the standard-only label set (currently `nonmonotonic_dependence`); the set lives in `corrsleuth.heuristics.STANDARD_ONLY_LABELS`.
+- Bootstrap replicates derive heuristic flags via `compute_heuristic_flags`, so resampled labels see the same decision context as the original validated pair.
 
 Goal:
 
