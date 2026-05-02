@@ -126,6 +126,26 @@ def test_plot_returns_figure():
     fig = res.plot(show=False)
     assert isinstance(fig, plt.Figure)
 
+
+def test_plot_text_panel_includes_pattern_metrics_and_diagnostics():
+    df = make_relationship("linear_positive", n=100, random_state=42)
+    res = profile_pair(df, "x", "y")
+
+    fig = res.plot(show=False)
+    text_panel = fig.axes[2]
+    rendered_text = "\n".join(text.get_text() for text in text_panel.texts)
+
+    assert "Primary Pattern" in rendered_text
+    assert res.pattern in rendered_text
+    assert "n_used: 100" in rendered_text
+    assert "Pearson:" in rendered_text
+    assert "Spearman:" in rendered_text
+    assert "Kendall Tau B:" in rendered_text
+    assert "Diagnostics" in rendered_text
+    assert "Disagreement:" in rendered_text
+    assert "Rank-linear gap:" in rendered_text
+    assert "Warnings" in rendered_text
+
 def test_serialization():
     df = make_relationship("linear_positive", n=100)
     res = profile_pair(df, "x", "y")

@@ -2,6 +2,16 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import scipy.stats as stats
 
+
+def _format_value(value) -> str:
+    return f"{value:.3f}" if value is not None and pd.notna(value) else "NA"
+
+
+def _add_text(ax, y_pos: float, text: str, *, x_pos: float = 0.0, line_height: float = 0.06, **kwargs) -> float:
+    ax.text(x_pos, y_pos, text, **kwargs)
+    return y_pos - line_height
+
+
 def plot_pair(result, show: bool = False):
     """
     Creates a compact 1x3 diagnostic plot.
@@ -67,32 +77,47 @@ def plot_pair(result, show: bool = False):
     # 5. Text Summary Panel
     ax_text.axis('off')
     
-    y_pos = 0.95
-    line_height = 0.07
-    
-    ax_text.text(0.0, y_pos, "Primary Pattern:", fontweight='bold', fontsize=11)
-    y_pos -= line_height
-    ax_text.text(0.05, y_pos, result.pattern, fontsize=10, color="firebrick")
-    y_pos -= line_height * 1.5
-    
-    ax_text.text(0.0, y_pos, "Metrics:", fontweight='bold', fontsize=11)
-    y_pos -= line_height
+    y_pos = 0.97
+    line_height = 0.055
+
+    y_pos = _add_text(ax_text, y_pos, "Primary Pattern", fontweight='bold', fontsize=11, line_height=line_height)
+    y_pos = _add_text(ax_text, y_pos, result.pattern, x_pos=0.05, fontsize=10, color="firebrick", line_height=line_height)
+    y_pos = _add_text(ax_text, y_pos, f"n_used: {n}", x_pos=0.05, fontsize=9, color="dimgray", line_height=line_height)
+    y_pos -= line_height * 0.4
+
+    y_pos = _add_text(ax_text, y_pos, "Metrics", fontweight='bold', fontsize=11, line_height=line_height)
     
     for _, row in result.metrics.iterrows():
         m_name = row['metric'].replace('_', ' ').title()
-        m_val = f"{row['value']:.3f}" if pd.notna(row['value']) else "NA"
+        m_val = _format_value(row['value'])
         ax_text.text(0.05, y_pos, f"{m_name}:", fontsize=10)
         ax_text.text(0.5, y_pos, m_val, fontsize=10, fontweight='bold')
         y_pos -= line_height
-        
-    y_pos -= line_height * 0.5
-    
+
+    y_pos -= line_height * 0.4
+    y_pos = _add_text(ax_text, y_pos, "Diagnostics", fontweight='bold', fontsize=11, line_height=line_height)
+    diagnostic_rows = [
+        ("Disagreement", result.diagnostics.disagreement_score),
+        ("Rank-linear gap", result.diagnostics.rank_linear_gap),
+        ("Nonmonotonic gap", result.diagnostics.nonmonotonic_gap),
+        ("Trim delta", result.diagnostics.pearson_trim_delta),
+    ]
+    for label, value in diagnostic_rows:
+        ax_text.text(0.05, y_pos, f"{label}:", fontsize=9)
+        ax_text.text(0.55, y_pos, _format_value(value), fontsize=9, fontweight='bold')
+        y_pos -= line_height
+
+    y_pos -= line_height * 0.4
+
     if result.warnings:
-        ax_text.text(0.0, y_pos, "Warnings:", fontweight='bold', fontsize=11, color="darkorange")
+        ax_text.text(0.0, y_pos, "Warnings", fontweight='bold', fontsize=11, color="darkorange")
         y_pos -= line_height
         for w in result.warnings[:3]: # Show max 3 warnings to avoid overflow
             ax_text.text(0.05, y_pos, f"- {w}", fontsize=9, wrap=True)
             y_pos -= line_height
+    else:
+        y_pos = _add_text(ax_text, y_pos, "Warnings", fontweight='bold', fontsize=11, color="darkorange", line_height=line_height)
+        _add_text(ax_text, y_pos, "None", x_pos=0.05, fontsize=9, color="dimgray", line_height=line_height)
             
     plt.tight_layout(rect=[0, 0, 1, 0.95])
     

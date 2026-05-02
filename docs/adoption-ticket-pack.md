@@ -232,6 +232,17 @@ Acceptance criteria:
 
 Priority: Phase 1 / Medium
 
+Status: Complete
+
+Completed in: `pending commit`
+
+Completion notes:
+
+- The 1x3 plot structure remains: raw scatter, rank-rank scatter, and a text diagnostic panel.
+- The text panel now includes `n_used`, primary pattern, metric values, diagnostic gaps, trim delta, and warnings status.
+- Optional LOWESS remains guarded so smoother availability does not break the required plot contract.
+- Tests now assert the text panel includes the primary pattern, key metrics, diagnostics, and warning section.
+
 Goal:
 
 Make `result.plot()` visually explain why the label was assigned.
