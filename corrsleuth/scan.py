@@ -80,6 +80,10 @@ _VALID_SORT_KEYS: tuple[str, ...] = (
     "kendall_tau_b",
     "distance_correlation",
     "mutual_information",
+    "pearson_trimmed_1pct",
+    "pearson_winsorized_1pct",
+    "biweight_midcorrelation",
+    "pearson_median_clipped_20pct",
 )
 
 
@@ -475,8 +479,9 @@ class CorrSleuthTargetReport:
         sort_by : str, default ``"disagreement_score"``
             Either ``"disagreement_score"`` (sorted by raw value descending) or
             a metric name (``"pearson"``, ``"spearman"``, ``"kendall_tau_b"``,
-            ``"distance_correlation"``, ``"mutual_information"``); metric keys
-            are sorted by absolute value descending.
+            ``"distance_correlation"``, ``"mutual_information"``, or a
+            deep-mode robust metric); metric keys are sorted by absolute value
+            descending.
         patterns : sequence of str, optional
             Only include entries whose ``pattern`` is in this set. A single
             string is normalized to a one-element list. ``None`` (default)
@@ -716,7 +721,7 @@ def scan_target(
         Restrict the scan to these columns. Non-numeric or missing names are
         recorded as ``skipped`` entries rather than raising. When ``None``
         (default), all numeric columns except the target are scanned.
-    mode : {"lite", "standard"}, default "lite"
+    mode : {"lite", "standard", "deep"}, default "lite"
         Forwarded to :func:`profile_pair`.
     missing : {"pairwise", "listwise", "raise"}, default "pairwise"
         Forwarded to :func:`profile_pair`.
