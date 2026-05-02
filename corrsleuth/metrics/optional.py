@@ -79,6 +79,13 @@ def compute_mutual_information(
     if pair.x_is_constant or pair.y_is_constant:
         return MetricResult(name="mutual_information", value=None, available=True)
 
+    if pair.n_used <= 3:
+        pair.warnings.append(
+            "n_used <= 3. Mutual information is not computed because the estimator "
+            "requires more observations."
+        )
+        return MetricResult(name="mutual_information", value=None, available=True)
+
     x = pair.x.values.reshape(-1, 1)
     y = pair.y.values
 

@@ -39,8 +39,11 @@ print(result.pattern)
 print(result.explain())
 
 # Generate a multi-panel diagnostic plot
-fig = result.plot(show=True)
+fig = result.plot()
 ```
+
+Pass `show=True` to `result.plot()` when working interactively and you want
+Matplotlib to display the figure immediately.
 
 Example explanation:
 

@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from corrsleuth.validation.input import validate_pair
+from corrsleuth.api import profile_pair
 from corrsleuth.exceptions import MetricComputationError, OptionalDependencyError
 from corrsleuth.metrics import (
     compute_pearson, compute_spearman, compute_kendall,
@@ -99,6 +100,19 @@ def test_mutual_information_missing_dependency_returns_unavailable_in_lite_mode(
     result = compute_mutual_information(pair, mode="lite")
     assert result.available is False
     assert result.value is None
+
+
+def test_standard_mode_small_sample_returns_low_power_result():
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
+    df = pd.DataFrame({"x": [1, 2, 3], "y": [1, 3, 2]})
+
+    result = profile_pair(df, "x", "y", mode="standard")
+
+    assert result.pattern == "low_power_or_uncertain"
+    mi = result.metrics.loc[result.metrics["metric"] == "mutual_information", "value"].iloc[0]
+    assert pd.isna(mi)
+    assert any("Mutual information is not computed" in w for w in result.warnings)
 
 
 def test_compute_pearson_wraps_unexpected_failures_as_metric_error(monkeypatch):
