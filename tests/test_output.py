@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from corrsleuth.exceptions import InputError
 from corrsleuth.result import CorrSleuthResult
+from corrsleuth.utils.markdown import escape_markdown_cell, markdown_table
 
 
 def _result_for_explanation(pattern, metric_values):
@@ -133,7 +134,7 @@ def test_pair_result_to_markdown_includes_core_sections():
     assert "| Metric | Value |" in markdown
     assert "| pearson |" in markdown
     assert "## Diagnostics" in markdown
-    assert "| disagreement_score |" in markdown
+    assert "| disagreement\\_score |" in markdown
     assert "## Warnings" in markdown
     assert "## Recommendations" in markdown
     assert "## Caveat" in markdown
@@ -160,6 +161,17 @@ def test_pair_result_to_markdown_includes_bootstrap_sections():
     assert "| Metric | CI low | CI high | Successful samples | Metric set |" in markdown
     assert "## Pattern Stability" in markdown
     assert "| Stability | Label | Metric set | Samples | Label counts |" in markdown
+    assert "{" not in markdown
+    assert "near\\_linear:" in markdown
+
+
+def test_markdown_helpers_escape_cells_and_handle_arrays():
+    assert escape_markdown_cell("a | b\nnear_linear *x* [y] `z`") == (
+        "a \\| b near\\_linear \\*x\\* \\[y\\] \\`z\\`"
+    )
+    rendered = markdown_table(["Value"], [[np.array([1, 2])]])
+
+    assert "\\[1 2\\]" in rendered
     
 def test_plot_returns_figure():
     df = make_relationship("linear_positive", n=100)

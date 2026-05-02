@@ -201,10 +201,90 @@ def test_target_report_to_markdown_includes_grouped_sections():
     assert "## Variables Pearson may underrate" in markdown
     assert "## Skipped or failed" in markdown
     assert "| Variable | Pattern | Pearson | Spearman | Disagreement | Warnings |" in markdown
-    assert "log_shape" in markdown
+    assert "log\\_shape" in markdown
     assert "label" in markdown
     assert "## Caveat" in markdown
     assert "Pairwise association does not imply causation" in markdown
+
+
+def test_target_report_to_markdown_is_deterministic_with_snapshot():
+    df = _build_clean_df()
+    report = scan_target(df, "target")
+
+    first = report.to_markdown(include_caveat=False)
+    second = report.to_markdown(include_caveat=False)
+
+    assert first == second
+    assert first == "\n".join([
+        "# CorrSleuth Target Report: `target`",
+        "",
+        "## Overview",
+        "| Profiled | Errored | Skipped |",
+        "| --- | --- | --- |",
+        "| 2 | 0 | 0 |",
+        "",
+        "## Strongest near-linear relationships",
+        "| Variable | Pattern | Pearson | Spearman | Disagreement | Warnings |",
+        "| --- | --- | --- | --- | --- | --- |",
+        "| linear | near\\_linear | 0.981 | 0.976 | 0.005 |  |",
+        "",
+        "## Weak or no pairwise relationships",
+        "| Variable | Pattern | Pearson | Spearman | Disagreement | Warnings |",
+        "| --- | --- | --- | --- | --- | --- |",
+        "| noise | weak\\_or\\_no\\_relationship | 0.008 | 0.039 | 0.031 |  |",
+    ])
+
+
+def test_target_report_to_markdown_lists_reliability_warning_section():
+    rng = np.random.default_rng(0)
+    n = 200
+    df = pd.DataFrame({
+        "target": rng.normal(size=n),
+        "discrete": (rng.integers(0, 12, size=n)).astype(float),
+        "clean": rng.normal(size=n),
+    })
+    report = scan_target(df, "target")
+
+    markdown = report.to_markdown(include_caveat=False)
+
+    assert "## Variables with missingness or tie warnings" in markdown
+    reliability_idx = markdown.index("## Variables with missingness or tie warnings")
+    section = markdown[reliability_idx:]
+    assert "discrete" in section
+    assert "tie rate" in section
+    assert "clean" not in section
+
+
+def test_target_report_to_markdown_omits_empty_cross_cutting_sections():
+    rng = np.random.default_rng(0)
+    n = 200
+    target = rng.uniform(-3, 3, size=n)
+    df = pd.DataFrame({
+        "target": target,
+        "linear": target + rng.normal(0, 0.1, size=n),
+    })
+    report = scan_target(df, "target")
+
+    markdown = report.to_markdown(include_caveat=False)
+
+    assert "## Variables Pearson may underrate" not in markdown
+    assert "## Variables with missingness or tie warnings" not in markdown
+    assert "## Skipped or failed" not in markdown
+
+
+def test_target_report_to_markdown_includes_other_or_inconclusive():
+    rng = np.random.default_rng(0)
+    n = 25
+    df = pd.DataFrame({
+        "target": rng.normal(size=n),
+        "candidate": rng.normal(size=n),
+    })
+    report = scan_target(df, "target")
+
+    markdown = report.to_markdown(include_caveat=False)
+
+    assert "## Other or inconclusive" in markdown
+    assert "low\\_power\\_or\\_uncertain" in markdown
 
 
 def test_target_report_to_markdown_can_suppress_caveat():

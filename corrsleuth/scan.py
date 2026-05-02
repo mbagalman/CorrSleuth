@@ -69,11 +69,12 @@ _RELIABILITY_WARNING_KEYWORDS: tuple[str, ...] = (
     "constant",
 )
 
-_SUMMARY_CAVEAT = (
-    "Caveat: Pairwise association does not imply causation or predictive "
+_SUMMARY_CAVEAT_BODY = (
+    "Pairwise association does not imply causation or predictive "
     "usefulness by itself. Always inspect the diagnostic plots and validate "
     "with proper analysis."
 )
+_SUMMARY_CAVEAT = f"Caveat: {_SUMMARY_CAVEAT_BODY}"
 
 #: Valid ``sort_by`` keys for :meth:`CorrSleuthTargetReport.plot_top`. Metric
 #: names are sorted by absolute value descending; ``disagreement_score`` is
@@ -374,7 +375,7 @@ class CorrSleuthTargetReport:
             )
 
         if include_caveat:
-            lines.extend(["", "## Caveat", _SUMMARY_CAVEAT.removeprefix("Caveat: ")])
+            lines.extend(["", "## Caveat", _SUMMARY_CAVEAT_BODY])
 
         return "\n".join(lines)
 

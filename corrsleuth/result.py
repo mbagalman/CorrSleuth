@@ -274,7 +274,9 @@ class CorrSleuthResult:
                                 stability.stability_label,
                                 stability.metric_set,
                                 f"{int(stability.n_iterations)}/{int(stability.n_bootstrap)}",
-                                stability.bootstrap_label_counts,
+                                self._format_label_counts(
+                                    stability.bootstrap_label_counts
+                                ),
                             ]
                         ],
                     ),
@@ -299,6 +301,11 @@ class CorrSleuthResult:
             lines.extend(["", "## Caveat", _CAVEAT])
 
         return "\n".join(lines)
+
+    @staticmethod
+    def _format_label_counts(label_counts: Dict[str, int]) -> str:
+        items = sorted(label_counts.items(), key=lambda item: (-item[1], item[0]))
+        return "; ".join(f"{label}: {count}" for label, count in items)
 
     def to_dict(self) -> Dict[str, Any]:
         """

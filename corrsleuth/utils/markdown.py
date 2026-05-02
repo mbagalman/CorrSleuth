@@ -13,9 +13,23 @@ def format_markdown_value(value: Optional[float]) -> str:
 def escape_markdown_cell(value: Any) -> str:
     if value is None:
         return "NA"
-    if not isinstance(value, (dict, list, tuple, set)) and pd.isna(value):
+    try:
+        is_missing = pd.isna(value)
+    except (TypeError, ValueError):
+        is_missing = False
+    if isinstance(is_missing, bool) and is_missing:
         return "NA"
-    return str(value).replace("\n", " ").replace("|", "\\|")
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace("\n", " ")
+        .replace("|", "\\|")
+        .replace("_", "\\_")
+        .replace("*", "\\*")
+        .replace("`", "\\`")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+    )
 
 
 def markdown_table(headers: List[str], rows: List[List[Any]]) -> str:
