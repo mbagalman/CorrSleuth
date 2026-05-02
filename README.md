@@ -165,14 +165,15 @@ def profile_pair(
 ) -> CorrSleuthResult
 ```
 
-Set `bootstrap=200` to compute approximate 95% bootstrap intervals for
-Pearson, Spearman, and Kendall tau-b. Bootstrap intervals are disabled by
-default. Even in `mode="standard"`, bootstrap uses lite metrics unless you
-explicitly pass `bootstrap_metrics="standard"`, because distance correlation
-and mutual information can be expensive to resample. Standard bootstrap metrics
-require the `[standard]` extras even when the main `profile_pair()` call uses
-`mode="lite"`. Higher bootstrap counts and standard metrics can take many
-seconds on larger datasets, especially with distance correlation.
+Set `bootstrap=200` to compute approximate 95% bootstrap intervals and pattern
+stability for Pearson, Spearman, and Kendall tau-b. Bootstrap diagnostics are
+disabled by default. Even in `mode="standard"`, bootstrap uses lite metrics
+unless you explicitly pass `bootstrap_metrics="standard"`, because distance
+correlation and mutual information can be expensive to resample. Standard
+bootstrap metrics require the `[standard]` extras even when the main
+`profile_pair()` call uses `mode="lite"`. Higher bootstrap counts and standard
+metrics can take many seconds on larger datasets, especially with distance
+correlation.
 
 ### `CorrSleuthResult`
 The object returned by `profile_pair()`.
@@ -181,6 +182,9 @@ The object returned by `profile_pair()`.
 - `.explain()`: Returns a plain-English narrative interpreting the results.
 - `.plot(show=False)`: Generates a 1x3 Matplotlib diagnostic figure.
 - `.bootstrap_intervals`: Optional bootstrap interval table when requested.
+- `.pattern_stability`: Optional share of bootstrap samples with the same label.
+- `.bootstrap_label_counts`: Optional diagnostic label counts from bootstrap samples.
+- `.stability_label`: Optional `"low"`, `"medium"`, or `"high"` stability label.
 - `.to_dict()` / `.to_frame()`: Serializes the output for downstream pipelines.
 
 ## License

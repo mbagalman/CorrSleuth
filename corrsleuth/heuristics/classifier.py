@@ -5,6 +5,11 @@ from .explanations import generate_recommendations
 
 CONFLICTING_SIGN_THRESHOLD = 0.3
 
+#: Heuristic labels that can only be assigned when standard-mode metrics
+#: (distance correlation, mutual information) are available. Bootstrap stability
+#: computed on lite metrics cannot fully test these labels.
+STANDARD_ONLY_LABELS = frozenset({"nonmonotonic_dependence"})
+
 
 def apply_heuristics(
     metrics: Dict[str, MetricResult], flags: List[str], n_used: int

@@ -29,6 +29,22 @@ def is_constant_series(series: pd.Series) -> bool:
     return series.nunique() <= 1 or series.std() == 0
 
 
+def compute_heuristic_flags(pair: "CleanPair") -> List[str]:
+    """Return the subset of CleanPair flags that the heuristic cascade reads.
+
+    Validation also emits warning-only flags (``high_missingness``,
+    ``low_unique_ratio``) that ``apply_heuristics`` ignores; this helper exposes
+    the heuristic-relevant flags so bootstrap replicates can synthesize the same
+    decision context as the original validated pair.
+    """
+    flags: List[str] = []
+    if pair.x_is_constant or pair.y_is_constant:
+        flags.append("constant_input")
+    if pair.n_used < 30:
+        flags.append("low_n")
+    return flags
+
+
 def validate_pair(data: pd.DataFrame, x: str, y: str, missing: str = "pairwise") -> CleanPair:
     if x not in data.columns:
         raise InputError(f"Column '{x}' not found in data.")

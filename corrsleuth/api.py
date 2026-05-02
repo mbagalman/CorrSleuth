@@ -11,7 +11,7 @@ from corrsleuth.metrics import (
     compute_kendall,
     compute_distance_correlation,
     compute_mutual_information,
-    compute_bootstrap_intervals,
+    compute_bootstrap,
 )
 from corrsleuth.heuristics import apply_heuristics, detect_metric_warnings
 from corrsleuth.exceptions import InputError
@@ -199,12 +199,13 @@ def profile_pair(
 
     disagreement_score = abs(abs_p - abs_s) + max(0.0, dc - max(abs_p, abs_s))
     diagnostics = _build_diagnostics(metrics_map, disagreement_score, outlier_sensitivity)
-    bootstrap_intervals = compute_bootstrap_intervals(
+    bootstrap_result = compute_bootstrap(
         pair,
         bootstrap=bootstrap,
         bootstrap_metrics=bootstrap_metrics,
         random_state=random_state,
         max_n_for_bootstrap=max_n_for_bootstrap,
+        original_pattern=heuristic_result.label,
     )
 
     return CorrSleuthResult(
@@ -216,7 +217,8 @@ def profile_pair(
         recommendations=heuristic_result.recommendations,
         disagreement_score=disagreement_score,
         diagnostics=diagnostics,
-        bootstrap_intervals=bootstrap_intervals,
+        bootstrap_intervals=bootstrap_result.intervals,
+        bootstrap_stability=bootstrap_result.stability,
         _clean_x=pair.x,
         _clean_y=pair.y,
         _include_caveat=include_caveat,

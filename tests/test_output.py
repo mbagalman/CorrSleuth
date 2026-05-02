@@ -203,27 +203,40 @@ def test_bootstrap_intervals_are_deterministic_and_serialized():
     res2 = profile_pair(df, "x", "y", bootstrap=25, random_state=123)
 
     assert res1.bootstrap_intervals is not None
+    assert res1.bootstrap_stability is not None
     assert list(res1.bootstrap_intervals["metric"]) == [
         "pearson",
         "spearman",
         "kendall_tau_b",
     ]
     pd.testing.assert_frame_equal(res1.bootstrap_intervals, res2.bootstrap_intervals)
+    assert res1.bootstrap_stability.to_dict() == res2.bootstrap_stability.to_dict()
     assert (res1.bootstrap_intervals["ci_low"] <= res1.bootstrap_intervals["ci_high"]).all()
 
     summary = res1.summary(include_caveat=False)
     assert "Bootstrap intervals:" in summary
+    assert "Pattern stability:" in summary
     assert "pearson" in summary
 
     as_dict = res1.to_dict()
     assert as_dict["bootstrap_intervals"] is not None
+    assert as_dict["bootstrap_stability"] is not None
+    assert as_dict["pattern_stability"] == pytest.approx(res1.pattern_stability)
+    assert as_dict["bootstrap_label_counts"] == res1.bootstrap_label_counts
+    assert as_dict["stability_label"] == res1.stability_label
 
     frame = res1.to_frame()
     assert "bootstrap_ci_low" in frame.columns
     assert "bootstrap_ci_high" in frame.columns
     assert "bootstrap_sample_size" in frame.columns
+    assert "pattern_stability" in frame.columns
+    assert "stability_label" in frame.columns
+    assert "stability_metric_set" in frame.columns
     assert "bootstrap_pearson_ci_low" not in frame.columns
     assert "bootstrap_spearman_ci_high" not in frame.columns
+
+    explanation = res1.explain(include_caveat=False)
+    assert "Bootstrap resampling assigned the same diagnostic label" in explanation
 
 
 def test_standard_mode_bootstrap_defaults_to_lite_metrics():
@@ -239,6 +252,8 @@ def test_standard_mode_bootstrap_defaults_to_lite_metrics():
         "spearman",
         "kendall_tau_b",
     }
+    assert res.bootstrap_stability is not None
+    assert res.bootstrap_stability.metric_set == "lite"
 
 
 def test_standard_bootstrap_metrics_require_explicit_opt_in():
@@ -259,6 +274,8 @@ def test_standard_bootstrap_metrics_require_explicit_opt_in():
     assert res.bootstrap_intervals is not None
     assert "distance_correlation" in set(res.bootstrap_intervals["metric"])
     assert "mutual_information" in set(res.bootstrap_intervals["metric"])
+    assert res.bootstrap_stability is not None
+    assert res.bootstrap_stability.metric_set == "standard"
 
 
 @pytest.mark.parametrize(
@@ -295,6 +312,8 @@ def test_bootstrap_sequence_metric_set_is_preserved():
     assert res.bootstrap_intervals is not None
     assert list(res.bootstrap_intervals["metric"]) == ["pearson"]
     assert res.bootstrap_intervals["metric_set"].iloc[0] == "pearson"
+    assert res.bootstrap_stability is not None
+    assert res.bootstrap_stability.metric_set == "pearson"
 
 
 def test_bootstrap_cap_warning_reaches_result_and_records_sample_size():
@@ -312,6 +331,74 @@ def test_bootstrap_cap_warning_reaches_result_and_records_sample_size():
     assert res.bootstrap_intervals is not None
     assert set(res.bootstrap_intervals["sample_size"]) == {40}
     assert any("Bootstrap samples are capped at 40 rows" in w for w in res.warnings)
+
+
+def test_lite_pattern_stability_caveat_for_standard_nonmonotonic_label():
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
+    df = make_relationship("u_shape", n=120, random_state=42)
+
+    res = profile_pair(df, "x", "y", mode="standard", bootstrap=10, random_state=123)
+
+    assert res.pattern == "nonmonotonic_dependence"
+    assert res.bootstrap_stability is not None
+    assert res.bootstrap_stability.metric_set == "lite"
+    assert any("may not fully test" in w for w in res.warnings)
+    assert "may not fully test" in res.explain(include_caveat=False)
+
+
+def test_bootstrap_stability_is_none_when_disabled():
+    df = make_relationship("linear_positive", n=80, random_state=42)
+    res = profile_pair(df, "x", "y")
+
+    assert res.bootstrap_intervals is None
+    assert res.bootstrap_stability is None
+    assert res.pattern_stability is None
+    assert res.bootstrap_label_counts is None
+    assert res.stability_label is None
+
+
+def test_bootstrap_label_counts_sum_matches_iterations():
+    df = make_relationship("linear_positive", n=80, random_state=42)
+    res = profile_pair(df, "x", "y", bootstrap=15, random_state=123)
+
+    stability = res.bootstrap_stability
+    assert stability is not None
+    assert sum(stability.bootstrap_label_counts.values()) == stability.n_iterations
+    assert stability.n_iterations == stability.n_bootstrap == 15
+    assert res.pattern in stability.bootstrap_label_counts
+
+
+def test_stability_label_thresholds():
+    from corrsleuth.metrics.bootstrap import _stability_label
+
+    assert _stability_label(0.0) == "low"
+    assert _stability_label(0.49) == "low"
+    assert _stability_label(0.50) == "medium"
+    assert _stability_label(0.51) == "medium"
+    assert _stability_label(0.79) == "medium"
+    assert _stability_label(0.80) == "high"
+    assert _stability_label(0.81) == "high"
+    assert _stability_label(1.0) == "high"
+
+
+def test_compute_bootstrap_intervals_wrapper_returns_only_intervals():
+    from corrsleuth.metrics import compute_bootstrap_intervals
+    from corrsleuth.validation.input import validate_pair
+
+    df = make_relationship("linear_positive", n=80, random_state=42)
+    pair = validate_pair(df, "x", "y")
+
+    intervals = compute_bootstrap_intervals(
+        pair=pair,
+        bootstrap=10,
+        bootstrap_metrics="lite",
+        random_state=123,
+        max_n_for_bootstrap=5000,
+    )
+
+    assert isinstance(intervals, pd.DataFrame)
+    assert set(intervals["metric"]) == {"pearson", "spearman", "kendall_tau_b"}
 
 
 def test_constant_input_safe_rendering():

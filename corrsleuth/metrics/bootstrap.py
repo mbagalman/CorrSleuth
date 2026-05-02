@@ -1,15 +1,21 @@
+from dataclasses import asdict, dataclass
 from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
 
 from corrsleuth.exceptions import InputError
+from corrsleuth.heuristics import STANDARD_ONLY_LABELS, apply_heuristics
 from corrsleuth.metrics.core import compute_kendall, compute_pearson, compute_spearman
 from corrsleuth.metrics.optional import (
     compute_distance_correlation,
     compute_mutual_information,
 )
-from corrsleuth.validation.input import CleanPair, is_constant_series
+from corrsleuth.validation.input import (
+    CleanPair,
+    compute_heuristic_flags,
+    is_constant_series,
+)
 
 _LITE_BOOTSTRAP_METRICS = ("pearson", "spearman", "kendall_tau_b")
 _STANDARD_BOOTSTRAP_METRICS = (
@@ -19,6 +25,28 @@ _STANDARD_BOOTSTRAP_METRICS = (
     "distance_correlation",
     "mutual_information",
 )
+
+_STABILITY_HIGH_THRESHOLD = 0.80
+_STABILITY_MEDIUM_THRESHOLD = 0.50
+
+
+@dataclass
+class BootstrapStability:
+    pattern_stability: float
+    bootstrap_label_counts: dict[str, int]
+    stability_label: str
+    metric_set: str
+    n_bootstrap: int
+    n_iterations: int
+
+    def to_dict(self):
+        return asdict(self)
+
+
+@dataclass
+class BootstrapResult:
+    intervals: Optional[pd.DataFrame]
+    stability: Optional[BootstrapStability]
 
 
 def _resolve_bootstrap_metrics(bootstrap_metrics: str | Sequence[str]) -> tuple[str, ...]:
@@ -75,6 +103,16 @@ def _bootstrap_sample_pair(pair: CleanPair, idx) -> CleanPair:
     )
 
 
+def _bootstrap_flags(pair: CleanPair) -> list[str]:
+    flags = compute_heuristic_flags(pair)
+    # Bootstrap doesn't recompute Pearson trim sensitivity per replicate; signal
+    # that to the heuristic via outlier_sensitivity_unavailable so the
+    # possible_outlier_or_leverage rule can still gate when n is large enough.
+    if "low_n" not in flags:
+        flags.append("outlier_sensitivity_unavailable")
+    return flags
+
+
 def _compute_bootstrap_metric(name: str, pair: CleanPair, random_state: int):
     if name == "pearson":
         return compute_pearson(pair)
@@ -91,13 +129,11 @@ def _compute_bootstrap_metric(name: str, pair: CleanPair, random_state: int):
     raise InputError(f"Unsupported bootstrap metric: {name}")
 
 
-def compute_bootstrap_intervals(
-    pair: CleanPair,
+def _validate_bootstrap_inputs(
     bootstrap: Optional[int],
     bootstrap_metrics: str | Sequence[str],
-    random_state: int,
     max_n_for_bootstrap: Optional[int],
-) -> Optional[pd.DataFrame]:
+) -> Optional[tuple[tuple[str, ...], str]]:
     if bootstrap is None:
         return None
     if isinstance(bootstrap, bool) or not isinstance(bootstrap, int):
@@ -118,6 +154,34 @@ def compute_bootstrap_intervals(
     if not metric_names:
         raise InputError("bootstrap_metrics must include at least one metric.")
     metric_set = _metric_set_label(bootstrap_metrics, metric_names)
+    return metric_names, metric_set
+
+
+def _stability_label(pattern_stability: float) -> str:
+    if pattern_stability >= _STABILITY_HIGH_THRESHOLD:
+        return "high"
+    if pattern_stability >= _STABILITY_MEDIUM_THRESHOLD:
+        return "medium"
+    return "low"
+
+
+def compute_bootstrap(
+    pair: CleanPair,
+    bootstrap: Optional[int],
+    bootstrap_metrics: str | Sequence[str],
+    random_state: int,
+    max_n_for_bootstrap: Optional[int],
+    original_pattern: Optional[str] = None,
+) -> BootstrapResult:
+    resolved = _validate_bootstrap_inputs(
+        bootstrap=bootstrap,
+        bootstrap_metrics=bootstrap_metrics,
+        max_n_for_bootstrap=max_n_for_bootstrap,
+    )
+    if resolved is None:
+        return BootstrapResult(intervals=None, stability=None)
+
+    metric_names, metric_set = resolved
 
     sample_size = pair.n_used
     if max_n_for_bootstrap is not None and sample_size > max_n_for_bootstrap:
@@ -134,14 +198,26 @@ def compute_bootstrap_intervals(
 
     generator = np.random.default_rng(random_state)
     values = {name: [] for name in metric_names}
+    label_counts: dict[str, int] = {}
+    n_iterations = 0
 
     for i in range(bootstrap):
         idx = generator.choice(pair.n_used, size=sample_size, replace=True)
         sample_pair = _bootstrap_sample_pair(pair, idx)
+        sample_metrics = {}
         for name in metric_names:
             metric = _compute_bootstrap_metric(name, sample_pair, random_state + i + 1)
+            sample_metrics[name] = metric
             if metric.value is not None and pd.notna(metric.value):
                 values[name].append(float(metric.value))
+
+        heuristic = apply_heuristics(
+            sample_metrics,
+            _bootstrap_flags(sample_pair),
+            sample_pair.n_used,
+        )
+        label_counts[heuristic.label] = label_counts.get(heuristic.label, 0) + 1
+        n_iterations += 1
 
     records = []
     for name in metric_names:
@@ -178,4 +254,44 @@ def compute_bootstrap_intervals(
             + "were non-computable."
         )
 
-    return pd.DataFrame(records)
+    intervals = pd.DataFrame(records)
+    stability = None
+    if original_pattern is not None:
+        pattern_stability = (
+            label_counts.get(original_pattern, 0) / n_iterations
+            if n_iterations
+            else 0.0
+        )
+        stability = BootstrapStability(
+            pattern_stability=float(pattern_stability),
+            bootstrap_label_counts=label_counts,
+            stability_label=_stability_label(pattern_stability),
+            metric_set=metric_set,
+            n_bootstrap=bootstrap,
+            n_iterations=n_iterations,
+        )
+
+        if original_pattern in STANDARD_ONLY_LABELS and metric_set == "lite":
+            pair.warnings.append(
+                f"Pattern stability used lite bootstrap metrics, so it may not "
+                f"fully test a standard-mode {original_pattern} label."
+            )
+
+    return BootstrapResult(intervals=intervals, stability=stability)
+
+
+def compute_bootstrap_intervals(
+    pair: CleanPair,
+    bootstrap: Optional[int],
+    bootstrap_metrics: str | Sequence[str],
+    random_state: int,
+    max_n_for_bootstrap: Optional[int],
+) -> Optional[pd.DataFrame]:
+    return compute_bootstrap(
+        pair=pair,
+        bootstrap=bootstrap,
+        bootstrap_metrics=bootstrap_metrics,
+        random_state=random_state,
+        max_n_for_bootstrap=max_n_for_bootstrap,
+        original_pattern=None,
+    ).intervals
