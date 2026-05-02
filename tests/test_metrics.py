@@ -11,7 +11,7 @@ from corrsleuth.metrics import (
     compute_pearson, compute_spearman, compute_kendall,
     compute_distance_correlation, compute_mutual_information,
     compute_trimmed_pearson, compute_winsorized_pearson,
-    compute_biweight_midcorrelation, compute_percentage_bend_correlation,
+    compute_biweight_midcorrelation, compute_median_clipped_pearson,
 )
 
 def test_core_metrics():
@@ -145,7 +145,7 @@ def test_deep_mode_adds_robust_metrics_without_standard_dependencies():
         "pearson_trimmed_1pct",
         "pearson_winsorized_1pct",
         "biweight_midcorrelation",
-        "percentage_bend_correlation",
+        "pearson_median_clipped_20pct",
     }
     assert robust_metrics.isdisjoint(lite_metrics)
     assert robust_metrics <= deep_metrics
@@ -153,16 +153,17 @@ def test_deep_mode_adds_robust_metrics_without_standard_dependencies():
     assert "mutual_information" not in deep_metrics
 
 
-def test_robust_metrics_return_none_for_small_samples_with_warning():
+def test_deep_mode_emits_one_small_sample_robust_warning():
     df = pd.DataFrame({"x": range(40), "y": range(40)})
-    pair = validate_pair(df, "x", "y")
 
-    result = compute_trimmed_pearson(pair)
+    result = profile_pair(df, "x", "y", mode="deep")
 
-    assert result.name == "pearson_trimmed_1pct"
-    assert result.value is None
-    assert result.available is True
-    assert any("robust correlation diagnostics need more observations" in w for w in pair.warnings)
+    robust_warnings = [
+        w for w in result.warnings if "deep-mode robust correlation diagnostics" in w
+    ]
+    assert robust_warnings == [
+        "n_used < 50; deep-mode robust correlation diagnostics are not computed."
+    ]
 
 
 def test_robust_metrics_are_near_pearson_for_clean_linear_data():
@@ -173,7 +174,7 @@ def test_robust_metrics_are_near_pearson_for_clean_linear_data():
         compute_trimmed_pearson(pair),
         compute_winsorized_pearson(pair),
         compute_biweight_midcorrelation(pair),
-        compute_percentage_bend_correlation(pair),
+        compute_median_clipped_pearson(pair),
     ]
 
     assert all(r.value == pytest.approx(1.0) for r in results)
@@ -195,5 +196,23 @@ def test_outlier_driven_data_shows_meaningful_pearson_robust_gap():
     }
 
     assert metrics["pearson"] > 0.90
-    assert metrics["pearson_trimmed_1pct"] < 0.50
-    assert metrics["pearson"] - metrics["pearson_trimmed_1pct"] > 0.40
+    for metric_name in (
+        "pearson_trimmed_1pct",
+        "pearson_winsorized_1pct",
+        "biweight_midcorrelation",
+        "pearson_median_clipped_20pct",
+    ):
+        assert metrics[metric_name] < 0.50
+        assert metrics["pearson"] - metrics[metric_name] > 0.40
+
+
+def test_robust_metrics_return_none_when_mad_or_bend_scale_is_zero():
+    x = [0.0] * 51 + [1.0] * 9
+    y = list(range(60))
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    biweight = compute_biweight_midcorrelation(pair)
+    median_clipped = compute_median_clipped_pearson(pair)
+
+    assert biweight.value is None
+    assert median_clipped.value is None

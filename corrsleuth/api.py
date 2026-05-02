@@ -3,7 +3,7 @@ from typing import Optional, Sequence
 import pandas as pd
 import scipy.stats as stats
 
-from corrsleuth.result import CorrSleuthResult, MetricDiagnostics
+from corrsleuth.result import CorrSleuthResult, MetricDiagnostics, MetricResult
 from corrsleuth.validation.input import validate_pair
 from corrsleuth.metrics import (
     compute_pearson,
@@ -11,10 +11,10 @@ from corrsleuth.metrics import (
     compute_kendall,
     compute_distance_correlation,
     compute_mutual_information,
-    compute_trimmed_pearson,
+    ROBUST_METRIC_MIN_N,
     compute_winsorized_pearson,
     compute_biweight_midcorrelation,
-    compute_percentage_bend_correlation,
+    compute_median_clipped_pearson,
     compute_bootstrap,
 )
 from corrsleuth.heuristics import apply_heuristics, detect_metric_warnings
@@ -171,14 +171,6 @@ def profile_pair(
             pair, mode=mode, random_state=random_state
         )
 
-    if mode == "deep":
-        metrics_map["pearson_trimmed_1pct"] = compute_trimmed_pearson(pair)
-        metrics_map["pearson_winsorized_1pct"] = compute_winsorized_pearson(pair)
-        metrics_map["biweight_midcorrelation"] = compute_biweight_midcorrelation(pair)
-        metrics_map["percentage_bend_correlation"] = (
-            compute_percentage_bend_correlation(pair)
-        )
-
     # 3. Outlier sensitivity check (informs the leverage label)
     baseline_pearson = _metric_value(metrics_map, "pearson")
     outlier_sensitivity = _compute_outlier_sensitivity(pair, baseline_pearson)
@@ -192,6 +184,23 @@ def profile_pair(
         pair.flags.append("pearson_trim_stable")
     else:
         pair.flags.append("outlier_sensitivity_unavailable")
+
+    if mode == "deep":
+        if pair.n_used < ROBUST_METRIC_MIN_N:
+            pair.warnings.append(
+                f"n_used < {ROBUST_METRIC_MIN_N}; deep-mode robust correlation "
+                "diagnostics are not computed."
+            )
+        metrics_map["pearson_trimmed_1pct"] = MetricResult(
+            name="pearson_trimmed_1pct",
+            value=outlier_sensitivity["trimmed"],
+            available=True,
+        )
+        metrics_map["pearson_winsorized_1pct"] = compute_winsorized_pearson(pair)
+        metrics_map["biweight_midcorrelation"] = compute_biweight_midcorrelation(pair)
+        metrics_map["pearson_median_clipped_20pct"] = (
+            compute_median_clipped_pearson(pair)
+        )
 
     # 4. Apply heuristics and metric-agreement warnings
     heuristic_result = apply_heuristics(metrics_map, pair.flags, pair.n_used)

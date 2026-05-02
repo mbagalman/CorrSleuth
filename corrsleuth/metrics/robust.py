@@ -17,10 +17,11 @@ from corrsleuth.validation.input import CleanPair
 _TAIL_FRACTION = 0.01
 _MIN_N_FOR_ROBUST = 50
 _MIN_N_AFTER_TRIM = 30
+ROBUST_METRIC_MIN_N = _MIN_N_FOR_ROBUST
 
 
 def _pearson_from_arrays(name: str, x: np.ndarray, y: np.ndarray) -> MetricResult:
-    if len(x) < 2 or len(y) < 2 or np.unique(x).size <= 1 or np.unique(y).size <= 1:
+    if len(x) < 2 or np.all(x == x[0]) or np.all(y == y[0]):
         return MetricResult(name=name, value=None, available=True)
     try:
         r, _ = stats.pearsonr(x, y)
@@ -35,10 +36,6 @@ def _insufficient_pair(pair: CleanPair, name: str) -> MetricResult | None:
     if pair.x_is_constant or pair.y_is_constant:
         return MetricResult(name=name, value=None, available=True)
     if pair.n_used < _MIN_N_FOR_ROBUST:
-        pair.warnings.append(
-            f"n_used < {_MIN_N_FOR_ROBUST}. {name} is not computed because robust "
-            "correlation diagnostics need more observations."
-        )
         return MetricResult(name=name, value=None, available=True)
     return None
 
@@ -119,9 +116,9 @@ def compute_biweight_midcorrelation(pair: CleanPair) -> MetricResult:
     )
 
 
-def compute_percentage_bend_correlation(pair: CleanPair) -> MetricResult:
-    """Percentage bend correlation with 20% bending around each median."""
-    name = "percentage_bend_correlation"
+def compute_median_clipped_pearson(pair: CleanPair) -> MetricResult:
+    """Pearson after clipping deviations around each median at the 80th percentile."""
+    name = "pearson_median_clipped_20pct"
     insufficient = _insufficient_pair(pair, name)
     if insufficient is not None:
         return insufficient
@@ -136,5 +133,5 @@ def _bend(values: np.ndarray, beta: float = 0.20) -> np.ndarray:
     centered = values - median
     omega = np.quantile(np.abs(centered), 1 - beta)
     if omega == 0:
-        return centered
+        return np.zeros_like(centered)
     return np.clip(centered, -omega, omega)

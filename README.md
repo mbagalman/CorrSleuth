@@ -102,7 +102,7 @@ CorrSleuth takes a fundamentally different approach to bivariate analysis. Inste
 3. **Kendall tau-b**: A robust rank correlation that handles ties well.
 4. **Distance Correlation** *(Standard mode)*: Captures non-linear dependencies.
 5. **Mutual Information** *(Standard mode)*: Captures arbitrary statistical dependence.
-6. **Robust Pearson-family diagnostics** *(Deep mode)*: Trimmed Pearson, winsorized Pearson, biweight midcorrelation, and percentage bend correlation help check whether Pearson appears sensitive to extreme values.
+6. **Robust Pearson-family diagnostics** *(Deep mode)*: Trimmed Pearson, winsorized Pearson, biweight midcorrelation, and median-clipped Pearson help check whether Pearson appears sensitive to extreme values.
 
 By examining where these metrics **agree or disagree**, CorrSleuth assigns a heuristic diagnostic label (e.g., `monotonic_nonlinear` if Spearman is high but Pearson is low, or `nonmonotonic_dependence` if Distance Correlation is high but Spearman is low).
 
@@ -158,13 +158,15 @@ installation lightweight:
 - `pearson_trimmed_1pct`: Pearson after dropping rows outside the 1st/99th percentile range of either variable.
 - `pearson_winsorized_1pct`: Pearson after clipping both variables at their 1st/99th percentiles.
 - `biweight_midcorrelation`: A median/MAD-based robust correlation.
-- `percentage_bend_correlation`: Pearson after bending extreme deviations around each median.
+- `pearson_median_clipped_20pct`: Pearson after clipping deviations around each median at the 80th percentile.
 
 These are robustness diagnostics, not definitive replacements for Pearson or
 visual inspection. They are most useful when Pearson is strong but rank metrics
 or plots suggest leverage-sensitive behavior. Deep mode does not compute
 Distance Correlation or Mutual Information; use `mode="standard"` for those
-nonlinear dependence metrics.
+nonlinear dependence metrics. `metric_pearson_trimmed_1pct` and
+`result.diagnostics.pearson_trimmed` use the same 1% trimmed-Pearson
+sensitivity calculation so users see one consistent trim value.
 
 ## API Reference
 
