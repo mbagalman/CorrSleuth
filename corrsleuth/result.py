@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
 import pandas as pd
 
@@ -23,6 +23,21 @@ class HeuristicResult:
     recommendations: List[str]
 
 
+@dataclass
+class MetricDiagnostics:
+    """
+    Public diagnostic components that describe metric agreement and disagreement.
+    """
+    rank_linear_gap: Optional[float]
+    pearson_spearman_signed_gap: Optional[float]
+    nonmonotonic_gap: Optional[float]
+    pearson_kendall_gap: Optional[float]
+    disagreement_score: float
+
+    def to_dict(self) -> Dict[str, Optional[float]]:
+        return asdict(self)
+
+
 class CorrSleuthResult:
     """
     Public output object representing the diagnostic profile of a pairwise relationship.
@@ -36,6 +51,7 @@ class CorrSleuthResult:
         warnings: List[str],
         recommendations: List[str],
         disagreement_score: float,
+        diagnostics: Optional[MetricDiagnostics] = None,
         _clean_x: Optional[pd.Series] = None,
         _clean_y: Optional[pd.Series] = None,
         _include_caveat: bool = True
@@ -47,6 +63,13 @@ class CorrSleuthResult:
         self.warnings = warnings
         self.recommendations = recommendations
         self.disagreement_score = disagreement_score
+        self.diagnostics = diagnostics or MetricDiagnostics(
+            rank_linear_gap=None,
+            pearson_spearman_signed_gap=None,
+            nonmonotonic_gap=None,
+            pearson_kendall_gap=None,
+            disagreement_score=disagreement_score,
+        )
         self._clean_x = _clean_x
         self._clean_y = _clean_y
         self._include_caveat = _include_caveat
@@ -114,6 +137,7 @@ class CorrSleuthResult:
             "pattern": self.pattern,
             "metrics": self.metrics.to_dict(orient="records"),
             "disagreement_score": self.disagreement_score,
+            "diagnostics": self.diagnostics.to_dict(),
             "warnings": self.warnings,
             "recommendations": self.recommendations
         }
@@ -126,4 +150,6 @@ class CorrSleuthResult:
         df['x'] = self.x_name
         df['y'] = self.y_name
         df['pattern'] = self.pattern
+        for key, value in self.diagnostics.to_dict().items():
+            df[f"diagnostic_{key}"] = value
         return df

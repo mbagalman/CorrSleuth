@@ -126,6 +126,35 @@ def test_serialization():
     assert "value" in frame.columns
     assert len(frame) >= 3 # at least core metrics
 
+
+def test_result_exposes_structured_diagnostics():
+    df = pd.DataFrame({"x": [1, 2, 3, 4, 5], "y": [1, 2, 3, 4, 5]})
+    res = profile_pair(df, "x", "y")
+
+    assert res.diagnostics.rank_linear_gap == pytest.approx(0.0)
+    assert res.diagnostics.pearson_spearman_signed_gap == pytest.approx(0.0)
+    assert res.diagnostics.pearson_kendall_gap == pytest.approx(0.0)
+    assert res.diagnostics.nonmonotonic_gap is None
+    assert res.diagnostics.disagreement_score == pytest.approx(res.disagreement_score)
+
+
+def test_serialization_includes_nested_and_flattened_diagnostics():
+    df = pd.DataFrame({"x": [1, 2, 3, 4, 5], "y": [1, 2, 3, 4, 5]})
+    res = profile_pair(df, "x", "y")
+
+    as_dict = res.to_dict()
+    assert "diagnostics" in as_dict
+    assert as_dict["diagnostics"]["rank_linear_gap"] == pytest.approx(0.0)
+    assert as_dict["diagnostics"]["nonmonotonic_gap"] is None
+
+    frame = res.to_frame()
+    assert "diagnostic_rank_linear_gap" in frame.columns
+    assert "diagnostic_pearson_spearman_signed_gap" in frame.columns
+    assert "diagnostic_nonmonotonic_gap" in frame.columns
+    assert "diagnostic_pearson_kendall_gap" in frame.columns
+    assert "diagnostic_disagreement_score" in frame.columns
+    assert frame["diagnostic_rank_linear_gap"].iloc[0] == pytest.approx(0.0)
+
 def test_constant_input_safe_rendering():
     df = pd.DataFrame({"x": [1, 1, 1, 1], "y": [1, 2, 3, 4]})
     res = profile_pair(df, "x", "y")
