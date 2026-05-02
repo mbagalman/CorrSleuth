@@ -54,6 +54,7 @@ class CorrSleuthResult:
         disagreement_score: float,
         diagnostics: Optional[MetricDiagnostics] = None,
         bootstrap_intervals: Optional[pd.DataFrame] = None,
+        bootstrap_stability: Optional[Any] = None,
         _clean_x: Optional[pd.Series] = None,
         _clean_y: Optional[pd.Series] = None,
         _include_caveat: bool = True
@@ -75,6 +76,16 @@ class CorrSleuthResult:
             pearson_trim_delta=None,
         )
         self.bootstrap_intervals = bootstrap_intervals
+        self.bootstrap_stability = bootstrap_stability
+        self.pattern_stability = (
+            bootstrap_stability.pattern_stability if bootstrap_stability else None
+        )
+        self.bootstrap_label_counts = (
+            bootstrap_stability.bootstrap_label_counts if bootstrap_stability else None
+        )
+        self.stability_label = (
+            bootstrap_stability.stability_label if bootstrap_stability else None
+        )
         self._clean_x = _clean_x
         self._clean_y = _clean_y
         self._include_caveat = _include_caveat
@@ -121,6 +132,21 @@ class CorrSleuthResult:
                     f"{row['metric_set']})"
                 )
 
+        if self.bootstrap_stability is not None:
+            stability = self.bootstrap_stability
+            lines.extend(
+                [
+                    "",
+                    "Pattern stability:",
+                    (
+                        f"  {self._format_value(stability.pattern_stability)} "
+                        f"({stability.stability_label}, {stability.metric_set}, "
+                        f"n={int(stability.n_success)}/{int(stability.n_bootstrap)})"
+                    ),
+                    f"  label_counts: {stability.bootstrap_label_counts}",
+                ]
+            )
+
         if self.warnings:
             lines.append("\nWarnings:")
             for w in self.warnings:
@@ -145,7 +171,22 @@ class CorrSleuthResult:
             include_caveat = self._include_caveat
             
         from corrsleuth.heuristics.explanations import generate_explanation
-        return generate_explanation(self.pattern, metrics=self.metrics, include_caveat=include_caveat)
+        explanation = generate_explanation(
+            self.pattern, metrics=self.metrics, include_caveat=include_caveat
+        )
+        if self.bootstrap_stability is not None:
+            stability = self.bootstrap_stability
+            explanation += (
+                " Bootstrap resampling assigned the same diagnostic label in "
+                f"{stability.pattern_stability:.1%} of samples "
+                f"({stability.stability_label} stability, {stability.metric_set} metrics)."
+            )
+            if self.pattern == "nonmonotonic_dependence" and stability.metric_set == "lite":
+                explanation += (
+                    " Because stability used lite metrics, it may not fully test a "
+                    "standard-mode nonmonotonic label."
+                )
+        return explanation
 
     def plot(self, show: bool = False) -> Any:
         """
@@ -173,6 +214,14 @@ class CorrSleuthResult:
                 if self.bootstrap_intervals is None
                 else self.bootstrap_intervals.to_dict(orient="records")
             ),
+            "bootstrap_stability": (
+                None
+                if self.bootstrap_stability is None
+                else self.bootstrap_stability.to_dict()
+            ),
+            "pattern_stability": self.pattern_stability,
+            "bootstrap_label_counts": self.bootstrap_label_counts,
+            "stability_label": self.stability_label,
             "warnings": self.warnings,
             "recommendations": self.recommendations
         }
@@ -194,4 +243,8 @@ class CorrSleuthResult:
             df["bootstrap_n_success"] = df["metric"].map(intervals["n_success"])
             df["bootstrap_n"] = df["metric"].map(intervals["n_bootstrap"])
             df["bootstrap_sample_size"] = df["metric"].map(intervals["sample_size"])
+        if self.bootstrap_stability is not None:
+            df["pattern_stability"] = self.bootstrap_stability.pattern_stability
+            df["stability_label"] = self.bootstrap_stability.stability_label
+            df["stability_metric_set"] = self.bootstrap_stability.metric_set
         return df

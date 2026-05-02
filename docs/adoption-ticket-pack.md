@@ -351,6 +351,18 @@ Acceptance criteria:
 
 Priority: Phase 2 / High
 
+Status: Complete
+
+Completed in: `6c17890 Address bootstrap interval review`
+
+Completion notes:
+
+- Pattern stability is computed whenever bootstrap resampling is requested.
+- Stability uses the same `bootstrap_metrics` policy as metric intervals.
+- Results expose `result.pattern_stability`, `result.bootstrap_label_counts`, `result.stability_label`, and `result.bootstrap_stability`.
+- `summary()`, `explain()`, `to_dict()`, and `to_frame()` include stability output when available.
+- Lite-only stability adds a caution when the original standard-mode label is `nonmonotonic_dependence`.
+
 Goal:
 
 Estimate how often the same diagnostic label appears across bootstrap samples.
