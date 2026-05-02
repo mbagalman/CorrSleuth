@@ -92,7 +92,7 @@ class CorrSleuthResult:
             include_caveat = self._include_caveat
             
         from corrsleuth.heuristics.explanations import generate_explanation
-        return generate_explanation(self.pattern, include_caveat=include_caveat)
+        return generate_explanation(self.pattern, metrics=self.metrics, include_caveat=include_caveat)
 
     def plot(self, show: bool = False) -> Any:
         """

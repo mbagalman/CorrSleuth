@@ -4,6 +4,21 @@ from corrsleuth.datasets import make_relationship
 from corrsleuth.api import profile_pair
 import matplotlib.pyplot as plt
 import pandas as pd
+from corrsleuth.result import CorrSleuthResult
+
+
+def _result_for_explanation(pattern, metric_values):
+    return CorrSleuthResult(
+        x_name="x",
+        y_name="y",
+        metrics=pd.DataFrame(
+            [{"metric": metric, "value": value} for metric, value in metric_values.items()]
+        ),
+        pattern=pattern,
+        warnings=[],
+        recommendations=[],
+        disagreement_score=0.0,
+    )
 
 def test_explain_caveat():
     df = make_relationship("linear_positive", n=100)
@@ -14,6 +29,71 @@ def test_explain_caveat():
     
     exp_without = res.explain(include_caveat=False)
     assert "causally without proper design" not in exp_without
+
+
+def test_explain_near_linear_references_metric_agreement():
+    res = _result_for_explanation(
+        "near_linear",
+        {"pearson": 0.91, "spearman": 0.89, "kendall_tau_b": 0.74},
+    )
+
+    explanation = res.explain(include_caveat=False)
+
+    assert "Pearson (0.910) and Spearman (0.890)" in explanation
+    assert "closely aligned" in explanation
+
+
+def test_explain_monotonic_nonlinear_references_rank_linear_gap():
+    res = _result_for_explanation(
+        "monotonic_nonlinear",
+        {"pearson": 0.31, "spearman": 0.78, "kendall_tau_b": 0.59},
+    )
+
+    explanation = res.explain(include_caveat=False)
+
+    assert "Spearman (0.780) is meaningfully stronger than Pearson (0.310)" in explanation
+    assert "straight line" in explanation
+
+
+def test_explain_nonmonotonic_dependence_references_standard_metric_gap():
+    res = _result_for_explanation(
+        "nonmonotonic_dependence",
+        {
+            "pearson": 0.04,
+            "spearman": -0.03,
+            "kendall_tau_b": -0.02,
+            "distance_correlation": 0.47,
+        },
+    )
+
+    explanation = res.explain(include_caveat=False)
+
+    assert "Pearson (0.040) and Spearman (-0.030) are weak" in explanation
+    assert "distance correlation (0.470) is higher" in explanation
+
+
+def test_explain_possible_outlier_or_leverage_references_rank_disagreement():
+    res = _result_for_explanation(
+        "possible_outlier_or_leverage",
+        {"pearson": 0.82, "spearman": 0.31, "kendall_tau_b": 0.21},
+    )
+
+    explanation = res.explain(include_caveat=False)
+
+    assert "Pearson (0.820) is much stronger than Spearman (0.310)" in explanation
+    assert "extreme values" in explanation
+
+
+def test_explain_weak_or_no_relationship_references_lite_metric_limits():
+    res = _result_for_explanation(
+        "weak_or_no_relationship",
+        {"pearson": 0.02, "spearman": -0.04, "kendall_tau_b": -0.02},
+    )
+
+    explanation = res.explain(include_caveat=False)
+
+    assert "Pearson (0.020) and Spearman (-0.040) are weak" in explanation
+    assert "without standard-mode nonlinear metrics" in explanation
 
 def test_summary():
     df = make_relationship("linear_positive", n=100)
