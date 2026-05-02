@@ -25,7 +25,14 @@ def apply_heuristics(metrics: Dict[str, MetricResult], flags: List[str], n_used:
     elif "low_n" in flags or n_used < 30:
         label = "low_power_or_uncertain"
     # 3. possible_outlier_or_leverage
-    elif p > 0.50 and (p - s > 0.20 or p - k > 0.25):
+    elif (
+        p > 0.50
+        and (p - s > 0.20 or p - k > 0.25)
+        and (
+            "pearson_trim_sensitive" in flags
+            or "outlier_sensitivity_unavailable" in flags
+        )
+    ):
         label = "possible_outlier_or_leverage"
     # 4. nonmonotonic_dependence
     elif dc is not None and p < 0.25 and s < 0.25 and dc > 0.35:

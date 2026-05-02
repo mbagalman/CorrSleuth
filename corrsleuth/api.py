@@ -1,5 +1,6 @@
 import pandas as pd
 from typing import Optional
+import scipy.stats as stats
 from corrsleuth.result import CorrSleuthResult, MetricDiagnostics
 from corrsleuth.validation.input import validate_pair
 from corrsleuth.metrics import (
@@ -17,7 +18,39 @@ def _metric_value(metrics_map, metric_name: str) -> Optional[float]:
     return metric.value if metric and metric.value is not None else None
 
 
-def _build_diagnostics(metrics_map, disagreement_score: float) -> MetricDiagnostics:
+def _compute_outlier_sensitivity(pair, baseline_pearson: Optional[float]) -> dict[str, Optional[float | str]]:
+    if baseline_pearson is None:
+        return {"status": "unavailable", "trimmed": None, "delta": None}
+
+    min_n_for_trim = 50
+    min_n_after_trim = 30
+    if pair.n_used < min_n_for_trim:
+        return {"status": "unavailable", "trimmed": None, "delta": None}
+
+    x_low = pair.x.quantile(0.01)
+    x_high = pair.x.quantile(0.99)
+    y_low = pair.y.quantile(0.01)
+    y_high = pair.y.quantile(0.99)
+    mask = (
+        pair.x.between(x_low, x_high)
+        & pair.y.between(y_low, y_high)
+    )
+    x_trimmed = pair.x[mask]
+    y_trimmed = pair.y[mask]
+
+    if len(x_trimmed) < min_n_after_trim:
+        return {"status": "unavailable", "trimmed": None, "delta": None}
+    if x_trimmed.nunique() <= 1 or y_trimmed.nunique() <= 1:
+        return {"status": "unavailable", "trimmed": None, "delta": None}
+
+    trimmed_pearson, _ = stats.pearsonr(x_trimmed, y_trimmed)
+    trimmed_pearson = float(trimmed_pearson)
+    delta = abs(abs(baseline_pearson) - abs(trimmed_pearson))
+    status = "sensitive" if delta > 0.20 else "stable"
+    return {"status": status, "trimmed": trimmed_pearson, "delta": delta}
+
+
+def _build_diagnostics(metrics_map, disagreement_score: float, outlier_sensitivity=None) -> MetricDiagnostics:
     pearson = _metric_value(metrics_map, "pearson")
     spearman = _metric_value(metrics_map, "spearman")
     kendall = _metric_value(metrics_map, "kendall_tau_b")
@@ -48,6 +81,8 @@ def _build_diagnostics(metrics_map, disagreement_score: float) -> MetricDiagnost
         nonmonotonic_gap=nonmonotonic_gap,
         pearson_kendall_gap=pearson_kendall_gap,
         disagreement_score=disagreement_score,
+        pearson_trimmed=outlier_sensitivity.get("trimmed") if outlier_sensitivity else None,
+        pearson_trim_delta=outlier_sensitivity.get("delta") if outlier_sensitivity else None,
     )
 
 def profile_pair(
@@ -80,6 +115,18 @@ def profile_pair(
         metrics_map["distance_correlation"] = compute_distance_correlation(pair, mode=mode, max_n_for_dcor=max_n_for_dcor)
         metrics_map["mutual_information"] = compute_mutual_information(pair, mode=mode)
         
+    baseline_pearson = _metric_value(metrics_map, "pearson")
+    outlier_sensitivity = _compute_outlier_sensitivity(pair, baseline_pearson)
+    if outlier_sensitivity["status"] == "sensitive":
+        pair.flags.append("pearson_trim_sensitive")
+        pair.warnings.append(
+            "Pearson changes materially after trimming extreme x/y values; the apparent linear association may be leverage-sensitive."
+        )
+    elif outlier_sensitivity["status"] == "stable":
+        pair.flags.append("pearson_trim_stable")
+    else:
+        pair.flags.append("outlier_sensitivity_unavailable")
+
     # 3. Apply Heuristics
     heuristic_result = apply_heuristics(metrics_map, pair.flags, pair.n_used)
     
@@ -104,7 +151,7 @@ def profile_pair(
     dc = _metric_value(metrics_map, "distance_correlation") or 0.0
     
     disagreement_score = abs(p - s) + max(0.0, dc - s)
-    diagnostics = _build_diagnostics(metrics_map, disagreement_score)
+    diagnostics = _build_diagnostics(metrics_map, disagreement_score, outlier_sensitivity)
     
     return CorrSleuthResult(
         x_name=x,

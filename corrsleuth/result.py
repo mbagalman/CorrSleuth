@@ -33,8 +33,10 @@ class MetricDiagnostics:
     nonmonotonic_gap: Optional[float]
     pearson_kendall_gap: Optional[float]
     disagreement_score: float
+    pearson_trimmed: Optional[float] = None
+    pearson_trim_delta: Optional[float] = None
 
-    def to_dict(self) -> Dict[str, Optional[float]]:
+    def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
 
@@ -69,6 +71,8 @@ class CorrSleuthResult:
             nonmonotonic_gap=None,
             pearson_kendall_gap=None,
             disagreement_score=disagreement_score,
+            pearson_trimmed=None,
+            pearson_trim_delta=None,
         )
         self._clean_x = _clean_x
         self._clean_y = _clean_y
@@ -102,6 +106,7 @@ class CorrSleuthResult:
             f"  rank_linear_gap          : {self._format_value(self.diagnostics.rank_linear_gap)}",
             f"  nonmonotonic_gap         : {self._format_value(self.diagnostics.nonmonotonic_gap)}",
             f"  pearson_kendall_gap      : {self._format_value(self.diagnostics.pearson_kendall_gap)}",
+            f"  pearson_trim_delta       : {self._format_value(self.diagnostics.pearson_trim_delta)}",
         ])
 
         if self.warnings:

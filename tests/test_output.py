@@ -168,6 +168,8 @@ def test_serialization_includes_nested_and_flattened_diagnostics():
     assert "diagnostic_nonmonotonic_gap" in frame.columns
     assert "diagnostic_pearson_kendall_gap" in frame.columns
     assert "diagnostic_disagreement_score" in frame.columns
+    assert "diagnostic_pearson_trimmed" in frame.columns
+    assert "diagnostic_pearson_trim_delta" in frame.columns
     assert frame["diagnostic_rank_linear_gap"].iloc[0] == pytest.approx(0.0)
 
 def test_constant_input_safe_rendering():

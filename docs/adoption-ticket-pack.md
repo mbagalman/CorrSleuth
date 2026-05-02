@@ -178,6 +178,18 @@ Acceptance criteria:
 
 Priority: Phase 1 / High
 
+Status: Complete
+
+Completed in: `pending commit`
+
+Completion notes:
+
+- `profile_pair()` now computes a lightweight 1% trimmed-Pearson sensitivity check when the sample is large enough.
+- The `possible_outlier_or_leverage` heuristic now requires trim-sensitive evidence, or explicitly unavailable sensitivity evidence, before assigning the leverage label.
+- Stable trimmed-Pearson cases avoid the outlier/leverage label when the only evidence is Pearson-vs-rank disagreement.
+- Sensitivity outputs are stored on `result.diagnostics` as `pearson_trimmed` and `pearson_trim_delta`, and are serialized/flattened with the other diagnostics.
+- Tests cover the `outlier_driven` integration path and the stable-trim classifier path.
+
 Goal:
 
 Make the `possible_outlier_or_leverage` label more trustworthy by adding a lightweight outlier sensitivity check that feeds into the heuristic classifier.
