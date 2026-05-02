@@ -15,6 +15,7 @@ from corrsleuth.metrics import (
     compute_winsorized_pearson,
     compute_biweight_midcorrelation,
     compute_median_clipped_pearson,
+    compute_chatterjee_xi,
     compute_bootstrap,
 )
 from corrsleuth.heuristics import apply_heuristics, detect_metric_warnings
@@ -201,6 +202,10 @@ def profile_pair(
         metrics_map["pearson_median_clipped_20pct"] = (
             compute_median_clipped_pearson(pair)
         )
+        # chatterjee_xi has its own (lower) min-n threshold than the robust
+        # correlations, so it can produce a value even when the robust metrics
+        # above are not computable.
+        metrics_map["chatterjee_xi"] = compute_chatterjee_xi(pair)
 
     # 4. Apply heuristics and metric-agreement warnings
     heuristic_result = apply_heuristics(metrics_map, pair.flags, pair.n_used)

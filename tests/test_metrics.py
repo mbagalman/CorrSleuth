@@ -12,6 +12,7 @@ from corrsleuth.metrics import (
     compute_distance_correlation, compute_mutual_information,
     compute_trimmed_pearson, compute_winsorized_pearson,
     compute_biweight_midcorrelation, compute_median_clipped_pearson,
+    compute_chatterjee_xi,
 )
 
 def test_core_metrics():
@@ -216,3 +217,96 @@ def test_robust_metrics_return_none_when_mad_or_bend_scale_is_zero():
 
     assert biweight.value is None
     assert median_clipped.value is None
+
+
+# --- Chatterjee's xi (deep-mode nonlinear dependence) ---
+
+
+def test_chatterjee_xi_high_for_clean_linear_data():
+    rng = np.random.default_rng(0)
+    n = 300
+    x = rng.uniform(-3, 3, size=n)
+    y = x + rng.normal(0, 0.05, size=n)
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_chatterjee_xi(pair)
+    assert result.name == "chatterjee_xi"
+    assert result.available is True
+    assert result.value is not None
+    assert result.value > 0.85
+
+
+def test_chatterjee_xi_detects_u_shape_that_pearson_misses():
+    """For Y = X^2, Pearson and Spearman are near zero but xi(X->Y) is high."""
+    rng = np.random.default_rng(0)
+    n = 500
+    x = rng.uniform(-3, 3, size=n)
+    y = x**2 + rng.normal(0, 0.05, size=n)
+
+    deep = profile_pair(pd.DataFrame({"x": x, "y": y}), "x", "y", mode="deep")
+    metrics = {row["metric"]: row["value"] for _, row in deep.metrics.iterrows()}
+
+    assert abs(metrics["pearson"]) < 0.20
+    assert abs(metrics["spearman"]) < 0.30
+    # xi should still detect the dependence
+    assert metrics["chatterjee_xi"] > 0.80
+
+
+def test_chatterjee_xi_is_asymmetric_for_many_to_one_relationship():
+    """Y = X^2 maps two X values to the same Y, so X is not a function of Y.
+
+    xi(X -> Y) should be much higher than xi(Y -> X)."""
+    rng = np.random.default_rng(0)
+    n = 500
+    x = rng.uniform(-3, 3, size=n)
+    y = x**2 + rng.normal(0, 0.05, size=n)
+    df = pd.DataFrame({"x": x, "y": y})
+
+    fwd = profile_pair(df, "x", "y", mode="deep")
+    rev = profile_pair(df, "y", "x", mode="deep")
+    fwd_xi = next(r["value"] for _, r in fwd.metrics.iterrows() if r["metric"] == "chatterjee_xi")
+    rev_xi = next(r["value"] for _, r in rev.metrics.iterrows() if r["metric"] == "chatterjee_xi")
+
+    assert fwd_xi - rev_xi > 0.40
+
+
+def test_chatterjee_xi_near_zero_for_independent_variables():
+    rng = np.random.default_rng(0)
+    n = 500
+    x = rng.normal(size=n)
+    y = rng.normal(size=n)
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_chatterjee_xi(pair)
+    assert abs(result.value) < 0.10
+
+
+def test_chatterjee_xi_returns_none_for_constant_input():
+    df = pd.DataFrame({"x": [1.0] * 50, "y": list(range(50))})
+    pair = validate_pair(df, "x", "y")
+
+    result = compute_chatterjee_xi(pair)
+    assert result.value is None
+    assert result.available is True
+
+
+def test_chatterjee_xi_returns_none_with_warning_below_min_n():
+    df = pd.DataFrame({"x": list(range(15)), "y": list(range(15))})
+    pair = validate_pair(df, "x", "y")
+
+    result = compute_chatterjee_xi(pair)
+
+    assert result.value is None
+    assert result.available is True
+    assert any("chatterjee_xi" in w and "converges slowly" in w for w in pair.warnings)
+
+
+def test_chatterjee_xi_only_appears_in_deep_mode():
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame({"x": rng.uniform(size=80), "y": rng.uniform(size=80)})
+
+    lite_metrics = set(profile_pair(df, "x", "y", mode="lite").metrics["metric"])
+    deep_metrics = set(profile_pair(df, "x", "y", mode="deep").metrics["metric"])
+
+    assert "chatterjee_xi" not in lite_metrics
+    assert "chatterjee_xi" in deep_metrics
