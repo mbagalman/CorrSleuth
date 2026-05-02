@@ -156,14 +156,195 @@ def test_scan_target_forwards_profile_pair_kwargs():
     assert linear_entry.result.bootstrap_stability is not None
 
 
-def test_scan_target_summary_lists_target_and_pattern_counts():
+def test_scan_target_summary_header_and_caveat():
     df = _build_clean_df()
     report = scan_target(df, "target")
     summary = report.summary()
 
-    assert "Target scan: target" in summary
-    assert "profiled" in summary
-    assert "Pattern counts:" in summary
+    assert summary.startswith("Target scan: target")
+    assert "profiled : 2" in summary
+    assert "Caveat:" in summary
+
+
+def test_scan_target_summary_can_suppress_caveat():
+    df = _build_clean_df()
+    report = scan_target(df, "target")
+    assert "Caveat:" not in report.summary(include_caveat=False)
+
+
+def test_scan_summary_includes_pattern_sections_when_present():
+    # Use a target derived from x to make monotonic_log appear as monotonic_nonlinear
+    rng = np.random.default_rng(0)
+    n = 200
+    x = np.exp(rng.uniform(0.1, 10, size=n))
+    df = pd.DataFrame({
+        "target": x,                                                 # heavily skewed target
+        "log_shape": np.log(x) + rng.normal(0, 0.1, size=n),        # monotonic_nonlinear (rank >> linear)
+        "linear_match": x + rng.normal(0, 0.1, size=n),              # near_linear with x itself
+        "noise": rng.normal(0, 1, size=n),                           # weak_or_no_relationship
+    })
+    report = scan_target(df, "target")
+    summary = report.summary(include_caveat=False)
+
+    patterns = {e.column: e.result.pattern for e in report.successes}
+    assert patterns["log_shape"] == "monotonic_nonlinear"
+    assert patterns["linear_match"] == "near_linear"
+    assert patterns["noise"] == "weak_or_no_relationship"
+
+    assert "Strongest near-linear relationships:" in summary
+    assert "Potential monotonic nonlinear relationships:" in summary
+    assert "Weak or no pairwise relationships:" in summary
+    # Empty sections are omitted
+    assert "Potential nonmonotonic relationships:" not in summary
+    assert "Possible outlier-driven relationships:" not in summary
+
+    # Each variable appears in exactly its expected section
+    near_idx = summary.index("Strongest near-linear relationships:")
+    mono_idx = summary.index("Potential monotonic nonlinear relationships:")
+    weak_idx = summary.index("Weak or no pairwise relationships:")
+    assert "linear_match" in summary[near_idx:mono_idx]
+    assert "log_shape" in summary[mono_idx:weak_idx]
+    assert "noise" in summary[weak_idx:]
+
+
+def test_scan_summary_top_n_caps_section_entries():
+    rng = np.random.default_rng(0)
+    n = 200
+    target = rng.uniform(-3, 3, size=n)
+    df = pd.DataFrame({"target": target})
+    for i in range(6):
+        df[f"linear_{i}"] = target + rng.normal(0, 0.1 + 0.05 * i, size=n)
+    report = scan_target(df, "target")
+    summary = report.summary(top_n=2, include_caveat=False)
+
+    near_block_start = summary.index("Strongest near-linear relationships:")
+    next_blank = summary.find("\n\n", near_block_start)
+    near_block = summary[near_block_start:next_blank if next_blank != -1 else len(summary)]
+    listed = [line for line in near_block.splitlines() if line.startswith("  linear_")]
+    assert len(listed) == 2
+
+
+def test_scan_summary_includes_pearson_underrate_section():
+    rng = np.random.default_rng(0)
+    n = 200
+    x = np.exp(rng.uniform(0.1, 10, size=n))
+    df = pd.DataFrame({
+        "target": x,
+        "log_shape": np.log(x) + rng.normal(0, 0.1, size=n),
+    })
+    report = scan_target(df, "target")
+    summary = report.summary(include_caveat=False)
+
+    log_entry = next(e for e in report.successes if e.column == "log_shape")
+    assert log_entry.result.diagnostics.rank_linear_gap > 0.20
+    assert "Variables Pearson may underrate:" in summary
+    underrate_idx = summary.index("Variables Pearson may underrate:")
+    assert "log_shape" in summary[underrate_idx:]
+
+
+def test_scan_summary_lists_reliability_warning_columns():
+    rng = np.random.default_rng(0)
+    n = 200
+    # 12 levels keeps unique_ratio above 0.05 (so low_unique_ratio does not
+    # fire) while still producing a high tie rate per the 30% threshold.
+    df = pd.DataFrame({
+        "target": rng.normal(size=n),
+        "discrete": (rng.integers(0, 12, size=n)).astype(float),
+        "clean": rng.normal(size=n),
+    })
+    report = scan_target(df, "target")
+    summary = report.summary(include_caveat=False)
+
+    assert "Variables with missingness or tie warnings:" in summary
+    section_idx = summary.index("Variables with missingness or tie warnings:")
+    section = summary[section_idx:]
+    assert "discrete" in section
+    assert "tie rate" in section
+    # The clean column should not appear in the reliability section
+    clean_section_lines = [line for line in section.splitlines() if line.startswith("  clean")]
+    assert not clean_section_lines
+
+
+def test_scan_summary_omits_cross_cutting_sections_when_empty():
+    rng = np.random.default_rng(0)
+    n = 200
+    target = rng.uniform(-3, 3, size=n)
+    df = pd.DataFrame({
+        "target": target,
+        "linear": target + rng.normal(0, 0.1, size=n),
+    })
+    report = scan_target(df, "target")
+    summary = report.summary(include_caveat=False)
+
+    assert "Variables Pearson may underrate:" not in summary
+    assert "Variables with missingness or tie warnings:" not in summary
+    assert "Skipped or failed:" not in summary
+
+
+def test_scan_summary_lists_skipped_and_failed_entries():
+    df = _build_clean_df()
+    df["bad"] = np.nan
+    report = scan_target(df, "target", columns=["linear", "label", "bad"])
+    summary = report.summary(include_caveat=False)
+
+    assert "Skipped or failed:" in summary
+    failed_idx = summary.index("Skipped or failed:")
+    failed_section = summary[failed_idx:]
+    assert "bad" in failed_section
+    assert "label" in failed_section
+
+
+def test_scan_summary_is_deterministic():
+    df = _build_clean_df()
+    r1 = scan_target(df, "target").summary()
+    r2 = scan_target(df, "target").summary()
+    assert r1 == r2
+
+
+def test_scan_summary_pearson_underrate_excludes_leverage_pattern():
+    """Outlier-driven variables (Pearson >> Spearman) must not surface in the
+    Pearson-may-underrate cross-cut, since that section is meant for the
+    opposite story."""
+    rng = np.random.default_rng(0)
+    n = 300
+    target = rng.normal(0, 0.1, size=n)
+    leverage = rng.normal(0, 0.1, size=n)
+    num_outliers = max(1, int(n * 0.02))
+    target[-num_outliers:] = rng.uniform(8, 10, size=num_outliers)
+    leverage[-num_outliers:] = rng.uniform(8, 10, size=num_outliers)
+    df = pd.DataFrame({"target": target, "leverage": leverage})
+
+    report = scan_target(df, "target")
+    summary = report.summary(include_caveat=False)
+
+    leverage_entry = next(e for e in report.successes if e.column == "leverage")
+    metrics = {
+        row["metric"]: row["value"]
+        for _, row in leverage_entry.result.metrics.iterrows()
+    }
+    # Sanity-check the fixture: Pearson really is much stronger than Spearman.
+    assert abs(metrics["pearson"]) - abs(metrics["spearman"]) > 0.20
+
+    if "Variables Pearson may underrate:" in summary:
+        underrate_idx = summary.index("Variables Pearson may underrate:")
+        # Find the next section break or end-of-string
+        next_break = summary.find("\n\n", underrate_idx)
+        section = summary[underrate_idx : next_break if next_break != -1 else len(summary)]
+        assert "leverage" not in section
+
+
+def test_scan_summary_rejects_invalid_top_n():
+    df = _build_clean_df()
+    report = scan_target(df, "target")
+
+    with pytest.raises(InputError, match="positive integer"):
+        report.summary(top_n=0)
+    with pytest.raises(InputError, match="positive integer"):
+        report.summary(top_n=-1)
+    with pytest.raises(InputError, match="positive integer"):
+        report.summary(top_n=True)
+    with pytest.raises(InputError, match="positive integer"):
+        report.summary(top_n=2.5)
 
 
 def test_scan_target_to_frame_keeps_documented_columns_when_all_skipped():
