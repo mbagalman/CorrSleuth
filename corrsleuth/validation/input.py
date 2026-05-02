@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from typing import List
 from corrsleuth.exceptions import InputError
 
+_TIE_RATE_WARN_THRESHOLD = 0.30
+
+
 @dataclass
 class CleanPair:
     """
@@ -21,12 +24,30 @@ class CleanPair:
     y_unique_ratio: float
     x_is_constant: bool
     y_is_constant: bool
+    x_tie_rate: float
+    y_tie_rate: float
     flags: List[str]          # machine-readable
     warnings: List[str]       # raw validation warnings only
 
 
 def is_constant_series(series: pd.Series) -> bool:
     return series.nunique() <= 1 or series.std() == 0
+
+
+def compute_tie_rate(series: pd.Series) -> float:
+    """Return the fraction of observations whose value is shared with another row.
+
+    A series with all unique values has tie rate 0; a series of all-equal values
+    has tie rate 1. Useful as a rank-metric reliability signal — Spearman and
+    Kendall handle ties via tie-correction, but high tie rates compress the rank
+    space and reduce their effective resolution.
+    """
+    n = len(series)
+    if n == 0:
+        return 0.0
+    counts = series.value_counts()
+    n_singletons = int((counts == 1).sum())
+    return float((n - n_singletons) / n)
 
 
 def compute_heuristic_flags(pair: "CleanPair") -> List[str]:
@@ -93,26 +114,39 @@ def validate_pair(data: pd.DataFrame, x: str, y: str, missing: str = "pairwise")
     
     x_unique_ratio = x_clean.nunique() / n_used
     y_unique_ratio = y_clean.nunique() / n_used
-    
+
     x_is_constant = is_constant_series(x_clean)
     y_is_constant = is_constant_series(y_clean)
-    
+
+    x_tie_rate = compute_tie_rate(x_clean)
+    y_tie_rate = compute_tie_rate(y_clean)
+
     if missing_ratio > 0.5:
         flags.append("high_missingness")
         warnings.append(f">50% missing data ({missing_ratio:.1%} missing).")
-        
+
     if x_unique_ratio < 0.05 or y_unique_ratio < 0.05:
         flags.append("low_unique_ratio")
         warnings.append("Low unique value ratio (< 0.05). Rank-based metrics may be unstable due to ties.")
-        
+
+    for name, tie_rate in ((x, x_tie_rate), (y, y_tie_rate)):
+        if tie_rate > _TIE_RATE_WARN_THRESHOLD:
+            warnings.append(
+                f"'{name}' has a high tie rate ({tie_rate:.1%}); rank metrics "
+                f"like Spearman and Kendall may be less informative due to "
+                f"repeated values."
+            )
+    if x_tie_rate > _TIE_RATE_WARN_THRESHOLD or y_tie_rate > _TIE_RATE_WARN_THRESHOLD:
+        flags.append("high_tie_rate")
+
     if n_used < 30:
         flags.append("low_n")
         warnings.append(f"Small sample size (n={n_used}). Interpret metrics with caution.")
-        
+
     if x_is_constant or y_is_constant:
         flags.append("constant_input")
         warnings.append("One or both variables are constant. Metrics may not be computable.")
-        
+
     return CleanPair(
         x=x_clean,
         y=y_clean,
@@ -126,6 +160,8 @@ def validate_pair(data: pd.DataFrame, x: str, y: str, missing: str = "pairwise")
         y_unique_ratio=y_unique_ratio,
         x_is_constant=x_is_constant,
         y_is_constant=y_is_constant,
+        x_tie_rate=x_tie_rate,
+        y_tie_rate=y_tie_rate,
         flags=flags,
         warnings=warnings
     )

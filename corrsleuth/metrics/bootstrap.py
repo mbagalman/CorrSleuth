@@ -14,6 +14,7 @@ from corrsleuth.metrics.optional import (
 from corrsleuth.validation.input import (
     CleanPair,
     compute_heuristic_flags,
+    compute_tie_rate,
     is_constant_series,
 )
 
@@ -98,6 +99,8 @@ def _bootstrap_sample_pair(pair: CleanPair, idx) -> CleanPair:
         y_unique_ratio=y.nunique() / n_used if n_used else 0.0,
         x_is_constant=is_constant_series(x),
         y_is_constant=is_constant_series(y),
+        x_tie_rate=compute_tie_rate(x),
+        y_tie_rate=compute_tie_rate(y),
         flags=[],
         warnings=[],
     )
