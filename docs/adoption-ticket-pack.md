@@ -406,9 +406,11 @@ Acceptance criteria:
 
 Priority: Phase 2 / Medium
 
-Status: In review
+Status: Complete
 
-Implementation notes from current branch:
+Completed in: `4d65ddc Add tie-rate metadata and reliability warnings (#3)`
+
+Completion notes:
 
 - `CleanPair` now exposes `x_tie_rate` and `y_tie_rate` alongside the existing unique-ratio fields.
 - A new `compute_tie_rate` helper in `corrsleuth.validation.input` returns the share of observations whose value is shared with at least one other row.
