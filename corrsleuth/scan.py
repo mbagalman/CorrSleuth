@@ -19,6 +19,24 @@ from corrsleuth.result import CorrSleuthResult
 
 _VALID_ERRORS_POLICIES = ("warn", "raise")
 
+_STATIC_FRAME_COLUMNS = (
+    "variable",
+    "target",
+    "status",
+    "error_type",
+    "error_message",
+    "pattern",
+    "disagreement_score",
+    "warnings",
+    "recommendations",
+)
+
+_DEFAULT_METRIC_COLUMNS = (
+    "metric_pearson",
+    "metric_spearman",
+    "metric_kendall_tau_b",
+)
+
 
 @dataclass
 class TargetScanEntry:
@@ -61,20 +79,31 @@ class CorrSleuthTargetReport:
     def to_frame(self) -> pd.DataFrame:
         """Return one row per inspected column.
 
-        Successful rows include pattern, disagreement score, semicolon-joined
-        warnings/recommendations, and one column per metric (``metric_pearson``,
-        ``metric_spearman``, ...). Skipped/errored rows leave those fields NaN
-        and populate ``status``/``error_type``/``error_message`` instead.
+        The frame always includes the documented static columns (``variable``,
+        ``target``, ``status``, ``error_type``, ``error_message``, ``pattern``,
+        ``disagreement_score``, ``warnings``, ``recommendations``) plus the
+        lite metric columns (``metric_pearson``, ``metric_spearman``,
+        ``metric_kendall_tau_b``). Additional metric columns are appended when
+        any successful row produced them. Skipped/errored rows leave the
+        result-dependent fields NaN and populate ``error_type`` /
+        ``error_message`` instead.
         """
+        metric_columns: List[str] = list(_DEFAULT_METRIC_COLUMNS)
+        for entry in self.successes:
+            for metric_name in entry.result.metrics["metric"]:
+                col = f"metric_{metric_name}"
+                if col not in metric_columns:
+                    metric_columns.append(col)
+        all_columns = list(_STATIC_FRAME_COLUMNS) + metric_columns
+
         rows: List[Dict[str, Any]] = []
         for entry in self.entries:
-            row: Dict[str, Any] = {
-                "variable": entry.column,
-                "target": self.target,
-                "status": entry.status,
-                "error_type": entry.error_type,
-                "error_message": entry.error_message,
-            }
+            row: Dict[str, Any] = {col: None for col in all_columns}
+            row["variable"] = entry.column
+            row["target"] = self.target
+            row["status"] = entry.status
+            row["error_type"] = entry.error_type
+            row["error_message"] = entry.error_message
             res = entry.result
             if res is not None:
                 row["pattern"] = res.pattern
@@ -86,7 +115,7 @@ class CorrSleuthTargetReport:
                 for _, metric_row in res.metrics.iterrows():
                     row[f"metric_{metric_row['metric']}"] = metric_row["value"]
             rows.append(row)
-        return pd.DataFrame(rows)
+        return pd.DataFrame(rows, columns=all_columns)
 
     def summary(self) -> str:
         """Compact text overview of the scan outcome.
@@ -249,6 +278,9 @@ def scan_target(
         raise InputError(f"Target column '{target}' not found in data.")
     if not pd.api.types.is_numeric_dtype(data[target]):
         raise InputError(f"Target column '{target}' is not numeric.")
+
+    if isinstance(columns, str):
+        columns = [columns]
 
     if sample_size is not None and len(data) > sample_size:
         data = data.sample(n=sample_size, random_state=random_state)

@@ -166,6 +166,61 @@ def test_scan_target_summary_lists_target_and_pattern_counts():
     assert "Pattern counts:" in summary
 
 
+def test_scan_target_to_frame_keeps_documented_columns_when_all_skipped():
+    df = _build_clean_df()
+    report = scan_target(df, "target", columns=["label"])
+    frame = report.to_frame()
+
+    for col in (
+        "variable",
+        "target",
+        "status",
+        "error_type",
+        "error_message",
+        "pattern",
+        "disagreement_score",
+        "warnings",
+        "recommendations",
+        "metric_pearson",
+        "metric_spearman",
+        "metric_kendall_tau_b",
+    ):
+        assert col in frame.columns, f"missing column: {col}"
+    assert frame["status"].iloc[0] == "skipped"
+    assert pd.isna(frame["pattern"].iloc[0])
+    assert pd.isna(frame["metric_pearson"].iloc[0])
+
+
+def test_scan_target_to_frame_keeps_documented_columns_when_all_errored():
+    df = _build_clean_df()
+    df["bad"] = np.nan
+    report = scan_target(df, "target", columns=["bad"])
+    frame = report.to_frame()
+
+    assert frame["status"].iloc[0] == "error"
+    for col in (
+        "pattern",
+        "disagreement_score",
+        "warnings",
+        "recommendations",
+        "metric_pearson",
+        "metric_spearman",
+        "metric_kendall_tau_b",
+    ):
+        assert col in frame.columns
+        assert pd.isna(frame[col].iloc[0])
+
+
+def test_scan_target_columns_string_is_normalized_to_single_element_list():
+    df = _build_clean_df()
+    report = scan_target(df, "target", columns="linear")
+
+    assert [e.column for e in report.entries] == ["linear"]
+    assert report.entries[0].status == "ok"
+    # And we don't accidentally iterate the characters of the string
+    assert all(e.column != "l" for e in report.entries)
+
+
 def test_scan_target_entries_capture_both_skipped_and_profiled():
     df = _build_clean_df()
     report = scan_target(df, "target", columns=["noise", "label", "linear"])
