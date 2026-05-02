@@ -19,7 +19,6 @@ class HeuristicResult:
     Internal contract representing the outcome of the heuristic classification.
     """
     label: str
-    disagreement_components: Dict[str, float]
     recommendations: List[str]
 
 
@@ -82,7 +81,7 @@ class CorrSleuthResult:
     def _format_value(value: Optional[float]) -> str:
         return f"{value:.3f}" if value is not None and pd.notna(value) else "NA"
 
-    def summary(self, include_caveat: bool = None) -> str:
+    def summary(self, include_caveat: Optional[bool] = None) -> str:
         """
         Returns a tabular view of metrics and the primary label.
         """
@@ -125,7 +124,7 @@ class CorrSleuthResult:
             
         return "\n".join(lines)
 
-    def explain(self, include_caveat: bool = None) -> str:
+    def explain(self, include_caveat: Optional[bool] = None) -> str:
         """
         Returns a 2-3 sentence narrative explaining metric disagreement and pattern evidence.
         """

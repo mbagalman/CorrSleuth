@@ -4,7 +4,7 @@ import numpy as np
 
 from corrsleuth.result import MetricResult
 from corrsleuth.validation.input import CleanPair
-from corrsleuth.exceptions import OptionalDependencyError
+from corrsleuth.exceptions import MetricComputationError, OptionalDependencyError
 
 
 def compute_distance_correlation(
@@ -46,7 +46,12 @@ def compute_distance_correlation(
         x = x[idx]
         y = y[idx]
 
-    dc = dcor.distance_correlation(x, y)
+    try:
+        dc = dcor.distance_correlation(x, y)
+    except (ValueError, RuntimeError, FloatingPointError) as e:
+        raise MetricComputationError(
+            f"Failed to compute distance_correlation: {type(e).__name__}: {e}"
+        ) from e
     return MetricResult(name="distance_correlation", value=float(dc), available=True)
 
 
@@ -77,5 +82,10 @@ def compute_mutual_information(
     x = pair.x.values.reshape(-1, 1)
     y = pair.y.values
 
-    mi = mutual_info_regression(x, y, random_state=random_state)[0]
+    try:
+        mi = mutual_info_regression(x, y, random_state=random_state)[0]
+    except (ValueError, RuntimeError, FloatingPointError) as e:
+        raise MetricComputationError(
+            f"Failed to compute mutual_information: {type(e).__name__}: {e}"
+        ) from e
     return MetricResult(name="mutual_information", value=float(mi), available=True)

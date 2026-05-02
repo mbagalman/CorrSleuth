@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from corrsleuth.validation.input import validate_pair
-from corrsleuth.exceptions import OptionalDependencyError
+from corrsleuth.exceptions import MetricComputationError, OptionalDependencyError
 from corrsleuth.metrics import (
     compute_pearson, compute_spearman, compute_kendall,
     compute_distance_correlation, compute_mutual_information
@@ -99,3 +99,18 @@ def test_mutual_information_missing_dependency_returns_unavailable_in_lite_mode(
     result = compute_mutual_information(pair, mode="lite")
     assert result.available is False
     assert result.value is None
+
+
+def test_compute_pearson_wraps_unexpected_failures_as_metric_error(monkeypatch):
+    """Unexpected scipy failures must surface as MetricComputationError with the metric name."""
+    import scipy.stats as stats
+
+    def boom(*args, **kwargs):
+        raise ValueError("simulated scipy failure")
+
+    monkeypatch.setattr(stats, "pearsonr", boom)
+    df = pd.DataFrame({"x": [1, 2, 3, 4, 5], "y": [2, 4, 5, 4, 5]})
+    pair = validate_pair(df, "x", "y")
+
+    with pytest.raises(MetricComputationError, match="Failed to compute pearson"):
+        compute_pearson(pair)

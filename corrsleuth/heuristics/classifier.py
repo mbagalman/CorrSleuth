@@ -57,17 +57,8 @@ def apply_heuristics(
     elif p < 0.20 and s < 0.20 and (dc is None or dc < 0.20):
         label = "weak_or_no_relationship"
 
-    rank_linear_gap = abs(p - s) if p is not None and s is not None else 0.0
-    nonmonotonic_gap = (
-        dc - max(p, s) if dc is not None and p is not None and s is not None else 0.0
-    )
-
     return HeuristicResult(
         label=label,
-        disagreement_components={
-            "rank_linear_gap": rank_linear_gap,
-            "nonmonotonic_gap": nonmonotonic_gap,
-        },
         recommendations=generate_recommendations(label),
     )
 

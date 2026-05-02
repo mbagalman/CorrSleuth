@@ -31,16 +31,21 @@ python -m pytest -q
 - **Redundant `n_used < 30` check** dropped from the heuristic classifier; the `low_n` flag set in validation is the single source of truth.
 - **README updated** to document `random_state` and to mention the `OptionalDependencyError` behavior up front.
 
-## Still open from the original review
+## Second pass — remaining P2 polish
 
-P2 items not addressed in this pass (deferred — none are release blockers):
+- **2.6 Type hints fixed.** `summary()` and `explain()` now declare `include_caveat: Optional[bool] = None`.
+- **2.7 `disagreement_components` removed.** The dead field is gone from `HeuristicResult`; `MetricDiagnostics` is the single source of truth for gap values.
+- **2.8 Dead module deleted.** `corrsleuth/utils/` (containing only an empty `types.py`) removed entirely.
+- **2.9 `MetricComputationError` wired in.** Each `compute_*` function now wraps its underlying scipy/dcor/sklearn call in a narrow `try/except` that re-raises as `MetricComputationError` with the metric name in the message. Locked in by `test_compute_pearson_wraps_unexpected_failures_as_metric_error`. The exception is now a real part of the public API rather than a dead taxonomy entry.
 
-- 2.5 `MetricResult.available` overloads two concepts (dependency-available vs. value-was-computable). Refactor target for v0.2.
-- 2.6 `summary()` / `explain()` type hints (`bool = None` → `Optional[bool] = None`).
-- 2.7 `HeuristicResult.disagreement_components` is computed but never read. Either consume it from `_build_diagnostics` or drop the field.
-- 2.8 Remove the dead `corrsleuth/utils/types.py` module.
-- 2.9 `MetricComputationError` defined but never raised.
+Test count after the second pass: 44.
+
+## Still open
+
+Deferred — none are release blockers:
+
+- 2.5 `MetricResult.available` overloads two concepts (dependency-available vs. value-was-computable). Schema change worth thinking through with v0.2 in mind.
 - 2.10 Resolved as part of 1.4/2.4 — mode validation now uses `InputError`.
-- 2.11 Metric/sensitivity functions still mutate `pair.warnings` and `pair.flags`. Acceptable for v0.1; refactor when adding more agreement-based warnings.
+- 2.11 Metric/sensitivity functions still mutate `pair.warnings` and `pair.flags`. Acceptable for v0.1; pair this refactor with Phase 2 when more agreement-based warnings land.
 
-All P3 polish items (variable shadowing fixed in profile_pair, but `_format_value` duplication, `_CAVEAT` cross-module private import, `make_relationship` shape branch tidiness, README quickstart `show=True`, etc.) are still open and tracked in the original review.
+All P3 polish items (`_format_value` duplication, `_CAVEAT` cross-module private import, `make_relationship` shape branch tidiness, README quickstart `show=True`, etc.) are still open and tracked in the original review.
