@@ -223,7 +223,7 @@ The object returned by `scan_target()`.
 - `.target`: Name of the target column.
 - `.entries`: List of `TargetScanEntry` objects, one per inspected column.
 - `.successes` / `.failures`: Convenience splits.
-- `.summary()`: Compact text overview with pattern counts.
+- `.summary(top_n=5, include_caveat=True)`: Section-structured text overview. Pattern sections (`Strongest near-linear relationships`, `Potential monotonic nonlinear relationships`, `Potential nonmonotonic relationships`, `Possible outlier-driven relationships`, `Weak or no pairwise relationships`) are emitted only when populated, each capped at `top_n`. A cross-cutting `Variables Pearson may underrate` section lists variables whose `rank_linear_gap` or `nonmonotonic_gap` exceeds 0.20. `Variables with missingness or tie warnings` surfaces columns whose validation warnings mention ties, missingness, low unique ratios, small samples, or constant inputs. `Skipped or failed` lists non-numeric / errored columns. The output is deterministic; entries within each section are sorted by `disagreement_score` descending.
 - `.to_frame()`: One row per inspected column with variable, target, status, pattern, disagreement score, warnings, recommendations, and per-metric value columns. Skipped or errored rows leave metric columns NaN and populate `error_type` / `error_message`.
 
 ## License

@@ -37,6 +37,39 @@ _DEFAULT_METRIC_COLUMNS = (
     "metric_kendall_tau_b",
 )
 
+#: Pattern → summary section title, in display order. Patterns not listed here
+#: (``low_power_or_uncertain``, ``mixed_or_ambiguous``, ``not_computable``) fall
+#: through to the catch-all "Other or inconclusive" section so no profiled
+#: variable disappears from the summary.
+_PATTERN_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("near_linear", "Strongest near-linear relationships"),
+    ("monotonic_nonlinear", "Potential monotonic nonlinear relationships"),
+    ("nonmonotonic_dependence", "Potential nonmonotonic relationships"),
+    ("possible_outlier_or_leverage", "Possible outlier-driven relationships"),
+    ("weak_or_no_relationship", "Weak or no pairwise relationships"),
+)
+
+#: Threshold above which `rank_linear_gap` or `nonmonotonic_gap` qualifies a
+#: variable for the cross-cutting "Pearson may underrate" section.
+_PEARSON_UNDERRATE_GAP = 0.20
+
+#: Substrings used to surface a variable in the "missingness or tie warnings"
+#: cross-cutting section. Matched against `result.warnings` text emitted by
+#: validate_pair / profile_pair.
+_RELIABILITY_WARNING_KEYWORDS: tuple[str, ...] = (
+    "tie rate",
+    "Low unique value ratio",
+    "missing data",
+    "Small sample size",
+    "constant",
+)
+
+_SUMMARY_CAVEAT = (
+    "Caveat: Pairwise association does not imply causation or predictive "
+    "usefulness by itself. Always inspect the diagnostic plots and validate "
+    "with proper analysis."
+)
+
 
 @dataclass
 class TargetScanEntry:
@@ -117,11 +150,27 @@ class CorrSleuthTargetReport:
             rows.append(row)
         return pd.DataFrame(rows, columns=all_columns)
 
-    def summary(self) -> str:
-        """Compact text overview of the scan outcome.
+    def summary(self, top_n: int = 5, include_caveat: bool = True) -> str:
+        """Return a section-structured overview of the scan outcome.
 
-        Section structure (top patterns, prioritization) is intentionally minimal
-        in this version — Ticket 3.2 enriches the layout.
+        Sections are emitted in this fixed order, each capped at ``top_n``:
+
+        1. Pattern sections (``near_linear``, ``monotonic_nonlinear``,
+           ``nonmonotonic_dependence``, ``possible_outlier_or_leverage``,
+           ``weak_or_no_relationship``).
+        2. ``Other or inconclusive`` — variables with patterns outside the
+           explicit set (e.g., ``low_power_or_uncertain``).
+        3. ``Variables Pearson may underrate`` — cross-cutting; entries whose
+           ``rank_linear_gap`` or ``nonmonotonic_gap`` exceeds 0.20.
+        4. ``Variables with missingness or tie warnings`` — cross-cutting;
+           entries whose ``warnings`` mention ties, missing data, low unique
+           ratio, small samples, or constant inputs.
+        5. ``Skipped or failed`` — non-numeric / missing columns and per-column
+           profile failures captured under ``errors="warn"``.
+
+        Within each section, entries are sorted by ``disagreement_score``
+        descending. Empty sections are omitted. The caveat is appended unless
+        ``include_caveat=False``.
         """
         lines = [
             f"Target scan: {self.target}",
@@ -129,17 +178,113 @@ class CorrSleuthTargetReport:
             f"  errored  : {sum(1 for e in self.entries if e.status == 'error')}",
             f"  skipped  : {sum(1 for e in self.entries if e.status == 'skipped')}",
         ]
-        if self.successes:
-            counts = (
-                pd.Series([e.result.pattern for e in self.successes])
-                .value_counts()
-                .sort_values(ascending=False)
+
+        for pattern, title in _PATTERN_SECTIONS:
+            section_entries = [e for e in self.successes if e.result.pattern == pattern]
+            if not section_entries:
+                continue
+            section_entries.sort(
+                key=lambda e: (-e.result.disagreement_score, e.column)
             )
-            lines.append("")
-            lines.append("Pattern counts:")
-            for pattern, count in counts.items():
-                lines.append(f"  {pattern.ljust(30)}: {count}")
+            lines.extend(["", f"{title}:"])
+            for entry in section_entries[:top_n]:
+                lines.append(f"  {self._format_pattern_entry(entry)}")
+
+        listed_patterns = {pattern for pattern, _ in _PATTERN_SECTIONS}
+        other_entries = [
+            e for e in self.successes if e.result.pattern not in listed_patterns
+        ]
+        if other_entries:
+            other_entries.sort(
+                key=lambda e: (-e.result.disagreement_score, e.column)
+            )
+            lines.extend(["", "Other or inconclusive:"])
+            for entry in other_entries[:top_n]:
+                lines.append(
+                    f"  {entry.column} ({entry.result.pattern}, "
+                    f"disagreement={entry.result.disagreement_score:.2f})"
+                )
+
+        underrate = [e for e in self.successes if self._is_pearson_underrate(e)]
+        if underrate:
+            underrate.sort(
+                key=lambda e: (-self._pearson_underrate_gap(e), e.column)
+            )
+            lines.extend(["", "Variables Pearson may underrate:"])
+            for entry in underrate[:top_n]:
+                gap = self._pearson_underrate_gap(entry)
+                lines.append(f"  {entry.column} (gap={gap:.2f})")
+
+        warned = [e for e in self.successes if self._has_reliability_warning(e)]
+        if warned:
+            warned.sort(key=lambda e: e.column)
+            lines.extend(["", "Variables with missingness or tie warnings:"])
+            for entry in warned[:top_n]:
+                lines.append(
+                    f"  {entry.column}: "
+                    f"{self._primary_reliability_warning(entry)}"
+                )
+
+        skipped_or_failed = [e for e in self.entries if e.status != "ok"]
+        if skipped_or_failed:
+            skipped_or_failed.sort(key=lambda e: (e.status, e.column))
+            lines.extend(["", "Skipped or failed:"])
+            for entry in skipped_or_failed[:top_n]:
+                detail = entry.error_type or "unknown"
+                lines.append(f"  {entry.column} ({entry.status}: {detail})")
+
+        if include_caveat:
+            lines.extend(["", _SUMMARY_CAVEAT])
+
         return "\n".join(lines)
+
+    @staticmethod
+    def _format_pattern_entry(entry: TargetScanEntry) -> str:
+        result = entry.result
+        metrics = {
+            row["metric"]: row["value"] for _, row in result.metrics.iterrows()
+        }
+
+        def _fmt(value: Any) -> str:
+            if value is None or pd.isna(value):
+                return "NA"
+            return f"{value:.2f}"
+
+        return (
+            f"{entry.column} "
+            f"(pearson={_fmt(metrics.get('pearson'))}, "
+            f"spearman={_fmt(metrics.get('spearman'))}, "
+            f"disagreement={result.disagreement_score:.2f})"
+        )
+
+    @staticmethod
+    def _pearson_underrate_gap(entry: TargetScanEntry) -> float:
+        diag = entry.result.diagnostics
+        candidates = []
+        if diag.rank_linear_gap is not None:
+            candidates.append(diag.rank_linear_gap)
+        if diag.nonmonotonic_gap is not None:
+            candidates.append(diag.nonmonotonic_gap)
+        return max(candidates) if candidates else 0.0
+
+    @classmethod
+    def _is_pearson_underrate(cls, entry: TargetScanEntry) -> bool:
+        return cls._pearson_underrate_gap(entry) > _PEARSON_UNDERRATE_GAP
+
+    @staticmethod
+    def _has_reliability_warning(entry: TargetScanEntry) -> bool:
+        return any(
+            keyword in warning
+            for warning in entry.result.warnings
+            for keyword in _RELIABILITY_WARNING_KEYWORDS
+        )
+
+    @staticmethod
+    def _primary_reliability_warning(entry: TargetScanEntry) -> str:
+        for warning in entry.result.warnings:
+            if any(k in warning for k in _RELIABILITY_WARNING_KEYWORDS):
+                return warning
+        return entry.result.warnings[0] if entry.result.warnings else ""
 
 
 def _iter_with_progress(items: Sequence[str], progress: bool):
