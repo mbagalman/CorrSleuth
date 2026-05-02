@@ -282,7 +282,9 @@ class CorrSleuthTargetReport:
         pandas.DataFrame
             One row per included variable, sorted by strongest evidence. The
             frame includes metric values, directional gap values, the primary
-            diagnostic pattern, disagreement score, and warnings.
+            diagnostic pattern, disagreement score, and warnings. The
+            ``nonmonotonic_gap`` column stores the raw diagnostic value; only
+            its positive portion contributes to ``pearson_underrate_score``.
         """
         if (
             isinstance(threshold, bool)
@@ -297,8 +299,8 @@ class CorrSleuthTargetReport:
             "target",
             "pattern",
             "pearson_underrate_score",
-            "spearman_pearson_gap",
-            "kendall_pearson_gap",
+            "spearman_excess_over_pearson",
+            "kendall_excess_over_pearson",
             "nonmonotonic_gap",
             "disagreement_score",
             "metric_pearson",
@@ -312,23 +314,8 @@ class CorrSleuthTargetReport:
         rows: List[Dict[str, Any]] = []
         for entry in self.successes:
             metrics = self._metrics_map(entry)
-            pearson = metrics.get("pearson")
-            abs_p = (
-                abs(pearson)
-                if pearson is not None and not pd.isna(pearson)
-                else None
-            )
-
-            spearman_gap = self._positive_abs_gap(metrics.get("spearman"), abs_p)
-            kendall_gap = self._positive_abs_gap(metrics.get("kendall_tau_b"), abs_p)
-            nonmonotonic_gap = entry.result.diagnostics.nonmonotonic_gap
-            if nonmonotonic_gap is None or pd.isna(nonmonotonic_gap):
-                nonmonotonic_gap = None
-
-            score_candidates = [spearman_gap, kendall_gap]
-            if nonmonotonic_gap is not None:
-                score_candidates.append(max(0.0, float(nonmonotonic_gap)))
-            score = max(score_candidates) if score_candidates else 0.0
+            components = self._directional_underrate_components(entry)
+            score = components["score"]
 
             if score <= threshold:
                 continue
@@ -339,11 +326,15 @@ class CorrSleuthTargetReport:
                     "target": self.target,
                     "pattern": entry.result.pattern,
                     "pearson_underrate_score": score,
-                    "spearman_pearson_gap": spearman_gap,
-                    "kendall_pearson_gap": kendall_gap,
-                    "nonmonotonic_gap": nonmonotonic_gap,
+                    "spearman_excess_over_pearson": components[
+                        "spearman_excess_over_pearson"
+                    ],
+                    "kendall_excess_over_pearson": components[
+                        "kendall_excess_over_pearson"
+                    ],
+                    "nonmonotonic_gap": components["nonmonotonic_gap"],
                     "disagreement_score": entry.result.disagreement_score,
-                    "metric_pearson": pearson,
+                    "metric_pearson": metrics.get("pearson"),
                     "metric_spearman": metrics.get("spearman"),
                     "metric_kendall_tau_b": metrics.get("kendall_tau_b"),
                     "metric_distance_correlation": metrics.get("distance_correlation"),
@@ -393,34 +384,54 @@ class CorrSleuthTargetReport:
             return 0.0
         return max(0.0, abs(float(value)) - baseline_abs)
 
+    @classmethod
+    def _directional_underrate_components(
+        cls, entry: TargetScanEntry
+    ) -> Dict[str, Optional[float]]:
+        metrics = cls._metrics_map(entry)
+        pearson = metrics.get("pearson")
+        abs_p = (
+            abs(pearson)
+            if pearson is not None and not pd.isna(pearson)
+            else None
+        )
+
+        spearman_gap = cls._positive_abs_gap(metrics.get("spearman"), abs_p)
+        kendall_gap = cls._positive_abs_gap(metrics.get("kendall_tau_b"), abs_p)
+
+        raw_nonmonotonic_gap = entry.result.diagnostics.nonmonotonic_gap
+        nonmonotonic_gap = (
+            None
+            if raw_nonmonotonic_gap is None or pd.isna(raw_nonmonotonic_gap)
+            else float(raw_nonmonotonic_gap)
+        )
+        nonmonotonic_contribution = (
+            max(0.0, nonmonotonic_gap) if nonmonotonic_gap is not None else 0.0
+        )
+
+        score = max(spearman_gap, kendall_gap, nonmonotonic_contribution)
+        return {
+            "score": score,
+            "spearman_excess_over_pearson": spearman_gap,
+            "kendall_excess_over_pearson": kendall_gap,
+            "nonmonotonic_gap": nonmonotonic_gap,
+        }
+
+    @classmethod
+    def _directional_underrate_score(cls, entry: TargetScanEntry) -> float:
+        return float(cls._directional_underrate_components(entry)["score"])
+
     @staticmethod
     def _pearson_underrate_gap(entry: TargetScanEntry) -> float:
         """Directional gap: positive only when rank/dCor metrics exceed Pearson.
 
         ``rank_linear_gap`` is symmetric (``abs(abs(p) - abs(s))``), so it would
         treat ``Pearson >> Spearman`` (often outlier-driven) the same as
-        ``Spearman >> Pearson``. This helper instead computes the signed
-        difference ``abs(rank_metric) - abs(pearson)`` and the already-directional
-        ``nonmonotonic_gap``, so leverage-driven entries do not surface here.
+        ``Spearman >> Pearson``. This helper delegates to the same clamped
+        directional score used by :meth:`pearson_underrated`, so leverage-driven
+        entries do not surface here.
         """
-        metrics = CorrSleuthTargetReport._metrics_map(entry)
-        pearson = metrics.get("pearson")
-        spearman = metrics.get("spearman")
-        kendall = metrics.get("kendall_tau_b")
-
-        candidates: List[float] = []
-        if pearson is not None and not pd.isna(pearson):
-            abs_p = abs(pearson)
-            if spearman is not None and not pd.isna(spearman):
-                candidates.append(abs(spearman) - abs_p)
-            if kendall is not None and not pd.isna(kendall):
-                candidates.append(abs(kendall) - abs_p)
-
-        nonmonotonic_gap = entry.result.diagnostics.nonmonotonic_gap
-        if nonmonotonic_gap is not None:
-            candidates.append(nonmonotonic_gap)
-
-        return max(candidates) if candidates else 0.0
+        return CorrSleuthTargetReport._directional_underrate_score(entry)
 
     @classmethod
     def _is_pearson_underrate(cls, entry: TargetScanEntry) -> bool:

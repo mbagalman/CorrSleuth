@@ -8,6 +8,7 @@ import pytest
 
 from corrsleuth import scan_target
 from corrsleuth.exceptions import InputError
+from corrsleuth.result import CorrSleuthResult, MetricDiagnostics
 from corrsleuth.scan import CorrSleuthTargetReport, TargetScanEntry
 
 
@@ -352,7 +353,7 @@ def test_pearson_underrated_ranks_nonlinear_above_noise():
 
     assert list(ranked["variable"]) == ["log_shape"]
     assert ranked["pearson_underrate_score"].iloc[0] > 0.20
-    assert ranked["spearman_pearson_gap"].iloc[0] > 0.20
+    assert ranked["spearman_excess_over_pearson"].iloc[0] > 0.20
     assert abs(ranked["metric_pearson"].iloc[0]) < abs(
         ranked["metric_spearman"].iloc[0]
     )
@@ -374,8 +375,8 @@ def test_pearson_underrated_includes_metric_and_gap_columns():
         "target",
         "pattern",
         "pearson_underrate_score",
-        "spearman_pearson_gap",
-        "kendall_pearson_gap",
+        "spearman_excess_over_pearson",
+        "kendall_excess_over_pearson",
         "nonmonotonic_gap",
         "disagreement_score",
         "metric_pearson",
@@ -431,6 +432,73 @@ def test_pearson_underrated_rejects_invalid_threshold():
         report.pearson_underrated(threshold=True)
     with pytest.raises(InputError, match="non-negative number"):
         report.pearson_underrated(threshold=np.nan)
+
+
+def test_pearson_underrated_empty_report_keeps_documented_schema():
+    df = _build_clean_df()
+    report = scan_target(df, "target", columns=["label"])
+
+    ranked = report.pearson_underrated()
+
+    assert ranked.empty
+    assert list(ranked.columns) == [
+        "variable",
+        "target",
+        "pattern",
+        "pearson_underrate_score",
+        "spearman_excess_over_pearson",
+        "kendall_excess_over_pearson",
+        "nonmonotonic_gap",
+        "disagreement_score",
+        "metric_pearson",
+        "metric_spearman",
+        "metric_kendall_tau_b",
+        "metric_distance_correlation",
+        "metric_mutual_information",
+        "warnings",
+    ]
+
+
+def _underrated_entry(column: str, pearson: float, spearman: float) -> TargetScanEntry:
+    metrics = pd.DataFrame({
+        "metric": ["pearson", "spearman", "kendall_tau_b"],
+        "value": [pearson, spearman, 0.0],
+        "available": [True, True, True],
+    })
+    result = CorrSleuthResult(
+        x_name="target",
+        y_name=column,
+        metrics=metrics,
+        pattern="monotonic_nonlinear",
+        warnings=[],
+        recommendations=[],
+        disagreement_score=abs(abs(spearman) - abs(pearson)),
+        diagnostics=MetricDiagnostics(
+            rank_linear_gap=abs(abs(spearman) - abs(pearson)),
+            pearson_spearman_signed_gap=pearson - spearman,
+            nonmonotonic_gap=None,
+            pearson_kendall_gap=abs(abs(pearson) - 0.0),
+            disagreement_score=abs(abs(spearman) - abs(pearson)),
+        ),
+    )
+    return TargetScanEntry(column=column, status="ok", result=result)
+
+
+def test_pearson_underrated_sort_is_deterministic_with_name_tiebreaker():
+    report = CorrSleuthTargetReport(
+        target="target",
+        entries=[
+            _underrated_entry("tie_b", pearson=0.10, spearman=0.45),
+            _underrated_entry("high", pearson=0.10, spearman=0.60),
+            _underrated_entry("tie_a", pearson=0.10, spearman=0.45),
+        ],
+    )
+
+    first = report.pearson_underrated()
+    second = report.pearson_underrated()
+
+    assert list(first["variable"]) == ["high", "tie_a", "tie_b"]
+    assert list(second["variable"]) == list(first["variable"])
 
 
 def _ranked_pearson_df(n: int = 100, random_state: int = 0) -> pd.DataFrame:
