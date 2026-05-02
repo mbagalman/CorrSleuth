@@ -153,6 +153,14 @@ class CorrSleuthTargetReport:
     def summary(self, top_n: int = 5, include_caveat: bool = True) -> str:
         """Return a section-structured overview of the scan outcome.
 
+        Parameters
+        ----------
+        top_n : int, default 5
+            Per-section cap on the number of entries displayed. Must be a
+            positive integer.
+        include_caveat : bool, default True
+            Append the non-causal caveat line.
+
         Sections are emitted in this fixed order, each capped at ``top_n``:
 
         1. Pattern sections (``near_linear``, ``monotonic_nonlinear``,
@@ -172,6 +180,9 @@ class CorrSleuthTargetReport:
         descending. Empty sections are omitted. The caveat is appended unless
         ``include_caveat=False``.
         """
+        if isinstance(top_n, bool) or not isinstance(top_n, int) or top_n < 1:
+            raise InputError("top_n must be a positive integer.")
+
         lines = [
             f"Target scan: {self.target}",
             f"  profiled : {len(self.successes)}",
@@ -259,12 +270,34 @@ class CorrSleuthTargetReport:
 
     @staticmethod
     def _pearson_underrate_gap(entry: TargetScanEntry) -> float:
-        diag = entry.result.diagnostics
-        candidates = []
-        if diag.rank_linear_gap is not None:
-            candidates.append(diag.rank_linear_gap)
-        if diag.nonmonotonic_gap is not None:
-            candidates.append(diag.nonmonotonic_gap)
+        """Directional gap: positive only when rank/dCor metrics exceed Pearson.
+
+        ``rank_linear_gap`` is symmetric (``abs(abs(p) - abs(s))``), so it would
+        treat ``Pearson >> Spearman`` (often outlier-driven) the same as
+        ``Spearman >> Pearson``. This helper instead computes the signed
+        difference ``abs(rank_metric) - abs(pearson)`` and the already-directional
+        ``nonmonotonic_gap``, so leverage-driven entries do not surface here.
+        """
+        metrics = {
+            row["metric"]: row["value"]
+            for _, row in entry.result.metrics.iterrows()
+        }
+        pearson = metrics.get("pearson")
+        spearman = metrics.get("spearman")
+        kendall = metrics.get("kendall_tau_b")
+
+        candidates: List[float] = []
+        if pearson is not None and not pd.isna(pearson):
+            abs_p = abs(pearson)
+            if spearman is not None and not pd.isna(spearman):
+                candidates.append(abs(spearman) - abs_p)
+            if kendall is not None and not pd.isna(kendall):
+                candidates.append(abs(kendall) - abs_p)
+
+        nonmonotonic_gap = entry.result.diagnostics.nonmonotonic_gap
+        if nonmonotonic_gap is not None:
+            candidates.append(nonmonotonic_gap)
+
         return max(candidates) if candidates else 0.0
 
     @classmethod

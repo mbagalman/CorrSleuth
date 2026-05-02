@@ -301,6 +301,52 @@ def test_scan_summary_is_deterministic():
     assert r1 == r2
 
 
+def test_scan_summary_pearson_underrate_excludes_leverage_pattern():
+    """Outlier-driven variables (Pearson >> Spearman) must not surface in the
+    Pearson-may-underrate cross-cut, since that section is meant for the
+    opposite story."""
+    rng = np.random.default_rng(0)
+    n = 300
+    target = rng.normal(0, 0.1, size=n)
+    leverage = rng.normal(0, 0.1, size=n)
+    num_outliers = max(1, int(n * 0.02))
+    target[-num_outliers:] = rng.uniform(8, 10, size=num_outliers)
+    leverage[-num_outliers:] = rng.uniform(8, 10, size=num_outliers)
+    df = pd.DataFrame({"target": target, "leverage": leverage})
+
+    report = scan_target(df, "target")
+    summary = report.summary(include_caveat=False)
+
+    leverage_entry = next(e for e in report.successes if e.column == "leverage")
+    metrics = {
+        row["metric"]: row["value"]
+        for _, row in leverage_entry.result.metrics.iterrows()
+    }
+    # Sanity-check the fixture: Pearson really is much stronger than Spearman.
+    assert abs(metrics["pearson"]) - abs(metrics["spearman"]) > 0.20
+
+    if "Variables Pearson may underrate:" in summary:
+        underrate_idx = summary.index("Variables Pearson may underrate:")
+        # Find the next section break or end-of-string
+        next_break = summary.find("\n\n", underrate_idx)
+        section = summary[underrate_idx : next_break if next_break != -1 else len(summary)]
+        assert "leverage" not in section
+
+
+def test_scan_summary_rejects_invalid_top_n():
+    df = _build_clean_df()
+    report = scan_target(df, "target")
+
+    with pytest.raises(InputError, match="positive integer"):
+        report.summary(top_n=0)
+    with pytest.raises(InputError, match="positive integer"):
+        report.summary(top_n=-1)
+    with pytest.raises(InputError, match="positive integer"):
+        report.summary(top_n=True)
+    with pytest.raises(InputError, match="positive integer"):
+        report.summary(top_n=2.5)
+
+
 def test_scan_target_to_frame_keeps_documented_columns_when_all_skipped():
     df = _build_clean_df()
     report = scan_target(df, "target", columns=["label"])
