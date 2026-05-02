@@ -132,7 +132,7 @@ Priority: Phase 1 / Medium
 
 Status: Complete
 
-Completed in: `pending commit`
+Completed in: `a12f11d Improve result summary diagnostics`
 
 Completion notes:
 
