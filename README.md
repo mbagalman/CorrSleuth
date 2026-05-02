@@ -6,6 +6,8 @@ CorrSleuth profiles numeric pairwise relationships in pandas DataFrames by compa
 
 Most tools give you a correlation matrix. CorrSleuth tells you where the correlation matrix may be misleading.
 
+CorrSleuth is diagnostic, not causal. It identifies evidence consistent with relationship patterns, but it does not prove causation, treatment effects, or model specification certainty.
+
 ## Installation
 
 Install the base package for core metrics (Pearson, Spearman, Kendall tau-b):
@@ -38,6 +40,12 @@ print(result.explain())
 
 # Generate a multi-panel diagnostic plot
 fig = result.plot(show=True)
+```
+
+Example explanation:
+
+```text
+Evidence consistent with a relationship that is not simply increasing or decreasing (e.g., U-shaped or cyclical). Standard linear and rank metrics may understate this relationship. Do not interpret this association causally without proper design or controls.
 ```
 
 ## Canonical Examples
@@ -91,6 +99,46 @@ CorrSleuth takes a fundamentally different approach to bivariate analysis. Inste
 
 By examining where these metrics **agree or disagree**, CorrSleuth assigns a heuristic diagnostic label (e.g., `monotonic_nonlinear` if Spearman is high but Pearson is low, or `nonmonotonic_dependence` if Distance Correlation is high but Spearman is low).
 
+## Scope
+
+CorrSleuth v0.1 focuses on one workflow: numeric-vs-numeric pairwise profiling.
+
+In scope:
+- Profiling one numeric pair with `profile_pair()`.
+- Lite metrics: Pearson, Spearman, and Kendall tau-b.
+- Standard metrics: Distance Correlation and Mutual Information.
+- Heuristic diagnostic labels, warnings, recommendations, and diagnostic plots.
+- Deterministic simulated relationships through `make_relationship()`.
+
+Out of scope for v0.1:
+- Categorical or mixed-type variables.
+- Full correlation matrices or target scans.
+- HTML reports.
+- Scikit-learn transformers or automated model fitting.
+- Causal inference.
+
+## Missing Data and Warnings
+
+`profile_pair()` supports three missing-data modes:
+
+- `missing="pairwise"` drops rows missing either selected variable.
+- `missing="listwise"` currently behaves the same as `pairwise` for the selected pair.
+- `missing="raise"` raises an error if either selected variable contains missing values.
+
+Validation warnings are exposed through `result.warnings`. CorrSleuth warns about small samples, high missingness, low unique-value ratios, constant inputs, downsampling, and conflicting directional evidence when applicable.
+
+## Standard Mode
+
+`mode="standard"` adds Distance Correlation and Mutual Information. It requires the optional dependencies installed by:
+
+```bash
+pip install corrsleuth[standard]
+```
+
+If those dependencies are not available, CorrSleuth raises `OptionalDependencyError` instead of silently skipping metrics.
+
+For Distance Correlation, CorrSleuth downsamples to 20,000 rows by default when `n_used` is larger than that cap and records a warning. Use `max_n_for_dcor=None` to disable this cap.
+
 ## API Reference
 
 ### `profile_pair()`
@@ -104,14 +152,14 @@ def profile_pair(
     mode: str = "lite",           # "lite" or "standard"
     missing: str = "pairwise",    # "pairwise", "listwise", or "raise"
     include_caveat: bool = True,  # Includes causal caveats in explanations
-    max_n_for_dcor: int = 20000   # Downsampling cap for Distance Correlation
+    max_n_for_dcor: int | None = 20000  # Downsampling cap for Distance Correlation
 ) -> CorrSleuthResult
 ```
 
 ### `CorrSleuthResult`
 The object returned by `profile_pair()`.
 - `.pattern`: The assigned heuristic label (e.g., `"near_linear"`).
-- `.summary()`: Returns a printed tabular summary of the metrics.
+- `.summary()`: Returns a string summary of the metrics, label, warnings, recommendations, and caveat.
 - `.explain()`: Returns a plain-English narrative interpreting the results.
 - `.plot(show=False)`: Generates a 1x3 Matplotlib diagnostic figure.
 - `.to_dict()` / `.to_frame()`: Serializes the output for downstream pipelines.
