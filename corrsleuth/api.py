@@ -11,6 +11,10 @@ from corrsleuth.metrics import (
     compute_kendall,
     compute_distance_correlation,
     compute_mutual_information,
+    compute_trimmed_pearson,
+    compute_winsorized_pearson,
+    compute_biweight_midcorrelation,
+    compute_percentage_bend_correlation,
     compute_bootstrap,
 )
 from corrsleuth.heuristics import apply_heuristics, detect_metric_warnings
@@ -112,10 +116,12 @@ def profile_pair(
         Source data containing both columns.
     x, y : str
         Column names of the numeric variables to profile.
-    mode : {"lite", "standard"}, default "lite"
+    mode : {"lite", "standard", "deep"}, default "lite"
         ``"lite"`` computes Pearson, Spearman, and Kendall tau-b.
         ``"standard"`` additionally computes distance correlation and mutual
         information; requires the ``corrsleuth[standard]`` extras.
+        ``"deep"`` adds lightweight robust correlation diagnostics without
+        requiring optional dependencies.
     missing : {"pairwise", "listwise", "raise"}, default "pairwise"
         Missing-value policy for the selected pair.
     include_caveat : bool, default True
@@ -139,11 +145,9 @@ def profile_pair(
     max_n_for_bootstrap : int or None, default 5000
         Cap on rows sampled per bootstrap replicate. ``None`` disables the cap.
     """
-    if mode not in ("lite", "standard"):
-        if mode == "deep":
-            raise NotImplementedError("mode='deep' is not implemented in v0.1.")
+    if mode not in ("lite", "standard", "deep"):
         raise InputError(
-            f"Unknown mode: '{mode}'. Supported modes are 'lite' and 'standard'."
+            f"Unknown mode: '{mode}'. Supported modes are 'lite', 'standard', and 'deep'."
         )
 
     # 1. Validation
@@ -165,6 +169,14 @@ def profile_pair(
         )
         metrics_map["mutual_information"] = compute_mutual_information(
             pair, mode=mode, random_state=random_state
+        )
+
+    if mode == "deep":
+        metrics_map["pearson_trimmed_1pct"] = compute_trimmed_pearson(pair)
+        metrics_map["pearson_winsorized_1pct"] = compute_winsorized_pearson(pair)
+        metrics_map["biweight_midcorrelation"] = compute_biweight_midcorrelation(pair)
+        metrics_map["percentage_bend_correlation"] = (
+            compute_percentage_bend_correlation(pair)
         )
 
     # 3. Outlier sensitivity check (informs the leverage label)

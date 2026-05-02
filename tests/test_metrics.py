@@ -1,5 +1,6 @@
 import sys
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -8,7 +9,9 @@ from corrsleuth.api import profile_pair
 from corrsleuth.exceptions import MetricComputationError, OptionalDependencyError
 from corrsleuth.metrics import (
     compute_pearson, compute_spearman, compute_kendall,
-    compute_distance_correlation, compute_mutual_information
+    compute_distance_correlation, compute_mutual_information,
+    compute_trimmed_pearson, compute_winsorized_pearson,
+    compute_biweight_midcorrelation, compute_percentage_bend_correlation,
 )
 
 def test_core_metrics():
@@ -128,3 +131,69 @@ def test_compute_pearson_wraps_unexpected_failures_as_metric_error(monkeypatch):
 
     with pytest.raises(MetricComputationError, match="Failed to compute pearson"):
         compute_pearson(pair)
+
+
+def test_deep_mode_adds_robust_metrics_without_standard_dependencies():
+    df = pd.DataFrame({"x": range(80), "y": range(80)})
+
+    lite = profile_pair(df, "x", "y", mode="lite")
+    deep = profile_pair(df, "x", "y", mode="deep")
+
+    lite_metrics = set(lite.metrics["metric"])
+    deep_metrics = set(deep.metrics["metric"])
+    robust_metrics = {
+        "pearson_trimmed_1pct",
+        "pearson_winsorized_1pct",
+        "biweight_midcorrelation",
+        "percentage_bend_correlation",
+    }
+    assert robust_metrics.isdisjoint(lite_metrics)
+    assert robust_metrics <= deep_metrics
+    assert "distance_correlation" not in deep_metrics
+    assert "mutual_information" not in deep_metrics
+
+
+def test_robust_metrics_return_none_for_small_samples_with_warning():
+    df = pd.DataFrame({"x": range(40), "y": range(40)})
+    pair = validate_pair(df, "x", "y")
+
+    result = compute_trimmed_pearson(pair)
+
+    assert result.name == "pearson_trimmed_1pct"
+    assert result.value is None
+    assert result.available is True
+    assert any("robust correlation diagnostics need more observations" in w for w in pair.warnings)
+
+
+def test_robust_metrics_are_near_pearson_for_clean_linear_data():
+    df = pd.DataFrame({"x": range(100), "y": range(100)})
+    pair = validate_pair(df, "x", "y")
+
+    results = [
+        compute_trimmed_pearson(pair),
+        compute_winsorized_pearson(pair),
+        compute_biweight_midcorrelation(pair),
+        compute_percentage_bend_correlation(pair),
+    ]
+
+    assert all(r.value == pytest.approx(1.0) for r in results)
+
+
+def test_outlier_driven_data_shows_meaningful_pearson_robust_gap():
+    rng = np.random.default_rng(0)
+    n = 200
+    x = rng.normal(0, 0.1, size=n)
+    y = rng.normal(0, 0.1, size=n)
+    x[-2:] = rng.uniform(8, 10, size=2)
+    y[-2:] = rng.uniform(8, 10, size=2)
+    df = pd.DataFrame({"x": x, "y": y})
+
+    result = profile_pair(df, "x", "y", mode="deep")
+    metrics = {
+        row["metric"]: row["value"]
+        for _, row in result.metrics.iterrows()
+    }
+
+    assert metrics["pearson"] > 0.90
+    assert metrics["pearson_trimmed_1pct"] < 0.50
+    assert metrics["pearson"] - metrics["pearson_trimmed_1pct"] > 0.40

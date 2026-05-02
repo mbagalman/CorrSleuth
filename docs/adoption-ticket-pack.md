@@ -703,6 +703,17 @@ Phase 4 adds more statistics only when they improve diagnosis. Avoid turning Cor
 
 Priority: Phase 4 / Medium
 
+Status: In review
+
+Implementation notes from this PR:
+
+- Added `mode="deep"` to `profile_pair()`.
+- Deep mode computes the lite metrics plus four no-new-dependency robust correlation diagnostics: `pearson_trimmed_1pct`, `pearson_winsorized_1pct`, `biweight_midcorrelation`, and `percentage_bend_correlation`.
+- Deep mode intentionally does not compute Distance Correlation or Mutual Information; those remain `mode="standard"` diagnostics behind the `[standard]` extras.
+- Target scans can forward `mode="deep"`, and `plot_top(sort_by=...)` accepts the robust metric names.
+- Robust metrics return `None` with warnings when sample size is too small or robust calculation is not meaningful.
+- Tests cover lite-mode exclusion, deep-mode inclusion, clean-linear behavior, small-sample warnings, and an outlier-driven fixture where Pearson differs meaningfully from trimmed Pearson.
+
 Goal:
 
 Add robust correlation estimates that help diagnose outlier-sensitive relationships.

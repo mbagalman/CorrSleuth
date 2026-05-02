@@ -20,6 +20,9 @@ Install with `standard` mode to include Distance Correlation and Mutual Informat
 pip install corrsleuth[standard]
 ```
 
+`mode="deep"` uses the base installation and adds lightweight robust
+correlation diagnostics; it does not require extra dependencies.
+
 ## Quickstart
 
 ```python
@@ -99,6 +102,7 @@ CorrSleuth takes a fundamentally different approach to bivariate analysis. Inste
 3. **Kendall tau-b**: A robust rank correlation that handles ties well.
 4. **Distance Correlation** *(Standard mode)*: Captures non-linear dependencies.
 5. **Mutual Information** *(Standard mode)*: Captures arbitrary statistical dependence.
+6. **Robust Pearson-family diagnostics** *(Deep mode)*: Trimmed Pearson, winsorized Pearson, biweight midcorrelation, and percentage bend correlation help check whether Pearson appears sensitive to extreme values.
 
 By examining where these metrics **agree or disagree**, CorrSleuth assigns a heuristic diagnostic label (e.g., `monotonic_nonlinear` if Spearman is high but Pearson is low, or `nonmonotonic_dependence` if Distance Correlation is high but Spearman is low).
 
@@ -111,6 +115,7 @@ In scope:
 - Scanning every numeric column against a single target with `scan_target()`.
 - Lite metrics: Pearson, Spearman, and Kendall tau-b.
 - Standard metrics: Distance Correlation and Mutual Information.
+- Deep metrics: lightweight robust correlation diagnostics.
 - Heuristic diagnostic labels, warnings, recommendations, and diagnostic plots.
 - Deterministic simulated relationships through `make_relationship()`.
 
@@ -145,6 +150,22 @@ For Distance Correlation, CorrSleuth downsamples to 20,000 rows by default when 
 
 If you call `mode="standard"` without installing the extras, CorrSleuth raises `OptionalDependencyError` with install instructions rather than silently skipping metrics.
 
+## Deep Mode
+
+`mode="deep"` adds robust correlation diagnostics while keeping the base
+installation lightweight:
+
+- `pearson_trimmed_1pct`: Pearson after dropping rows outside the 1st/99th percentile range of either variable.
+- `pearson_winsorized_1pct`: Pearson after clipping both variables at their 1st/99th percentiles.
+- `biweight_midcorrelation`: A median/MAD-based robust correlation.
+- `percentage_bend_correlation`: Pearson after bending extreme deviations around each median.
+
+These are robustness diagnostics, not definitive replacements for Pearson or
+visual inspection. They are most useful when Pearson is strong but rank metrics
+or plots suggest leverage-sensitive behavior. Deep mode does not compute
+Distance Correlation or Mutual Information; use `mode="standard"` for those
+nonlinear dependence metrics.
+
 ## API Reference
 
 ### `profile_pair()`
@@ -155,7 +176,7 @@ def profile_pair(
     data: pd.DataFrame,
     x: str,
     y: str,
-    mode: str = "lite",                 # "lite" or "standard"
+    mode: str = "lite",                 # "lite", "standard", or "deep"
     missing: str = "pairwise",          # "pairwise", "listwise", or "raise"
     include_caveat: bool = True,        # Includes causal caveats in explanations
     max_n_for_dcor: int | None = 20000, # Downsampling cap for Distance Correlation
@@ -226,7 +247,7 @@ The object returned by `scan_target()`.
 - `.summary(top_n=5, include_caveat=True)`: Section-structured text overview. Pattern sections (`Strongest near-linear relationships`, `Potential monotonic nonlinear relationships`, `Potential nonmonotonic relationships`, `Possible outlier-driven relationships`, `Weak or no pairwise relationships`) are emitted only when populated, each capped at `top_n`. A cross-cutting `Variables Pearson may underrate` section lists variables whose `rank_linear_gap` or `nonmonotonic_gap` exceeds 0.20. `Variables with missingness or tie warnings` surfaces columns whose validation warnings mention ties, missingness, low unique ratios, small samples, or constant inputs. `Skipped or failed` lists non-numeric / errored columns. The output is deterministic; entries within each section are sorted by `disagreement_score` descending.
 - `.to_frame()`: One row per inspected column with variable, target, status, pattern, disagreement score, warnings, recommendations, and per-metric value columns. Skipped or errored rows leave metric columns NaN and populate `error_type` / `error_message`.
 - `.pearson_underrated(threshold=0.20)`: Returns a DataFrame of variables where Pearson may understate the relationship. The ranking is directional: Spearman, Kendall, or standard-mode nonmonotonic evidence must exceed Pearson by more than `threshold`, so outlier/leverage cases where Pearson is stronger than rank metrics are excluded. Rows include metric values, explicit excess-over-Pearson gap values, raw `nonmonotonic_gap`, pattern, disagreement score, and warnings, sorted by strongest evidence.
-- `.plot_top(n=12, sort_by="disagreement_score", patterns=None, ncols=3, figsize=None, show=False)`: Compact gallery of the top-`n` target relationships as a Matplotlib `Figure`. `sort_by` accepts `"disagreement_score"` (raw value descending) or a metric name (`pearson`, `spearman`, `kendall_tau_b`, `distance_correlation`, `mutual_information`; sorted by absolute value descending). `patterns=` filters to specific diagnostic labels and accepts either a single string or an iterable. Each panel is a scatter of the candidate column versus the target, titled with the column name, pattern, and key metric values. When fewer than `n` variables match, the unused grid slots are hidden; an empty filter yields a placeholder figure rather than raising.
+- `.plot_top(n=12, sort_by="disagreement_score", patterns=None, ncols=3, figsize=None, show=False)`: Compact gallery of the top-`n` target relationships as a Matplotlib `Figure`. `sort_by` accepts `"disagreement_score"` (raw value descending) or a metric name (`pearson`, `spearman`, `kendall_tau_b`, `distance_correlation`, `mutual_information`, or a deep-mode robust metric; sorted by absolute value descending). `patterns=` filters to specific diagnostic labels and accepts either a single string or an iterable. Each panel is a scatter of the candidate column versus the target, titled with the column name, pattern, and key metric values. When fewer than `n` variables match, the unused grid slots are hidden; an empty filter yields a placeholder figure rather than raising.
 
 ## License
 
