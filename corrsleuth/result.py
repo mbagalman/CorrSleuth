@@ -1,6 +1,9 @@
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 import pandas as pd
+
+if TYPE_CHECKING:
+    from corrsleuth.metrics.bootstrap import BootstrapStability
 
 
 @dataclass
@@ -54,7 +57,7 @@ class CorrSleuthResult:
         disagreement_score: float,
         diagnostics: Optional[MetricDiagnostics] = None,
         bootstrap_intervals: Optional[pd.DataFrame] = None,
-        bootstrap_stability: Optional[Any] = None,
+        bootstrap_stability: Optional["BootstrapStability"] = None,
         _clean_x: Optional[pd.Series] = None,
         _clean_y: Optional[pd.Series] = None,
         _include_caveat: bool = True
@@ -141,7 +144,7 @@ class CorrSleuthResult:
                     (
                         f"  {self._format_value(stability.pattern_stability)} "
                         f"({stability.stability_label}, {stability.metric_set}, "
-                        f"n={int(stability.n_success)}/{int(stability.n_bootstrap)})"
+                        f"n={int(stability.n_iterations)}/{int(stability.n_bootstrap)})"
                     ),
                     f"  label_counts: {stability.bootstrap_label_counts}",
                 ]
@@ -181,10 +184,11 @@ class CorrSleuthResult:
                 f"{stability.pattern_stability:.1%} of samples "
                 f"({stability.stability_label} stability, {stability.metric_set} metrics)."
             )
-            if self.pattern == "nonmonotonic_dependence" and stability.metric_set == "lite":
+            from corrsleuth.heuristics import STANDARD_ONLY_LABELS
+            if self.pattern in STANDARD_ONLY_LABELS and stability.metric_set == "lite":
                 explanation += (
-                    " Because stability used lite metrics, it may not fully test a "
-                    "standard-mode nonmonotonic label."
+                    f" Because stability used lite metrics, it may not fully test a "
+                    f"standard-mode {self.pattern} label."
                 )
         return explanation
 

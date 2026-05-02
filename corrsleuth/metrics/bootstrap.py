@@ -5,13 +5,17 @@ import numpy as np
 import pandas as pd
 
 from corrsleuth.exceptions import InputError
-from corrsleuth.heuristics.classifier import apply_heuristics
+from corrsleuth.heuristics import STANDARD_ONLY_LABELS, apply_heuristics
 from corrsleuth.metrics.core import compute_kendall, compute_pearson, compute_spearman
 from corrsleuth.metrics.optional import (
     compute_distance_correlation,
     compute_mutual_information,
 )
-from corrsleuth.validation.input import CleanPair, is_constant_series
+from corrsleuth.validation.input import (
+    CleanPair,
+    compute_heuristic_flags,
+    is_constant_series,
+)
 
 _LITE_BOOTSTRAP_METRICS = ("pearson", "spearman", "kendall_tau_b")
 _STANDARD_BOOTSTRAP_METRICS = (
@@ -22,6 +26,9 @@ _STANDARD_BOOTSTRAP_METRICS = (
     "mutual_information",
 )
 
+_STABILITY_HIGH_THRESHOLD = 0.80
+_STABILITY_MEDIUM_THRESHOLD = 0.50
+
 
 @dataclass
 class BootstrapStability:
@@ -30,7 +37,7 @@ class BootstrapStability:
     stability_label: str
     metric_set: str
     n_bootstrap: int
-    n_success: int
+    n_iterations: int
 
     def to_dict(self):
         return asdict(self)
@@ -97,12 +104,11 @@ def _bootstrap_sample_pair(pair: CleanPair, idx) -> CleanPair:
 
 
 def _bootstrap_flags(pair: CleanPair) -> list[str]:
-    flags = []
-    if pair.x_is_constant or pair.y_is_constant:
-        flags.append("constant_input")
-    if pair.n_used < 30:
-        flags.append("low_n")
-    else:
+    flags = compute_heuristic_flags(pair)
+    # Bootstrap doesn't recompute Pearson trim sensitivity per replicate; signal
+    # that to the heuristic via outlier_sensitivity_unavailable so the
+    # possible_outlier_or_leverage rule can still gate when n is large enough.
+    if "low_n" not in flags:
         flags.append("outlier_sensitivity_unavailable")
     return flags
 
@@ -152,9 +158,9 @@ def _validate_bootstrap_inputs(
 
 
 def _stability_label(pattern_stability: float) -> str:
-    if pattern_stability >= 0.80:
+    if pattern_stability >= _STABILITY_HIGH_THRESHOLD:
         return "high"
-    if pattern_stability >= 0.50:
+    if pattern_stability >= _STABILITY_MEDIUM_THRESHOLD:
         return "medium"
     return "low"
 
@@ -193,7 +199,7 @@ def compute_bootstrap(
     generator = np.random.default_rng(random_state)
     values = {name: [] for name in metric_names}
     label_counts: dict[str, int] = {}
-    successful_labels = 0
+    n_iterations = 0
 
     for i in range(bootstrap):
         idx = generator.choice(pair.n_used, size=sample_size, replace=True)
@@ -211,7 +217,7 @@ def compute_bootstrap(
             sample_pair.n_used,
         )
         label_counts[heuristic.label] = label_counts.get(heuristic.label, 0) + 1
-        successful_labels += 1
+        n_iterations += 1
 
     records = []
     for name in metric_names:
@@ -252,8 +258,8 @@ def compute_bootstrap(
     stability = None
     if original_pattern is not None:
         pattern_stability = (
-            label_counts.get(original_pattern, 0) / successful_labels
-            if successful_labels
+            label_counts.get(original_pattern, 0) / n_iterations
+            if n_iterations
             else 0.0
         )
         stability = BootstrapStability(
@@ -262,13 +268,13 @@ def compute_bootstrap(
             stability_label=_stability_label(pattern_stability),
             metric_set=metric_set,
             n_bootstrap=bootstrap,
-            n_success=successful_labels,
+            n_iterations=n_iterations,
         )
 
-        if original_pattern == "nonmonotonic_dependence" and metric_set == "lite":
+        if original_pattern in STANDARD_ONLY_LABELS and metric_set == "lite":
             pair.warnings.append(
-                "Pattern stability used lite bootstrap metrics, so it may not fully "
-                "test a standard-mode nonmonotonic_dependence label."
+                f"Pattern stability used lite bootstrap metrics, so it may not "
+                f"fully test a standard-mode {original_pattern} label."
             )
 
     return BootstrapResult(intervals=intervals, stability=stability)

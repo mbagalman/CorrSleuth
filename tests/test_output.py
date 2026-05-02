@@ -347,6 +347,60 @@ def test_lite_pattern_stability_caveat_for_standard_nonmonotonic_label():
     assert "may not fully test" in res.explain(include_caveat=False)
 
 
+def test_bootstrap_stability_is_none_when_disabled():
+    df = make_relationship("linear_positive", n=80, random_state=42)
+    res = profile_pair(df, "x", "y")
+
+    assert res.bootstrap_intervals is None
+    assert res.bootstrap_stability is None
+    assert res.pattern_stability is None
+    assert res.bootstrap_label_counts is None
+    assert res.stability_label is None
+
+
+def test_bootstrap_label_counts_sum_matches_iterations():
+    df = make_relationship("linear_positive", n=80, random_state=42)
+    res = profile_pair(df, "x", "y", bootstrap=15, random_state=123)
+
+    stability = res.bootstrap_stability
+    assert stability is not None
+    assert sum(stability.bootstrap_label_counts.values()) == stability.n_iterations
+    assert stability.n_iterations == stability.n_bootstrap == 15
+    assert res.pattern in stability.bootstrap_label_counts
+
+
+def test_stability_label_thresholds():
+    from corrsleuth.metrics.bootstrap import _stability_label
+
+    assert _stability_label(0.0) == "low"
+    assert _stability_label(0.49) == "low"
+    assert _stability_label(0.50) == "medium"
+    assert _stability_label(0.51) == "medium"
+    assert _stability_label(0.79) == "medium"
+    assert _stability_label(0.80) == "high"
+    assert _stability_label(0.81) == "high"
+    assert _stability_label(1.0) == "high"
+
+
+def test_compute_bootstrap_intervals_wrapper_returns_only_intervals():
+    from corrsleuth.metrics import compute_bootstrap_intervals
+    from corrsleuth.validation.input import validate_pair
+
+    df = make_relationship("linear_positive", n=80, random_state=42)
+    pair = validate_pair(df, "x", "y")
+
+    intervals = compute_bootstrap_intervals(
+        pair=pair,
+        bootstrap=10,
+        bootstrap_metrics="lite",
+        random_state=123,
+        max_n_for_bootstrap=5000,
+    )
+
+    assert isinstance(intervals, pd.DataFrame)
+    assert set(intervals["metric"]) == {"pearson", "spearman", "kendall_tau_b"}
+
+
 def test_constant_input_safe_rendering():
     df = pd.DataFrame({"x": [1, 1, 1, 1], "y": [1, 2, 3, 4]})
     res = profile_pair(df, "x", "y")
