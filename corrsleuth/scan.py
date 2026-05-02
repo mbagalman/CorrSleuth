@@ -261,12 +261,112 @@ class CorrSleuthTargetReport:
 
         return "\n".join(lines)
 
+    def pearson_underrated(
+        self, threshold: float = _PEARSON_UNDERRATE_GAP
+    ) -> pd.DataFrame:
+        """Return variables where Pearson may understate the relationship.
+
+        The ranking is directional: a variable is included only when rank-based
+        metrics or standard-mode nonmonotonic evidence exceed Pearson by more
+        than ``threshold``. This keeps outlier/leverage cases, where Pearson is
+        stronger than rank metrics, out of the ranking.
+
+        Parameters
+        ----------
+        threshold : float, default 0.20
+            Minimum positive gap required for inclusion. The default matches
+            the cross-cutting summary section.
+
+        Returns
+        -------
+        pandas.DataFrame
+            One row per included variable, sorted by strongest evidence. The
+            frame includes metric values, directional gap values, the primary
+            diagnostic pattern, disagreement score, and warnings.
+        """
+        if (
+            isinstance(threshold, bool)
+            or not isinstance(threshold, (int, float))
+            or pd.isna(threshold)
+            or threshold < 0
+        ):
+            raise InputError("threshold must be a non-negative number.")
+
+        columns = [
+            "variable",
+            "target",
+            "pattern",
+            "pearson_underrate_score",
+            "spearman_pearson_gap",
+            "kendall_pearson_gap",
+            "nonmonotonic_gap",
+            "disagreement_score",
+            "metric_pearson",
+            "metric_spearman",
+            "metric_kendall_tau_b",
+            "metric_distance_correlation",
+            "metric_mutual_information",
+            "warnings",
+        ]
+
+        rows: List[Dict[str, Any]] = []
+        for entry in self.successes:
+            metrics = self._metrics_map(entry)
+            pearson = metrics.get("pearson")
+            abs_p = (
+                abs(pearson)
+                if pearson is not None and not pd.isna(pearson)
+                else None
+            )
+
+            spearman_gap = self._positive_abs_gap(metrics.get("spearman"), abs_p)
+            kendall_gap = self._positive_abs_gap(metrics.get("kendall_tau_b"), abs_p)
+            nonmonotonic_gap = entry.result.diagnostics.nonmonotonic_gap
+            if nonmonotonic_gap is None or pd.isna(nonmonotonic_gap):
+                nonmonotonic_gap = None
+
+            score_candidates = [spearman_gap, kendall_gap]
+            if nonmonotonic_gap is not None:
+                score_candidates.append(max(0.0, float(nonmonotonic_gap)))
+            score = max(score_candidates) if score_candidates else 0.0
+
+            if score <= threshold:
+                continue
+
+            rows.append(
+                {
+                    "variable": entry.column,
+                    "target": self.target,
+                    "pattern": entry.result.pattern,
+                    "pearson_underrate_score": score,
+                    "spearman_pearson_gap": spearman_gap,
+                    "kendall_pearson_gap": kendall_gap,
+                    "nonmonotonic_gap": nonmonotonic_gap,
+                    "disagreement_score": entry.result.disagreement_score,
+                    "metric_pearson": pearson,
+                    "metric_spearman": metrics.get("spearman"),
+                    "metric_kendall_tau_b": metrics.get("kendall_tau_b"),
+                    "metric_distance_correlation": metrics.get("distance_correlation"),
+                    "metric_mutual_information": metrics.get("mutual_information"),
+                    "warnings": "; ".join(entry.result.warnings)
+                    if entry.result.warnings
+                    else "",
+                }
+            )
+
+        frame = pd.DataFrame(rows, columns=columns)
+        if not frame.empty:
+            frame = frame.sort_values(
+                by=["pearson_underrate_score", "disagreement_score", "variable"],
+                ascending=[False, False, True],
+                kind="mergesort",
+            ).reset_index(drop=True)
+        return frame
+
     @staticmethod
     def _format_pattern_entry(entry: TargetScanEntry) -> str:
         result = entry.result
-        metrics = {
-            row["metric"]: row["value"] for _, row in result.metrics.iterrows()
-        }
+        metrics = CorrSleuthTargetReport._metrics_map(entry)
 
         def _fmt(value: Any) -> str:
             if value is None or pd.isna(value):
@@ -281,6 +381,19 @@ class CorrSleuthTargetReport:
         )
 
     @staticmethod
+    def _metrics_map(entry: TargetScanEntry) -> Dict[str, Any]:
+        return {
+            row["metric"]: row["value"]
+            for _, row in entry.result.metrics.iterrows()
+        }
+
+    @staticmethod
+    def _positive_abs_gap(value: Any, baseline_abs: Optional[float]) -> float:
+        if baseline_abs is None or value is None or pd.isna(value):
+            return 0.0
+        return max(0.0, abs(float(value)) - baseline_abs)
+
+    @staticmethod
     def _pearson_underrate_gap(entry: TargetScanEntry) -> float:
         """Directional gap: positive only when rank/dCor metrics exceed Pearson.
 
@@ -290,10 +403,7 @@ class CorrSleuthTargetReport:
         difference ``abs(rank_metric) - abs(pearson)`` and the already-directional
         ``nonmonotonic_gap``, so leverage-driven entries do not surface here.
         """
-        metrics = {
-            row["metric"]: row["value"]
-            for _, row in entry.result.metrics.iterrows()
-        }
+        metrics = CorrSleuthTargetReport._metrics_map(entry)
         pearson = metrics.get("pearson")
         spearman = metrics.get("spearman")
         kendall = metrics.get("kendall_tau_b")
@@ -472,10 +582,7 @@ class CorrSleuthTargetReport:
     def _sort_value(entry: TargetScanEntry, sort_by: str) -> float:
         if sort_by == "disagreement_score":
             return float(entry.result.disagreement_score)
-        metrics = {
-            row["metric"]: row["value"]
-            for _, row in entry.result.metrics.iterrows()
-        }
+        metrics = CorrSleuthTargetReport._metrics_map(entry)
         value = metrics.get(sort_by)
         if value is None or pd.isna(value):
             return 0.0
@@ -483,10 +590,7 @@ class CorrSleuthTargetReport:
 
     @staticmethod
     def _panel_title(entry: TargetScanEntry) -> str:
-        metrics = {
-            row["metric"]: row["value"]
-            for _, row in entry.result.metrics.iterrows()
-        }
+        metrics = CorrSleuthTargetReport._metrics_map(entry)
         pearson = metrics.get("pearson")
         spearman = metrics.get("spearman")
 

@@ -653,6 +653,16 @@ Acceptance criteria:
 
 Priority: Phase 3 / High
 
+Status: In review
+
+Implementation notes from this PR:
+
+- Added `CorrSleuthTargetReport.pearson_underrated(threshold=0.20)`.
+- The ranking is directional: it includes variables only when Spearman, Kendall, or standard-mode nonmonotonic evidence exceeds Pearson by more than the threshold. This keeps outlier/leverage cases where Pearson is stronger than rank metrics out of the ranking.
+- The returned DataFrame has a stable schema even when no variables qualify. It includes metric values, directional gaps, pattern, disagreement score, and warnings.
+- Rows are sorted by `pearson_underrate_score`, then `disagreement_score`, then variable name for deterministic output.
+- Tests cover nonlinear variables ranking above independent noise, threshold filtering, stable output columns, leverage exclusion, and invalid threshold validation.
+
 Goal:
 
 Create a ranking that identifies variables where Pearson correlation may understate the relationship.
