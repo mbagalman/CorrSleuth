@@ -756,7 +756,7 @@ Completed in: `bfaa5c4 Add Chatterjee's xi to deep mode + Phase 4 design note (#
 
 Completion notes:
 
-- Added a design note at [docs/phase4-nonlinear-metrics-design-note.md](phase4-nonlinear-metrics-design-note.md) comparing HSIC, Hoeffding's D, Chatterjee's ξ, MGC (via `hyppo`), and MIC (via `minepy`) against the ticket's six criteria.
+- Added a design note at [docs/phase4-nonlinear-metrics-design-note.md](../phase4-nonlinear-metrics-design-note.md) comparing HSIC, Hoeffding's D, Chatterjee's ξ, MGC (via `hyppo`), and MIC (via `minepy`) against the ticket's six criteria.
 - Implemented Chatterjee's ξ as the recommended primary candidate. It has no new dependency, runs in O(n log n), and adds an *asymmetric* dependence measure that complements the existing symmetric `dcor` / mutual information.
 - New module `corrsleuth/metrics/nonlinear.py` exposes both `compute_chatterjee_xi` (`ξ(pair.x → pair.y)`) and `compute_chatterjee_xi_reverse` (`ξ(pair.y → pair.x)`), so target scans get both target→candidate and candidate→target evidence in a single call.
 - Wired into `mode="deep"` (alongside the robust correlations from Ticket 4.1) and both directions added to `_VALID_SORT_KEYS` in `corrsleuth/scan.py` so target reports can sort `plot_top()` by either direction.
@@ -853,7 +853,7 @@ Completed in: `e361931 Add interpretation guide for analysts (#11)`
 
 Completion notes:
 
-- Added [docs/interpretation-guide.md](interpretation-guide.md) covering all suggested topics: what CorrSleuth does and does not do, how a label is assigned (cascade order + thresholds), and the five required components for every diagnostic label (meaning, typical metric pattern, common examples, recommended next steps, caveats).
+- Added [docs/interpretation-guide.md](../interpretation-guide.md) covering all suggested topics: what CorrSleuth does and does not do, how a label is assigned (cascade order + thresholds), and the five required components for every diagnostic label (meaning, typical metric pattern, common examples, recommended next steps, caveats).
 - Topical sections: when Pearson can be misleading, monotonic vs nonmonotonic relationships, outlier-sensitive correlations, missing data and ties, and performance modes (lite/standard/deep with a comparison table).
 - Cross-links to the existing Phase 4 design note and to `corrsleuth/heuristics/classifier.py` so a curious analyst can chase down the exact thresholds.
 - README now surfaces the guide twice: a one-liner in the opening paragraphs, and a `## Documentation` section before the License that also links the Phase 4 design note.
