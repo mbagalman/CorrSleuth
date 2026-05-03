@@ -8,6 +8,8 @@ Most tools give you a correlation matrix. CorrSleuth tells you where the correla
 
 CorrSleuth is diagnostic, not causal. It identifies evidence consistent with relationship patterns, but it does not prove causation, treatment effects, or model specification certainty.
 
+For a guide to what each diagnostic label means, when it can mislead, and what to do next, see the [interpretation guide](docs/interpretation-guide.md).
+
 ## Installation
 
 Install the base package for core metrics (Pearson, Spearman, Kendall tau-b):
@@ -270,6 +272,11 @@ The object returned by `scan_target()`.
 - `.to_markdown(top_n=5, include_caveat=True)`: Exports the grouped target report as Markdown with overview counts, populated pattern sections, cross-cutting Pearson-underrated and reliability-warning sections, skipped/failed rows, and the non-causal caveat by default.
 - `.pearson_underrated(threshold=0.20)`: Returns a DataFrame of variables where Pearson may understate the relationship. The ranking is directional: Spearman, Kendall, or standard-mode nonmonotonic evidence must exceed Pearson by more than `threshold`, so outlier/leverage cases where Pearson is stronger than rank metrics are excluded. Rows include metric values, explicit excess-over-Pearson gap values, raw `nonmonotonic_gap`, pattern, disagreement score, and warnings, sorted by strongest evidence.
 - `.plot_top(n=12, sort_by="disagreement_score", patterns=None, ncols=3, figsize=None, show=False)`: Compact gallery of the top-`n` target relationships as a Matplotlib `Figure`. `sort_by` accepts `"disagreement_score"` (raw value descending) or a metric name (`pearson`, `spearman`, `kendall_tau_b`, `distance_correlation`, `mutual_information`, or a deep-mode robust metric, `chatterjee_xi`, or `chatterjee_xi_reverse`; sorted by absolute value descending). `patterns=` filters to specific diagnostic labels and accepts either a single string or an iterable. Each panel is a scatter of the candidate column versus the target, titled with the column name, pattern, and key metric values. When fewer than `n` variables match, the unused grid slots are hidden; an empty filter yields a placeholder figure rather than raising.
+
+## Documentation
+
+- [Interpretation Guide](docs/interpretation-guide.md) — meaning, typical metric pattern, common examples, recommended next steps, and caveats for every diagnostic label, plus topic notes on Pearson misleads, monotonicity, leverage, ties, and performance modes.
+- [Phase 4 Nonlinear Metrics Design Note](docs/phase4-nonlinear-metrics-design-note.md) — why Chatterjee's ξ was chosen over HSIC, MGC, MIC, and Hoeffding's D for `mode="deep"`.
 
 ## License
 
