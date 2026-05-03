@@ -847,9 +847,11 @@ Acceptance criteria:
 
 Priority: Phase 5 / Medium
 
-Status: In review
+Status: Complete
 
-Implementation notes from this PR:
+Completed in: `e361931 Add interpretation guide for analysts (#11)`
+
+Completion notes:
 
 - Added [docs/interpretation-guide.md](interpretation-guide.md) covering all suggested topics: what CorrSleuth does and does not do, how a label is assigned (cascade order + thresholds), and the five required components for every diagnostic label (meaning, typical metric pattern, common examples, recommended next steps, caveats).
 - Topical sections: when Pearson can be misleading, monotonic vs nonmonotonic relationships, outlier-sensitive correlations, missing data and ties, and performance modes (lite/standard/deep with a comparison table).
