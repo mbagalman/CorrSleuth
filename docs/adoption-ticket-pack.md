@@ -847,6 +847,15 @@ Acceptance criteria:
 
 Priority: Phase 5 / Medium
 
+Status: In review
+
+Implementation notes from this PR:
+
+- Added [docs/interpretation-guide.md](interpretation-guide.md) covering all suggested topics: what CorrSleuth does and does not do, how a label is assigned (cascade order + thresholds), and the five required components for every diagnostic label (meaning, typical metric pattern, common examples, recommended next steps, caveats).
+- Topical sections: when Pearson can be misleading, monotonic vs nonmonotonic relationships, outlier-sensitive correlations, missing data and ties, and performance modes (lite/standard/deep with a comparison table).
+- Cross-links to the existing Phase 4 design note and to `corrsleuth/heuristics/classifier.py` so a curious analyst can chase down the exact thresholds.
+- README now surfaces the guide twice: a one-liner in the opening paragraphs, and a `## Documentation` section before the License that also links the Phase 4 design note.
+
 Goal:
 
 Document what each metric means, when it can mislead, and how CorrSleuth uses it.
