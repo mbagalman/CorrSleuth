@@ -1,14 +1,40 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "corrsleuth"
 version = "0.1.0"
 description = "A relationship diagnosis engine for pandas users."
-authors = [{ name = "CorrSleuth Contributors" }]
-license = { text = "MIT" }
+readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Michael Bagalman", email = "michael@paradoxresolution.com" }]
+maintainers = [{ name = "Michael Bagalman", email = "michael@paradoxresolution.com" }]
+keywords = [
+    "correlation",
+    "statistics",
+    "pandas",
+    "eda",
+    "data-analysis",
+    "nonlinear",
+    "diagnostics",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
 dependencies = [
     "pandas",
     "numpy",
@@ -24,6 +50,12 @@ standard = [
 dev = [
     "pytest",
 ]
+
+[project.urls]
+Homepage = "https://github.com/mbagalman/CorrSleuth"
+Repository = "https://github.com/mbagalman/CorrSleuth"
+Documentation = "https://github.com/mbagalman/CorrSleuth/blob/main/docs/interpretation-guide.md"
+Issues = "https://github.com/mbagalman/CorrSleuth/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
