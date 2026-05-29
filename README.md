@@ -8,7 +8,7 @@ Most tools give you a correlation matrix. CorrSleuth tells you where the correla
 
 CorrSleuth is diagnostic, not causal. It identifies evidence consistent with relationship patterns, but it does not prove causation, treatment effects, or model specification certainty.
 
-For a guide to what each diagnostic label means, when it can mislead, and what to do next, see the [interpretation guide](docs/interpretation-guide.md).
+For a guide to what each diagnostic label means, when it can mislead, and what to do next, see the [interpretation guide](https://github.com/mbagalman/CorrSleuth/blob/main/docs/interpretation-guide.md).
 
 ## Installation
 
@@ -185,7 +185,7 @@ converges slowly on small samples and returns `None` with a warning when
 `n_used < 20`. The value is invariant to the row order of the underlying
 DataFrame: ties on `X` are broken lexicographically by `Y` so the result
 depends only on the multiset of `(x, y)` pairs. See
-[docs/phase4-nonlinear-metrics-design-note.md](docs/phase4-nonlinear-metrics-design-note.md)
+[docs/phase4-nonlinear-metrics-design-note.md](https://github.com/mbagalman/CorrSleuth/blob/main/docs/phase4-nonlinear-metrics-design-note.md)
 for the rationale and the candidates that were considered and deferred.
 
 ## API Reference
@@ -275,9 +275,9 @@ The object returned by `scan_target()`.
 
 ## Documentation
 
-- [Interpretation Guide](docs/interpretation-guide.md) — meaning, typical metric pattern, common examples, recommended next steps, and caveats for every diagnostic label, plus topic notes on Pearson misleads, monotonicity, leverage, ties, and performance modes.
-- [Phase 4 Nonlinear Metrics Design Note](docs/phase4-nonlinear-metrics-design-note.md) — why Chatterjee's ξ was chosen over HSIC, MGC, MIC, and Hoeffding's D for `mode="deep"`.
+- [Interpretation Guide](https://github.com/mbagalman/CorrSleuth/blob/main/docs/interpretation-guide.md) — meaning, typical metric pattern, common examples, recommended next steps, and caveats for every diagnostic label, plus topic notes on Pearson misleads, monotonicity, leverage, ties, and performance modes.
+- [Phase 4 Nonlinear Metrics Design Note](https://github.com/mbagalman/CorrSleuth/blob/main/docs/phase4-nonlinear-metrics-design-note.md) — why Chatterjee's ξ was chosen over HSIC, MGC, MIC, and Hoeffding's D for `mode="deep"`.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://github.com/mbagalman/CorrSleuth/blob/main/LICENSE) file for details.
