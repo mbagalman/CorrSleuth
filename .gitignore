@@ -16,5 +16,6 @@ env/
 # Local editor and OS files
 .idea/
 .vscode/
+.claude/
 .DS_Store
 Thumbs.db
