@@ -25,6 +25,12 @@ pip install corrsleuth[standard]
 `mode="deep"` uses the base installation and adds lightweight robust
 correlation diagnostics; it does not require extra dependencies.
 
+For a progress bar during `scan_target(progress=True)`, install the optional
+`progress` extra:
+```bash
+pip install corrsleuth[progress]
+```
+
 ## Quickstart
 
 ```python

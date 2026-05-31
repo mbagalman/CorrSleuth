@@ -873,7 +873,8 @@ def scan_target(
         the original column list.
     progress : bool, default False
         When True and ``tqdm`` is installed, wrap the iteration with a progress
-        bar. Without ``tqdm``, this is a documented no-op.
+        bar. Without ``tqdm``, this is a documented no-op. Install via the
+        ``progress`` extra (``pip install corrsleuth[progress]``).
     random_state : int, default 42
         Seed for ``sample_size`` downsampling and forwarded to ``profile_pair``.
     **profile_pair_kwargs

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "corrsleuth"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A relationship diagnosis engine for pandas users."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,16 +36,19 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Visualization",
 ]
 dependencies = [
-    "pandas",
-    "numpy",
-    "scipy",
-    "matplotlib",
+    "pandas>=1.5",
+    "numpy>=1.23",
+    "scipy>=1.9",
+    "matplotlib>=3.6",
 ]
 
 [project.optional-dependencies]
 standard = [
-    "dcor",
-    "scikit-learn",
+    "dcor>=0.6",
+    "scikit-learn>=1.1",
+]
+progress = [
+    "tqdm>=4.0",
 ]
 dev = [
     "pytest",
@@ -55,8 +58,15 @@ dev = [
 Homepage = "https://github.com/mbagalman/CorrSleuth"
 Repository = "https://github.com/mbagalman/CorrSleuth"
 Documentation = "https://github.com/mbagalman/CorrSleuth/blob/main/docs/interpretation-guide.md"
+Changelog = "https://github.com/mbagalman/CorrSleuth/blob/main/CHANGELOG.md"
 Issues = "https://github.com/mbagalman/CorrSleuth/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "corrsleuth.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["corrsleuth*"]
+
+[tool.setuptools.package-data]
+corrsleuth = ["py.typed"]
