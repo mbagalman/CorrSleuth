@@ -1,0 +1,55 @@
+# Publishes to PyPI via Trusted Publishing (OIDC) — no API token stored in
+# the repo. One-time setup on PyPI is required before the first release:
+# pypi.org → your project (or "pending publishers" for a brand-new project) →
+# add a trusted publisher with:
+#   owner: mbagalman, repository: CorrSleuth,
+#   workflow: publish.yml, environment: pypi
+# Then create a GitHub environment named "pypi" in the repo settings and cut a
+# GitHub release (tag v0.1.0) to trigger this workflow.
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: pip install build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Check metadata
+        run: twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    name: Upload to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

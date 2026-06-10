@@ -45,6 +45,34 @@ def test_validation_non_numeric():
     with pytest.raises(InputError, match="is not numeric"):
         validate_pair(df, "x", "y")
 
+def test_validation_rejects_infinite_values_in_used_rows():
+    df = pd.DataFrame({"x": [1.0, 2.0, np.inf], "y": [1.0, 2.0, 3.0]})
+    with pytest.raises(InputError, match="infinite values"):
+        validate_pair(df, "x", "y")
+
+def test_validation_allows_inf_in_rows_dropped_by_missing_policy():
+    # The inf sits in a row whose other value is NaN, so pairwise handling
+    # drops it before any metric sees it.
+    df = pd.DataFrame(
+        {"x": [np.inf, 1.0, 2.0, 3.0, 4.0], "y": [np.nan, 2.0, 4.0, 6.0, 8.0]}
+    )
+    pair = validate_pair(df, "x", "y", missing="pairwise")
+    assert pair.n_used == 4
+    assert not np.isinf(pair.x).any()
+
+def test_validation_rejects_same_column_for_x_and_y():
+    df = pd.DataFrame({"x": [1.0, 2.0, 3.0], "y": [1.0, 2.0, 3.0]})
+    with pytest.raises(InputError, match="must be different columns"):
+        validate_pair(df, "x", "x")
+
+def test_validation_rejects_duplicate_column_names():
+    df = pd.DataFrame({"x": [1.0, 2.0, 3.0], "y": [4.0, 5.0, 6.0]})
+    df = pd.concat([df, df["x"]], axis=1)  # two 'x' columns
+    with pytest.raises(InputError, match="matches multiple columns"):
+        validate_pair(df, "x", "y")
+    with pytest.raises(InputError, match="matches multiple columns"):
+        validate_pair(df, "y", "x")
+
 def test_validation_flags():
     # Test low_n
     df = pd.DataFrame({"x": range(10), "y": range(10)})

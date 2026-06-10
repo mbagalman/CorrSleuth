@@ -143,7 +143,7 @@ Out of scope for now:
 - `missing="listwise"` currently behaves the same as `pairwise` for the selected pair.
 - `missing="raise"` raises an error if either selected variable contains missing values.
 
-Validation warnings are exposed through `result.warnings`. CorrSleuth warns about small samples, high missingness, low unique-value ratios, constant inputs, downsampling, and conflicting directional evidence when applicable.
+Validation warnings are exposed through `result.warnings`. CorrSleuth warns about small samples, high missingness, low unique-value ratios, constant inputs, downsampling, conflicting directional evidence, and (in deep mode) high Chatterjee's ξ alongside a weak or ambiguous label, when applicable.
 
 ## Standard Mode
 
@@ -153,7 +153,7 @@ Validation warnings are exposed through `result.warnings`. CorrSleuth warns abou
 pip install corrsleuth[standard]
 ```
 
-If those dependencies are not available, CorrSleuth raises `OptionalDependencyError` instead of silently skipping metrics.
+If those dependencies are not available, CorrSleuth raises `OptionalDependencyError` (importable as `from corrsleuth import OptionalDependencyError`) instead of silently skipping metrics.
 
 For Distance Correlation, CorrSleuth downsamples to 20,000 rows by default when `n_used` is larger than that cap and records a warning. Use `max_n_for_dcor=None` to disable this cap. The downsample is seeded by `random_state` (default `42`), so repeated runs on the same input return the same number.
 
@@ -177,7 +177,11 @@ Pearson is strong but rank metrics or plots suggest leverage-sensitive
 behavior. Chatterjee's ξ is most useful for surfacing functional dependence
 that the linear/rank pair miss. Deep mode does not compute Distance
 Correlation or Mutual Information; use `mode="standard"` for those nonlinear
-dependence metrics. `metric_pearson_trimmed_1pct` and
+dependence metrics. The label cascade does not consult ξ, so a strongly
+nonmonotonic pair keeps its lite-style label in deep mode — but when ξ
+exceeds 0.35 and the label is `weak_or_no_relationship` or
+`mixed_or_ambiguous`, CorrSleuth emits a warning so the dependence is not
+silently contradicted by the label. `metric_pearson_trimmed_1pct` and
 `result.diagnostics.pearson_trimmed` use the same 1% trimmed-Pearson
 sensitivity calculation so users see one consistent trim value.
 
@@ -273,7 +277,7 @@ The object returned by `scan_target()`.
 - `.target`: Name of the target column.
 - `.entries`: List of `TargetScanEntry` objects, one per inspected column.
 - `.successes` / `.failures`: Convenience splits.
-- `.summary(top_n=5, include_caveat=True)`: Section-structured text overview. Pattern sections (`Strongest near-linear relationships`, `Potential monotonic nonlinear relationships`, `Potential nonmonotonic relationships`, `Possible outlier-driven relationships`, `Weak or no pairwise relationships`) are emitted only when populated, each capped at `top_n`. A cross-cutting `Variables Pearson may underrate` section lists variables whose `rank_linear_gap` or `nonmonotonic_gap` exceeds 0.20. `Variables with missingness or tie warnings` surfaces columns whose validation warnings mention ties, missingness, low unique ratios, small samples, or constant inputs. `Skipped or failed` lists non-numeric / errored columns. The output is deterministic; entries within each section are sorted by `disagreement_score` descending.
+- `.summary(top_n=5, include_caveat=True)`: Section-structured text overview. Pattern sections (`Strongest near-linear relationships`, `Potential monotonic nonlinear relationships`, `Potential nonmonotonic relationships`, `Possible outlier-driven relationships`, `Weak or no pairwise relationships`) are emitted only when populated, each capped at `top_n`. Variables whose pattern falls outside that set (e.g. `low_power_or_uncertain`, `mixed_or_ambiguous`) appear in an `Other or inconclusive` section so no profiled variable disappears from the summary. A cross-cutting `Variables Pearson may underrate` section lists variables whose `rank_linear_gap` or `nonmonotonic_gap` exceeds 0.20. `Variables with missingness or tie warnings` surfaces columns whose validation warnings mention ties, missingness, low unique ratios, small samples, or constant inputs. `Skipped or failed` lists non-numeric / errored columns. The output is deterministic; entries within each section are sorted by `disagreement_score` descending.
 - `.to_frame()`: One row per inspected column with variable, target, status, pattern, disagreement score, warnings, recommendations, and per-metric value columns. Skipped or errored rows leave metric columns NaN and populate `error_type` / `error_message`.
 - `.to_markdown(top_n=5, include_caveat=True)`: Exports the grouped target report as Markdown with overview counts, populated pattern sections, cross-cutting Pearson-underrated and reliability-warning sections, skipped/failed rows, and the non-causal caveat by default.
 - `.pearson_underrated(threshold=0.20)`: Returns a DataFrame of variables where Pearson may understate the relationship. The ranking is directional: Spearman, Kendall, or standard-mode nonmonotonic evidence must exceed Pearson by more than `threshold`, so outlier/leverage cases where Pearson is stronger than rank metrics are excluded. Rows include metric values, explicit excess-over-Pearson gap values, raw `nonmonotonic_gap`, pattern, disagreement score, and warnings, sorted by strongest evidence.

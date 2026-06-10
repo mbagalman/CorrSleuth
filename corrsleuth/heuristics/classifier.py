@@ -1,9 +1,21 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from corrsleuth.result import MetricResult, HeuristicResult
 from .explanations import generate_recommendations
 
 CONFLICTING_SIGN_THRESHOLD = 0.3
+
+#: Chatterjee's xi value above which an otherwise weak/ambiguous label gets a
+#: dependence warning. Matches the distance-correlation threshold used by the
+#: nonmonotonic_dependence rule in the cascade.
+XI_DEPENDENCE_WARN_THRESHOLD = 0.35
+
+#: Labels that understate the relationship when Chatterjee's xi is high. The
+#: cascade does not consult xi, so without a warning a deep-mode profile could
+#: report a strong functional dependence and a "weak" label side by side.
+_XI_CONTRADICTED_LABELS = frozenset(
+    {"weak_or_no_relationship", "mixed_or_ambiguous"}
+)
 
 #: Heuristic labels that can only be assigned when standard-mode metrics
 #: (distance correlation, mutual information) are available. Bootstrap stability
@@ -68,12 +80,16 @@ def apply_heuristics(
     )
 
 
-def detect_metric_warnings(metrics: Dict[str, MetricResult]) -> List[str]:
+def detect_metric_warnings(
+    metrics: Dict[str, MetricResult], label: Optional[str] = None
+) -> List[str]:
     """Return cautionary warnings derived from metric agreement patterns.
 
     These warnings supplement validation warnings; they do not override the
-    primary label. Currently flags conflicting Pearson/Spearman directionality
-    when both magnitudes exceed :data:`CONFLICTING_SIGN_THRESHOLD`.
+    primary label. Flags conflicting Pearson/Spearman directionality when both
+    magnitudes exceed :data:`CONFLICTING_SIGN_THRESHOLD`, and — when ``label``
+    is provided — high Chatterjee's xi alongside a weak or ambiguous label,
+    since the cascade does not consult xi when assigning labels.
     """
     warnings: List[str] = []
 
@@ -93,5 +109,23 @@ def detect_metric_warnings(metrics: Dict[str, MetricResult]) -> List[str]:
             "Pearson and Spearman have conflicting directions; inspect the scatter "
             "plot and check for nonlinearity, segments, or leverage points."
         )
+
+    if label in _XI_CONTRADICTED_LABELS:
+        xi_candidates = [
+            (name, metric.value)
+            for name in ("chatterjee_xi", "chatterjee_xi_reverse")
+            if (metric := metrics.get(name)) is not None
+            and metric.value is not None
+        ]
+        if xi_candidates:
+            xi_name, xi_value = max(xi_candidates, key=lambda item: item[1])
+            if xi_value > XI_DEPENDENCE_WARN_THRESHOLD:
+                warnings.append(
+                    f"{xi_name} ({xi_value:.3f}) is high while linear and rank "
+                    f"metrics are weak, which is evidence of nonmonotonic or "
+                    f"functional dependence that the '{label}' label may "
+                    f"understate. Inspect the scatter plot, or use "
+                    f"mode='standard' to check distance correlation."
+                )
 
     return warnings

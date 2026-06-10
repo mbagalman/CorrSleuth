@@ -486,14 +486,29 @@ def test_plotting_uses_clean_data():
     # It shouldn't crash or plot zeroes if it stored clean data properly
     assert isinstance(fig, plt.Figure)
 
-def test_plot_lowess_optional(monkeypatch):
+@pytest.fixture
+def fake_statsmodels(monkeypatch):
+    """Make the mock statsmodels in tests/_mocks importable, scoped to one test.
+
+    The mock lives outside tests/ proper so pytest's sys.path handling never
+    shadows a real statsmodels install for the rest of the session. Any
+    statsmodels modules imported while the mock is active are evicted again on
+    teardown (monkeypatch then restores whatever was loaded before).
+    """
     import sys
     from pathlib import Path
 
-    # Add tests directory to sys.path so our fake statsmodels is importable
-    tests_dir = str(Path(__file__).parent)
-    monkeypatch.syspath_prepend(tests_dir)
+    for name in list(sys.modules):
+        if name == "statsmodels" or name.startswith("statsmodels."):
+            monkeypatch.delitem(sys.modules, name)
+    monkeypatch.syspath_prepend(str(Path(__file__).parent / "_mocks"))
+    yield
+    for name in list(sys.modules):
+        if name == "statsmodels" or name.startswith("statsmodels."):
+            del sys.modules[name]
 
+
+def test_plot_lowess_optional(fake_statsmodels):
     df = make_relationship("linear_positive", n=100)
     res = profile_pair(df, "x", "y")
 
@@ -501,14 +516,9 @@ def test_plot_lowess_optional(monkeypatch):
     assert isinstance(fig, plt.Figure)
 
 
-def test_plot_lowess_subsample_is_deterministic(monkeypatch):
+def test_plot_lowess_subsample_is_deterministic(fake_statsmodels):
     """When n exceeds the LOWESS subsample cap, repeated plot() calls must
     produce the same smoother (seeded RNG, not the global numpy state)."""
-    import sys
-    from pathlib import Path
-
-    monkeypatch.syspath_prepend(str(Path(__file__).parent))
-
     # n=2000 > 1000 LOWESS cap, so the subsample path is exercised
     df = make_relationship("linear_positive", n=2000, random_state=42)
     res = profile_pair(df, "x", "y")
@@ -524,3 +534,21 @@ def test_plot_lowess_subsample_is_deterministic(monkeypatch):
         x2, y2 = line2.get_data()
         assert np.array_equal(x1, x2)
         assert np.array_equal(y1, y2)
+
+
+def test_plot_lowess_real_statsmodels():
+    """Exercise the LOWESS path against real statsmodels when it is installed.
+
+    pairplot deliberately swallows LOWESS failures, so without this assertion a
+    crash in the real-statsmodels call would pass silently. Skipped unless
+    statsmodels is available (one CI cell installs it).
+    """
+    pytest.importorskip("statsmodels.api")
+
+    df = make_relationship("linear_positive", n=100, random_state=42)
+    res = profile_pair(df, "x", "y")
+
+    fig = res.plot(show=False)
+    assert fig.axes[0].get_lines(), (
+        "expected a LOWESS line from real statsmodels on the scatter axis"
+    )

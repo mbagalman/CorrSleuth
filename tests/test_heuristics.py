@@ -87,6 +87,75 @@ def test_detect_metric_warnings_silent_on_aligned_signs():
     assert detect_metric_warnings(metrics) == []
 
 
+def _weak_metrics_with_xi(xi=None, xi_reverse=None):
+    metrics = {
+        "pearson": MetricResult("pearson", 0.05, True),
+        "spearman": MetricResult("spearman", 0.04, True),
+        "kendall_tau_b": MetricResult("kendall_tau_b", 0.03, True),
+    }
+    if xi is not None:
+        metrics["chatterjee_xi"] = MetricResult("chatterjee_xi", xi, True)
+    if xi_reverse is not None:
+        metrics["chatterjee_xi_reverse"] = MetricResult(
+            "chatterjee_xi_reverse", xi_reverse, True
+        )
+    return metrics
+
+
+def test_detect_metric_warnings_flags_high_xi_with_weak_label():
+    metrics = _weak_metrics_with_xi(xi=0.9, xi_reverse=0.3)
+    warnings = detect_metric_warnings(metrics, label="weak_or_no_relationship")
+    assert any("chatterjee_xi (0.900)" in w for w in warnings)
+    assert any("weak_or_no_relationship" in w for w in warnings)
+
+
+def test_detect_metric_warnings_xi_reports_stronger_direction():
+    metrics = _weak_metrics_with_xi(xi=0.3, xi_reverse=0.8)
+    warnings = detect_metric_warnings(metrics, label="mixed_or_ambiguous")
+    assert any("chatterjee_xi_reverse (0.800)" in w for w in warnings)
+
+
+def test_detect_metric_warnings_xi_silent_without_label():
+    metrics = _weak_metrics_with_xi(xi=0.9)
+    assert detect_metric_warnings(metrics) == []
+
+
+def test_detect_metric_warnings_xi_silent_on_other_labels():
+    metrics = _weak_metrics_with_xi(xi=0.9)
+    assert detect_metric_warnings(metrics, label="near_linear") == []
+
+
+def test_detect_metric_warnings_xi_silent_below_threshold():
+    metrics = _weak_metrics_with_xi(xi=0.30)
+    assert detect_metric_warnings(metrics, label="weak_or_no_relationship") == []
+
+
+def test_detect_metric_warnings_xi_silent_when_not_computed():
+    metrics = _weak_metrics_with_xi(xi=None)
+    metrics["chatterjee_xi"] = MetricResult("chatterjee_xi", None, True)
+    assert detect_metric_warnings(metrics, label="weak_or_no_relationship") == []
+
+
+def test_deep_mode_u_shape_warns_about_high_xi():
+    # The cascade cannot assign nonmonotonic_dependence without distance
+    # correlation, so a deep-mode U-shape keeps the weak_or_no_relationship
+    # label — but the high chatterjee_xi must surface as a warning instead of
+    # being silently contradicted by the label.
+    df = make_relationship("u_shape", n=500, noise=0.1, random_state=42)
+    res = profile_pair(df, "x", "y", mode="deep")
+
+    assert res.pattern == "weak_or_no_relationship"
+    assert any("chatterjee_xi" in w and "understate" in w for w in res.warnings)
+
+
+def test_lite_mode_u_shape_has_no_xi_warning():
+    # Lite mode never computes xi, so the warning must not fire.
+    df = make_relationship("u_shape", n=500, noise=0.1, random_state=42)
+    res = profile_pair(df, "x", "y", mode="lite")
+
+    assert not any("chatterjee_xi" in w for w in res.warnings)
+
+
 def test_stable_trim_sensitivity_avoids_outlier_label():
     metrics = {
         "pearson": MetricResult("pearson", 0.80, True),

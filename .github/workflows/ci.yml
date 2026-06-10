@@ -8,15 +8,30 @@ on:
 
 jobs:
   test:
-    name: ${{ matrix.install }} / Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    name: ${{ matrix.install }} / Python ${{ matrix.python-version }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        os: [ubuntu-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         install:
           - lite
           - standard
+        include:
+          # One cell per non-Linux OS (the package is pure Python, so a
+          # single modern-Python cell each is enough to catch platform issues).
+          - os: windows-latest
+            python-version: "3.13"
+            install: standard
+          - os: macos-latest
+            python-version: "3.13"
+            install: standard
+          # One cell with real statsmodels so the optional LOWESS plotting
+          # path is exercised against the real library, not the test mock.
+          - os: ubuntu-latest
+            python-version: "3.13"
+            install: statsmodels
 
     steps:
       - uses: actions/checkout@v4
@@ -36,5 +51,36 @@ jobs:
         if: matrix.install == 'standard'
         run: pip install ".[standard,dev]"
 
+      - name: Install package (standard + statsmodels)
+        if: matrix.install == 'statsmodels'
+        run: pip install ".[standard,dev]" statsmodels
+
       - name: Run pytest
         run: pytest -q
+
+  build:
+    name: build & twine check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tooling
+        run: pip install build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Check metadata
+        run: twine check dist/*
+
+      - name: Verify sdist does not ship the test suite
+        run: |
+          if tar -tzf dist/*.tar.gz | grep -E '/tests/'; then
+            echo "sdist unexpectedly contains test files" >&2
+            exit 1
+          fi

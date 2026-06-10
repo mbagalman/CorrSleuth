@@ -58,7 +58,11 @@ def plot_pair(result, show: bool = False):
         else:
             idx = np.arange(n)
         try:
-            z = lowess(y[idx], x[idx], frac=0.3)
+            # Degenerate inputs (e.g. a constant variable) make statsmodels'
+            # lowess divide by zero internally; suppress the numpy warning and
+            # let the except handle anything unrecoverable.
+            with np.errstate(invalid="ignore", divide="ignore"):
+                z = lowess(y[idx], x[idx], frac=0.3)
             order = np.argsort(z[:, 0])
             ax_scatter.plot(z[order, 0], z[order, 1], color="darkorange", linewidth=2)
         except Exception:

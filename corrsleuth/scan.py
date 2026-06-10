@@ -867,10 +867,11 @@ def scan_target(
         first exception.
     max_pairs : int, optional
         Cap on the number of columns profiled. Applied after ``columns=``.
+        Must be a positive integer when provided.
     sample_size : int, optional
         If set and ``len(data) > sample_size``, downsample once with
         ``random_state`` before scanning. Skipped/errored entries still reflect
-        the original column list.
+        the original column list. Must be a positive integer when provided.
     progress : bool, default False
         When True and ``tqdm`` is installed, wrap the iteration with a progress
         bar. Without ``tqdm``, this is a documented no-op. Install via the
@@ -891,8 +892,25 @@ def scan_target(
             f"Unknown errors policy: '{errors}'. Supported policies are "
             f"{_VALID_ERRORS_POLICIES}."
         )
+    if max_pairs is not None and (
+        isinstance(max_pairs, bool)
+        or not isinstance(max_pairs, int)
+        or max_pairs < 1
+    ):
+        raise InputError("max_pairs must be a positive integer or None.")
+    if sample_size is not None and (
+        isinstance(sample_size, bool)
+        or not isinstance(sample_size, int)
+        or sample_size < 1
+    ):
+        raise InputError("sample_size must be a positive integer or None.")
     if target not in data.columns:
         raise InputError(f"Target column '{target}' not found in data.")
+    if isinstance(data[target], pd.DataFrame):
+        raise InputError(
+            f"Target column '{target}' matches multiple columns in data; "
+            f"column names must be unique."
+        )
     if not pd.api.types.is_numeric_dtype(data[target]):
         raise InputError(f"Target column '{target}' is not numeric.")
 

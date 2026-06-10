@@ -1,0 +1,7 @@
+# The sdist ships only the installable package. Tests rely on repo-local
+# fixtures (e.g. the mock statsmodels package) and are run from the GitHub
+# checkout, so shipping a partial tests/ tree would give sdist users a
+# broken suite. distutils' legacy defaults would otherwise auto-include
+# tests/test*.py without the fixture subdirectories.
+prune tests
+include CHANGELOG.md

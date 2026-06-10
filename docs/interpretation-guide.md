@@ -275,6 +275,11 @@ computed.
 
 - "Weak under these metrics" ≠ "no relationship." A nonmonotonic
   relationship in `lite` mode can land here.
+- The label cascade does not consult Chatterjee's ξ, so even in
+  `mode="deep"` a strongly nonmonotonic pair can land here. When that
+  happens (ξ above 0.35 with a weak or ambiguous label), CorrSleuth adds a
+  warning to `result.warnings` pointing you to the scatter plot and
+  `mode="standard"`.
 - A weak pairwise relationship can still be a useful predictor in a
   multivariate model that captures interactions — pairwise scans like
   `scan_target` are not a substitute for cross-validated feature

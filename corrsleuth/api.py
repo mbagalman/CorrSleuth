@@ -213,7 +213,9 @@ def profile_pair(
 
     # 4. Apply heuristics and metric-agreement warnings
     heuristic_result = apply_heuristics(metrics_map, pair.flags, pair.n_used)
-    pair.warnings.extend(detect_metric_warnings(metrics_map))
+    pair.warnings.extend(
+        detect_metric_warnings(metrics_map, label=heuristic_result.label)
+    )
 
     # 5. Build outputs
     records = [

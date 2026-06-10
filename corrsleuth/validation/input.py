@@ -67,35 +67,50 @@ def compute_heuristic_flags(pair: "CleanPair") -> List[str]:
 
 
 def validate_pair(data: pd.DataFrame, x: str, y: str, missing: str = "pairwise") -> CleanPair:
+    if x == y:
+        raise InputError(
+            f"x and y must be different columns; got '{x}' for both."
+        )
     if x not in data.columns:
         raise InputError(f"Column '{x}' not found in data.")
     if y not in data.columns:
         raise InputError(f"Column '{y}' not found in data.")
-        
+
     s_x = data[x]
     s_y = data[y]
-    
+
+    for name, selected in ((x, s_x), (y, s_y)):
+        if isinstance(selected, pd.DataFrame):
+            raise InputError(
+                f"Column '{name}' matches multiple columns in data; "
+                f"column names must be unique."
+            )
+
     if not pd.api.types.is_numeric_dtype(s_x):
         raise InputError(f"Column '{x}' is not numeric.")
     if not pd.api.types.is_numeric_dtype(s_y):
         raise InputError(f"Column '{y}' is not numeric.")
-        
-    if np.isinf(s_x).any() or np.isinf(s_y).any():
-        raise InputError("Input data contains infinite values.")
-        
+
     n_original = len(data)
-    
+
     # Missing value handling
     if missing not in ["pairwise", "listwise", "raise"]:
         raise InputError(f"Unsupported missing mode: '{missing}'. Supported modes are 'pairwise', 'listwise', and 'raise'.")
-        
+
     df_pair = data[[x, y]].copy()
     if missing in ["pairwise", "listwise"]:
         df_pair = df_pair.dropna()
     elif missing == "raise":
         if df_pair.isna().any().any():
             raise InputError("Missing values found and missing='raise'.")
-            
+
+    # Checked after missing-value handling so an inf in a row that the missing
+    # policy drops anyway does not abort the profile.
+    if np.isinf(df_pair[x]).any() or np.isinf(df_pair[y]).any():
+        raise InputError(
+            "Input data contains infinite values in the rows used for profiling."
+        )
+
     n_used = len(df_pair)
     missing_count = n_original - n_used
     missing_ratio = missing_count / n_original if n_original > 0 else 1.0

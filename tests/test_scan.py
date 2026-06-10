@@ -114,6 +114,42 @@ def test_scan_target_max_pairs_caps_candidate_count():
     assert profiled_columns == ["col_0", "col_1"]
 
 
+def test_scan_target_rejects_invalid_max_pairs():
+    df = _build_clean_df()
+
+    # A negative cap must raise rather than silently slicing candidates
+    # from the end of the list.
+    with pytest.raises(InputError, match="max_pairs must be a positive integer"):
+        scan_target(df, "target", max_pairs=-1)
+    with pytest.raises(InputError, match="max_pairs must be a positive integer"):
+        scan_target(df, "target", max_pairs=0)
+    with pytest.raises(InputError, match="max_pairs must be a positive integer"):
+        scan_target(df, "target", max_pairs=True)
+    with pytest.raises(InputError, match="max_pairs must be a positive integer"):
+        scan_target(df, "target", max_pairs=2.5)
+
+
+def test_scan_target_rejects_invalid_sample_size():
+    df = _build_clean_df()
+
+    with pytest.raises(InputError, match="sample_size must be a positive integer"):
+        scan_target(df, "target", sample_size=-5)
+    with pytest.raises(InputError, match="sample_size must be a positive integer"):
+        scan_target(df, "target", sample_size=0)
+    with pytest.raises(InputError, match="sample_size must be a positive integer"):
+        scan_target(df, "target", sample_size=True)
+    with pytest.raises(InputError, match="sample_size must be a positive integer"):
+        scan_target(df, "target", sample_size=2.5)
+
+
+def test_scan_target_rejects_duplicate_target_columns():
+    df = _build_clean_df()
+    df = pd.concat([df, df["target"]], axis=1)  # two 'target' columns
+
+    with pytest.raises(InputError, match="matches multiple columns"):
+        scan_target(df, "target")
+
+
 def test_scan_target_sample_size_is_deterministic():
     rng = np.random.default_rng(0)
     df = pd.DataFrame({
