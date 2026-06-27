@@ -176,6 +176,17 @@ def compute_bootstrap(
     max_n_for_bootstrap: Optional[int],
     original_pattern: Optional[str] = None,
 ) -> BootstrapResult:
+    """Compute percentile bootstrap intervals and pattern stability.
+
+    Each replicate resamples ``sample_size`` rows with replacement. When
+    ``max_n_for_bootstrap`` is smaller than ``pair.n_used`` the replicates draw
+    only that many rows -- an *m-out-of-n* bootstrap. This is not just a
+    performance cap: resampling fewer rows than the data contains inflates the
+    per-replicate variance, so the reported intervals are wider (more
+    conservative) than the true full-sample sampling variability by roughly a
+    factor of ``sqrt(n_used / sample_size)``. A warning is emitted whenever the
+    cap binds; pass ``max_n_for_bootstrap=None`` to resample all rows.
+    """
     resolved = _validate_bootstrap_inputs(
         bootstrap=bootstrap,
         bootstrap_metrics=bootstrap_metrics,
@@ -190,7 +201,11 @@ def compute_bootstrap(
     if max_n_for_bootstrap is not None and sample_size > max_n_for_bootstrap:
         pair.warnings.append(
             f"n_used > {max_n_for_bootstrap}. Bootstrap samples are capped at "
-            f"{max_n_for_bootstrap} rows (random_state={random_state})."
+            f"{max_n_for_bootstrap} rows (random_state={random_state}); "
+            f"resampling fewer rows than n_used is an m-out-of-n bootstrap that "
+            f"widens the intervals, so they are conservative relative to the "
+            f"full-sample sampling variability. Pass max_n_for_bootstrap=None to "
+            f"use all rows."
         )
         sample_size = max_n_for_bootstrap
 

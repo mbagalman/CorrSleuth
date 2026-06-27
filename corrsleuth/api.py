@@ -148,7 +148,12 @@ def profile_pair(
         ``"standard"`` explicitly opts in to bootstrapping distance correlation
         and mutual information.
     max_n_for_bootstrap : int or None, default 5000
-        Cap on rows sampled per bootstrap replicate. ``None`` disables the cap.
+        Cap on rows sampled per bootstrap replicate. When ``n_used`` exceeds the
+        cap, each replicate resamples only this many rows (an m-out-of-n
+        bootstrap), which widens the intervals and makes them conservative
+        relative to the full-sample sampling variability; a warning is emitted
+        when this happens. ``None`` disables the cap so every replicate uses all
+        rows.
     """
     if mode not in ("lite", "standard", "deep"):
         raise InputError(

@@ -384,6 +384,11 @@ def test_bootstrap_cap_warning_reaches_result_and_records_sample_size():
     assert res.bootstrap_intervals is not None
     assert set(res.bootstrap_intervals["sample_size"]) == {40}
     assert any("Bootstrap samples are capped at 40 rows" in w for w in res.warnings)
+    # The cap warning must disclose the m-out-of-n widening, not read as a pure
+    # performance cap (CR-3).
+    assert any(
+        "m-out-of-n" in w and "conservative" in w for w in res.warnings
+    )
 
 
 def test_lite_pattern_stability_caveat_for_standard_nonmonotonic_label():
