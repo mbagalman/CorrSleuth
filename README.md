@@ -1,14 +1,41 @@
 # CorrSleuth
 
-Correlation is not one number.
+> Correlation is not one number.
 
-CorrSleuth profiles numeric pairwise relationships in pandas DataFrames by comparing multiple association measures and translating their agreement or disagreement into practical diagnostics.
+**CorrSleuth is a relationship diagnosis engine for pandas.** Point it at two
+numeric columns and it measures their relationship several different ways,
+compares the results, and tells you in plain English what kind of relationship
+it is — and where a plain correlation could mislead you.
 
-Most tools give you a correlation matrix. CorrSleuth tells you where the correlation matrix may be misleading.
+## Why CorrSleuth?
 
-CorrSleuth is diagnostic, not causal. It identifies evidence consistent with relationship patterns, but it does not prove causation, treatment effects, or model specification certainty.
+A single correlation number (like Pearson's *r*) squeezes a rich relationship
+into one value, and that value can lie. Two columns can have *r* ≈ 0 while being
+tightly linked in a U-shape, or show a high *r* that is really driven by a
+couple of outliers. The number alone never tells you which situation you are in.
 
-For a guide to what each diagnostic label means, when it can mislead, and what to do next, see the [interpretation guide](https://github.com/mbagalman/CorrSleuth/blob/main/docs/interpretation-guide.md).
+CorrSleuth runs several complementary measures, looks at where they **agree or
+disagree**, and turns that into an actionable diagnosis:
+
+- **See what a correlation matrix hides.** Catches nonlinear, non-monotonic, and
+  outlier-driven relationships that a single coefficient misses.
+- **Get answers in plain English.** Every result comes with a diagnostic label,
+  a written explanation, and a recommended next step — not just numbers.
+- **Spot leverage and outlier traps.** Flags when a strong-looking correlation is
+  actually driven by a few extreme points.
+- **Scan a whole dataset against a target.** Rank every numeric predictor against
+  an outcome column in one call.
+- **Stay honest about uncertainty.** Built-in warnings for small samples, ties,
+  missingness, and conflicting evidence, plus optional bootstrap stability.
+- **Keep installs light.** Core metrics need only pandas, numpy, and scipy; the
+  heavier nonlinear metrics are opt-in extras.
+
+CorrSleuth is **diagnostic, not causal**. It identifies evidence consistent with
+relationship patterns, but it does not prove causation, treatment effects, or
+model specification certainty.
+
+For a guide to what each diagnostic label means, when it can mislead, and what to
+do next, see the [interpretation guide](https://github.com/mbagalman/CorrSleuth/blob/main/docs/interpretation-guide.md).
 
 ## Installation
 
@@ -31,36 +58,56 @@ For a progress bar during `scan_target(progress=True)`, install the optional
 pip install corrsleuth[progress]
 ```
 
-## Quickstart
+## Quick Start
+
+Point CorrSleuth at two numeric columns of your own DataFrame and read the
+diagnosis:
 
 ```python
 import corrsleuth as cs
-from corrsleuth.datasets import make_relationship
 
-# Generate a simulated dataset (e.g., a U-shape relationship)
-df = make_relationship("u_shape", n=500, noise=0.1, random_state=42)
+# `df` is your pandas DataFrame; replace the column names with your own.
+result = cs.profile_pair(df, "ad_spend", "revenue")
 
-# Profile the relationship
-result = cs.profile_pair(df, "x", "y", mode="standard")
+print(result.pattern)    # the diagnostic label, e.g. "near_linear"
+print(result.explain())  # a plain-English interpretation
+print(result.summary())  # metrics, diagnostics, warnings, and recommendations
 
-# Print the diagnostic label
-print(result.pattern)
-
-# Get a plain-English explanation
-print(result.explain())
-
-# Generate a multi-panel diagnostic plot
-fig = result.plot()
+result.plot(show=True)    # a 1x3 diagnostic figure (scatter, ranks, summary)
 ```
 
-Pass `show=True` to `result.plot()` when working interactively and you want
-Matplotlib to display the figure immediately.
+`profile_pair()` works on the base install. Pass `mode="standard"` to add
+nonlinear metrics (Distance Correlation, Mutual Information; requires the
+`[standard]` extra) or `mode="deep"` for robust diagnostics that need no extra
+dependencies.
 
-Example explanation:
+**No dataset handy?** CorrSleuth ships a simulator so you can try it immediately:
+
+```python
+from corrsleuth.datasets import make_relationship
+
+# A U-shaped relationship: Pearson is near zero, but the variables are related.
+df = make_relationship("u_shape", n=500, noise=0.1, random_state=42)
+
+result = cs.profile_pair(df, "x", "y", mode="standard")
+print(result.pattern)    # nonmonotonic_dependence
+print(result.explain())
+```
 
 ```text
 Evidence consistent with a relationship that is not simply increasing or decreasing (e.g., U-shaped or cyclical). Standard linear and rank metrics may understate this relationship. Do not interpret this association causally without proper design or controls.
 ```
+
+**Screening many predictors against one outcome?** Use `scan_target()`:
+
+```python
+report = cs.scan_target(df, target="revenue")
+print(report.summary())          # grouped, ranked overview of every column
+report.to_frame()                # one tidy row per profiled column
+```
+
+That is enough to get productive. The sections below explain the metrics, modes,
+diagnostic labels, and the full API.
 
 ## Canonical Examples
 
@@ -140,7 +187,10 @@ Out of scope for now:
 `profile_pair()` supports three missing-data modes:
 
 - `missing="pairwise"` drops rows missing either selected variable.
-- `missing="listwise"` currently behaves the same as `pairwise` for the selected pair.
+- `missing="listwise"` drops rows missing a value in *any* column of `data`
+  (complete-case deletion) before selecting the pair, so it coincides with
+  `pairwise` only when `data` contains just the two profiled columns. In a
+  `scan_target()` run this profiles every column on the same complete-case rows.
 - `missing="raise"` raises an error if either selected variable contains missing values.
 
 Validation warnings are exposed through `result.warnings`. CorrSleuth warns about small samples, high missingness, low unique-value ratios, constant inputs, downsampling, conflicting directional evidence, and (in deep mode) high Chatterjee's ξ alongside a weak or ambiguous label, when applicable.
@@ -192,9 +242,11 @@ arguments swapped (`ξ(pair.y → pair.x)`), so target scans get both the
 target→candidate direction (`chatterjee_xi`) and the candidate→target
 direction (`chatterjee_xi_reverse`) without an extra call. The metric
 converges slowly on small samples and returns `None` with a warning when
-`n_used < 20`. The value is invariant to the row order of the underlying
-DataFrame: ties on `X` are broken lexicographically by `Y` so the result
-depends only on the multiset of `(x, y)` pairs. See
+`n_used < 20`. It uses the tie-corrected estimator from Chatterjee (2020), so it
+stays well-calibrated when `Y` is discrete or low-cardinality. The value is
+invariant to the row order of the underlying DataFrame: ties on `X` are broken
+lexicographically by `Y` so the result depends only on the multiset of
+`(x, y)` pairs. See
 [docs/phase4-nonlinear-metrics-design-note.md](https://github.com/mbagalman/CorrSleuth/blob/main/docs/phase4-nonlinear-metrics-design-note.md)
 for the rationale and the candidates that were considered and deferred.
 
@@ -214,7 +266,7 @@ def profile_pair(
     max_n_for_dcor: int | None = 20000, # Downsampling cap for Distance Correlation
     random_state: int = 42,             # Seed for downsampling and MI estimator
     bootstrap: int | None = None,       # Optional bootstrap interval count
-    bootstrap_metrics: str = "lite",    # "lite", "standard", or metric names
+    bootstrap_metrics: str | Sequence[str] = "lite",  # "lite", "standard", or metric names
     max_n_for_bootstrap: int | None = 5000,
 ) -> CorrSleuthResult
 ```
