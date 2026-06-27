@@ -860,7 +860,10 @@ def scan_target(
     mode : {"lite", "standard", "deep"}, default "lite"
         Forwarded to :func:`profile_pair`.
     missing : {"pairwise", "listwise", "raise"}, default "pairwise"
-        Forwarded to :func:`profile_pair`.
+        Forwarded to :func:`profile_pair`. Note ``"listwise"`` is complete-case
+        across *all* columns of ``data``, so every pair is profiled on the same
+        rows (those with no missing value anywhere); ``"pairwise"`` instead uses
+        each candidate's own non-missing overlap with the target.
     errors : {"warn", "raise"}, default "warn"
         ``"warn"`` captures per-column ``profile_pair`` exceptions as
         ``error`` entries so the scan continues. ``"raise"`` propagates the

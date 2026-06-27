@@ -97,10 +97,18 @@ def validate_pair(data: pd.DataFrame, x: str, y: str, missing: str = "pairwise")
     if missing not in ["pairwise", "listwise", "raise"]:
         raise InputError(f"Unsupported missing mode: '{missing}'. Supported modes are 'pairwise', 'listwise', and 'raise'.")
 
-    df_pair = data[[x, y]].copy()
-    if missing in ["pairwise", "listwise"]:
-        df_pair = df_pair.dropna()
-    elif missing == "raise":
+    if missing == "listwise":
+        # Complete-case deletion: drop any row that is missing a value in ANY
+        # column of `data`, then restrict to the pair. This differs from
+        # "pairwise" whenever `data` carries columns beyond x/y (e.g. a
+        # multi-column scan), where it yields a common complete-case sample
+        # across pairs rather than dropping only on x/y.
+        df_pair = data.dropna()[[x, y]].copy()
+    elif missing == "pairwise":
+        # Drop rows missing in x or y only; other columns are ignored.
+        df_pair = data[[x, y]].dropna().copy()
+    else:  # missing == "raise"
+        df_pair = data[[x, y]].copy()
         if df_pair.isna().any().any():
             raise InputError("Missing values found and missing='raise'.")
 

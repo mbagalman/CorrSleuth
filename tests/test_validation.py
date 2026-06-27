@@ -18,6 +18,25 @@ def test_validation_missing_data_listwise():
     assert pair.n_used == 2
     assert pair.missing_ratio == 0.5
 
+
+def test_listwise_drops_rows_missing_in_unrelated_columns():
+    """Complete-case deletion: a NaN in a column other than x/y still drops the
+    row under listwise, but not under pairwise."""
+    df = pd.DataFrame(
+        {
+            "x": [1.0, 2.0, 3.0, 4.0, 5.0],
+            "y": [2.0, 4.0, 6.0, 8.0, 10.0],
+            "z": [1.0, np.nan, 3.0, 4.0, 5.0],  # NaN in row index 1 only
+        }
+    )
+
+    pairwise = validate_pair(df, "x", "y", missing="pairwise")
+    assert pairwise.n_used == 5  # x and y are fully present
+
+    listwise = validate_pair(df, "x", "y", missing="listwise")
+    assert listwise.n_used == 4  # row with NaN in z is dropped
+    assert 2.0 not in set(listwise.x)  # the (x=2, y=4) row is gone
+
 def test_validation_missing_data_raise():
     df = pd.DataFrame({"x": [1, 2, np.nan], "y": [1, 2, 3]})
     with pytest.raises(InputError, match="Missing values found"):

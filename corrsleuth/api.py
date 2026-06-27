@@ -128,7 +128,12 @@ def profile_pair(
         ``"deep"`` adds lightweight robust correlation diagnostics without
         requiring optional dependencies.
     missing : {"pairwise", "listwise", "raise"}, default "pairwise"
-        Missing-value policy for the selected pair.
+        Missing-value policy. ``"pairwise"`` drops rows missing in ``x`` or
+        ``y`` only. ``"listwise"`` drops rows missing in *any* column of
+        ``data`` (complete-case deletion) before selecting the pair, so a row
+        with a missing value in an unrelated column is excluded; the two
+        coincide when ``data`` contains only ``x`` and ``y``. ``"raise"`` errors
+        if the pair contains any missing values.
     include_caveat : bool, default True
         Whether ``summary()`` and ``explain()`` include the non-causal caveat
         by default.
