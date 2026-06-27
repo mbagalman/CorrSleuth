@@ -7,6 +7,25 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Pin the ruff version so lint results are reproducible; the rule set
+      # itself is pinned in pyproject.toml ([tool.ruff.lint] select).
+      - name: Install ruff
+        run: pip install ruff==0.15.12
+
+      - name: Run ruff
+        run: ruff check .
+
   test:
     name: ${{ matrix.install }} / Python ${{ matrix.python-version }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
