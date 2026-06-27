@@ -7,6 +7,7 @@ unless the caller asks for ``errors="raise"``.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -659,8 +660,9 @@ class CorrSleuthTargetReport:
         candidates.sort(key=lambda e: (-self._sort_value(e, sort_by), e.column))
         candidates = candidates[:n]
 
-        import math
-
+        # matplotlib is a hard dependency, but importing pyplot is expensive
+        # (hundreds of ms), so it stays deferred here to keep `import corrsleuth`
+        # and non-plotting workflows fast.
         import matplotlib.pyplot as plt
 
         if not candidates:

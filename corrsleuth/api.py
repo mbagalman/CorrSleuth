@@ -23,6 +23,20 @@ from corrsleuth.heuristics import apply_heuristics, detect_metric_warnings
 from corrsleuth.exceptions import InputError
 
 
+#: Minimum rows required before the outlier-sensitivity check trims tails;
+#: trimming a tiny sample is unstable, so it is skipped below this.
+_OUTLIER_MIN_N_FOR_TRIM = 50
+#: Minimum rows that must remain after trimming for the trimmed Pearson to be
+#: meaningful.
+_OUTLIER_MIN_N_AFTER_TRIM = 30
+#: Tail fraction trimmed from each variable (per side) before recomputing
+#: Pearson — i.e. drop below the 1st and above the 99th percentile.
+_OUTLIER_TRIM_QUANTILE = 0.01
+#: Signed change in Pearson after trimming above which the relationship is
+#: flagged as leverage-sensitive.
+_OUTLIER_SENSITIVE_DELTA = 0.20
+
+
 def _metric_value(metrics_map, metric_name: str) -> Optional[float]:
     metric = metrics_map.get(metric_name)
     return metric.value if metric and metric.value is not None else None
@@ -34,20 +48,18 @@ def _compute_outlier_sensitivity(
     if baseline_pearson is None:
         return {"status": "unavailable", "trimmed": None, "delta": None}
 
-    min_n_for_trim = 50
-    min_n_after_trim = 30
-    if pair.n_used < min_n_for_trim:
+    if pair.n_used < _OUTLIER_MIN_N_FOR_TRIM:
         return {"status": "unavailable", "trimmed": None, "delta": None}
 
-    x_low = pair.x.quantile(0.01)
-    x_high = pair.x.quantile(0.99)
-    y_low = pair.y.quantile(0.01)
-    y_high = pair.y.quantile(0.99)
+    x_low = pair.x.quantile(_OUTLIER_TRIM_QUANTILE)
+    x_high = pair.x.quantile(1 - _OUTLIER_TRIM_QUANTILE)
+    y_low = pair.y.quantile(_OUTLIER_TRIM_QUANTILE)
+    y_high = pair.y.quantile(1 - _OUTLIER_TRIM_QUANTILE)
     mask = pair.x.between(x_low, x_high) & pair.y.between(y_low, y_high)
     x_trimmed = pair.x[mask]
     y_trimmed = pair.y[mask]
 
-    if len(x_trimmed) < min_n_after_trim:
+    if len(x_trimmed) < _OUTLIER_MIN_N_AFTER_TRIM:
         return {"status": "unavailable", "trimmed": None, "delta": None}
     if x_trimmed.nunique() <= 1 or y_trimmed.nunique() <= 1:
         return {"status": "unavailable", "trimmed": None, "delta": None}
@@ -58,7 +70,7 @@ def _compute_outlier_sensitivity(
     # (e.g. +0.55 -> -0.55) is the most leverage-sensitive case there is, and
     # an abs-of-abs delta would score it 0.0 and mislabel it "stable".
     delta = abs(baseline_pearson - trimmed_pearson)
-    status = "sensitive" if delta > 0.20 else "stable"
+    status = "sensitive" if delta > _OUTLIER_SENSITIVE_DELTA else "stable"
     return {"status": status, "trimmed": trimmed_pearson, "delta": delta}
 
 
