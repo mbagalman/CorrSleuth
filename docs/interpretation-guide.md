@@ -445,6 +445,18 @@ label fire. The trimmed value lives at
 `result.diagnostics.pearson_trimmed`; the size of the move lives at
 `result.diagnostics.pearson_trim_delta`.
 
+**Limitation: the gate trims only 1% per tail.** A leverage cluster larger
+than roughly 1% of the rows (say, 2% of the data sitting at an extreme) is
+only partly removed by the trim, so the trimmed Pearson can stay close to the
+raw value and the `possible_outlier_or_leverage` label may not fire — even
+though the relationship really is leverage-influenced. This is a deliberate,
+conservative choice: a cluster that large is often closer to a subpopulation
+or mixture than to a few stray outliers. When you suspect a wider leverage
+cluster, do not rely on the label alone — inspect the deep-mode robust metrics
+below (especially `biweight_midcorrelation` and `pearson_median_clipped_20pct`,
+which down-weight far more than 1%); if they collapse toward zero while Pearson
+stays high, leverage is doing the work regardless of the label.
+
 `mode="deep"` adds four robust correlation diagnostics that you can
 inspect alongside Pearson:
 
