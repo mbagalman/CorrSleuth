@@ -102,8 +102,14 @@ Evidence consistent with a relationship that is not simply increasing or decreas
 **Screening many predictors against one outcome?** Use `scan_target()`:
 
 ```python
-report = cs.scan_target(df, target="revenue")
-print(report.summary())          # grouped, ranked overview of every column
+# Build a frame with a few predictors and one target column.
+data = make_relationship("linear_positive", n=300, random_state=0).rename(
+    columns={"x": "ad_spend", "y": "revenue"}
+)
+data["noise"] = make_relationship("independent", n=300, random_state=1)["y"]
+
+report = cs.scan_target(data, target="revenue")
+print(report.summary())          # grouped, ranked overview of every predictor
 report.to_frame()                # one tidy row per profiled column
 ```
 
@@ -208,8 +214,6 @@ If those dependencies are not available, CorrSleuth raises `OptionalDependencyEr
 
 For Distance Correlation, CorrSleuth downsamples to 20,000 rows by default when `n_used` is larger than that cap and records a warning. Use `max_n_for_dcor=None` to disable this cap. The downsample is seeded by `random_state` (default `42`), so repeated runs on the same input return the same number.
 
-If you call `mode="standard"` without installing the extras, CorrSleuth raises `OptionalDependencyError` with install instructions rather than silently skipping metrics.
-
 ## Deep Mode
 
 `mode="deep"` adds robust correlation diagnostics while keeping the base
@@ -219,7 +223,7 @@ installation lightweight:
 - `pearson_winsorized_1pct`: Pearson after clipping both variables at their 1st/99th percentiles.
 - `biweight_midcorrelation`: A median/MAD-based robust correlation.
 - `pearson_median_clipped_20pct`: Pearson after clipping deviations around each median at the 80th percentile.
-- `chatterjee_xi`: Chatterjee's coefficient of correlation, an *asymmetric* measure that captures whether `Y` is a (noisy) function of `X`. Range is approximately `[0, 1]`; values near 1 indicate a strong functional relationship. Detects U-shape and other dependencies that Pearson and Spearman miss.
+- `chatterjee_xi`: Chatterjee's coefficient of correlation, an *asymmetric* measure that captures whether `Y` is a (noisy) function of `X`. Values sit near 0 under independence and approach 1 for strong functional dependence; finite-sample estimates can be slightly negative. Detects U-shape and other dependencies that Pearson and Spearman miss.
 - `chatterjee_xi_reverse`: Same statistic in the opposite direction (`ξ(Y → X)`). For target scans this is the candidate→target direction, which is usually the one feature-engineering users want.
 
 These are robustness and dependence diagnostics, not definitive replacements
