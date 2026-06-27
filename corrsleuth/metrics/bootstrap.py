@@ -268,8 +268,9 @@ def compute_bootstrap(
         pair.warnings.append(
             "Bootstrap intervals for "
             + ", ".join(incomplete_metrics)
-            + " used fewer than 95% of requested samples because some resamples "
-            + "were non-computable."
+            + " are based on fewer than 95% of the requested resamples because "
+            + "the metric was undefined on some resamples (e.g. a resample drew "
+            + "a near-constant column); treat these intervals as less reliable."
         )
 
     intervals = pd.DataFrame(records)

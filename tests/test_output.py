@@ -430,6 +430,34 @@ def test_bootstrap_cap_warning_reaches_result_and_records_sample_size():
     )
 
 
+def test_bootstrap_incomplete_warning_attributes_degenerate_resamples():
+    """When some resamples draw a near-constant column the metric is legitimately
+    undefined there. The reliability warning must describe that, not claim the
+    resamples were 'non-computable' (which reads as a failure) (CR-8)."""
+    import numpy as np
+
+    # A single differing value among many: many resamples draw an all-equal x.
+    x = np.array([5.0] * 40 + [6.0])
+    y = np.arange(41, dtype=float)
+    res = profile_pair(
+        pd.DataFrame({"x": x, "y": y}),
+        "x",
+        "y",
+        bootstrap=200,
+        random_state=0,
+    )
+
+    incomplete = [w for w in res.warnings if "Bootstrap intervals for" in w]
+    assert incomplete, "expected an incomplete-resamples warning"
+    warning = incomplete[0]
+    assert "undefined on some resamples" in warning
+    assert "near-constant" in warning
+    assert "non-computable" not in warning
+    # The interval really is based on fewer than all requested resamples.
+    n_success = int(res.bootstrap_intervals["n_success"].iloc[0])
+    assert n_success < 200
+
+
 def test_lite_pattern_stability_caveat_for_standard_nonmonotonic_label():
     pytest.importorskip("dcor")
     pytest.importorskip("sklearn")
