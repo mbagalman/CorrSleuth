@@ -62,6 +62,34 @@ def test_outlier_driven_uses_trim_sensitivity():
     assert any("trimming extreme" in warning for warning in res.warnings)
 
 
+def test_trim_sensitivity_detects_pearson_sign_flip():
+    """A few high-leverage points can flip full-sample Pearson negative while
+    the trimmed bulk stays positive. The magnitudes are nearly equal, so the
+    old abs-of-abs delta would score ~0 and mislabel this 'stable'; the signed
+    delta must catch it as leverage-sensitive."""
+    import numpy as np
+    import pandas as pd
+
+    rng = np.random.default_rng(0)
+    n = 500
+    x = rng.uniform(-1, 1, n)
+    y = x + rng.normal(0, 0.05, n)  # tight positive bulk
+    # High-leverage outliers forming a strong negative direction.
+    ox = np.array([40, 42, 44, 46, 48], dtype=float)
+    df = pd.DataFrame({"x": np.concatenate([x, ox]), "y": np.concatenate([y, -ox])})
+
+    res = profile_pair(df, "x", "y")
+
+    p = float(res.metrics[res.metrics["metric"] == "pearson"]["value"].iloc[0])
+    assert p < -0.5  # full-sample Pearson is negative...
+    assert res.diagnostics.pearson_trimmed > 0.5  # ...but the trimmed bulk is positive
+    # Magnitudes are nearly equal, so abs(|p| - |trimmed|) would be < 0.20.
+    assert abs(abs(p) - abs(res.diagnostics.pearson_trimmed)) < 0.20
+    # The signed delta still flags it.
+    assert res.diagnostics.pearson_trim_delta > 0.20
+    assert any("trimming extreme" in warning for warning in res.warnings)
+
+
 def test_detect_metric_warnings_flags_conflicting_signs():
     metrics = {
         "pearson": MetricResult("pearson", 0.6, True),

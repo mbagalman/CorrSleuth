@@ -54,7 +54,10 @@ def _compute_outlier_sensitivity(
 
     trimmed_pearson, _ = stats.pearsonr(x_trimmed, y_trimmed)
     trimmed_pearson = float(trimmed_pearson)
-    delta = abs(abs(baseline_pearson) - abs(trimmed_pearson))
+    # Compare signed values, not magnitudes: a sign flip after trimming
+    # (e.g. +0.55 -> -0.55) is the most leverage-sensitive case there is, and
+    # an abs-of-abs delta would score it 0.0 and mislabel it "stable".
+    delta = abs(baseline_pearson - trimmed_pearson)
     status = "sensitive" if delta > 0.20 else "stable"
     return {"status": status, "trimmed": trimmed_pearson, "delta": delta}
 
