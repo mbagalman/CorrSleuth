@@ -229,6 +229,20 @@ def test_result_exposes_structured_diagnostics():
     assert res.diagnostics.disagreement_score == pytest.approx(res.disagreement_score)
 
 
+def test_disagreement_score_zero_when_correlations_unavailable():
+    """Constant x makes pearson/spearman unavailable (None). The disagreement
+    score must treat them as absent (contributing 0), not as a value of 0.0
+    pulled in by an `or 0.0` fallback."""
+    df = pd.DataFrame({"x": [3.0] * 50, "y": list(range(50))})
+    res = profile_pair(df, "x", "y")
+
+    # Both correlations are unavailable, so no metric is in disagreement.
+    metric_values = dict(zip(res.metrics["metric"], res.metrics["value"]))
+    assert metric_values["pearson"] is None
+    assert metric_values["spearman"] is None
+    assert res.disagreement_score == pytest.approx(0.0)
+
+
 def test_serialization_includes_nested_and_flattened_diagnostics():
     df = pd.DataFrame({"x": [1, 2, 3, 4, 5], "y": [1, 2, 3, 4, 5]})
     res = profile_pair(df, "x", "y")

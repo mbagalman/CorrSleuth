@@ -238,11 +238,29 @@ def profile_pair(
     ]
     metrics_df = pd.DataFrame(records)
 
-    abs_p = abs(_metric_value(metrics_map, "pearson") or 0.0)
-    abs_s = abs(_metric_value(metrics_map, "spearman") or 0.0)
-    dc = _metric_value(metrics_map, "distance_correlation") or 0.0
+    # Build the disagreement score from explicit None checks rather than
+    # `value or 0.0`: an unavailable metric (None, e.g. constant input) must
+    # contribute nothing, whereas a genuine 0.0 is a real measurement. The
+    # `or 0.0` idiom conflated the two — harmless today because pearson,
+    # spearman, and dcor all go None together on constant input, but a trap if
+    # that ever changes.
+    pearson = _metric_value(metrics_map, "pearson")
+    spearman = _metric_value(metrics_map, "spearman")
+    dcor = _metric_value(metrics_map, "distance_correlation")
 
-    disagreement_score = abs(abs_p - abs_s) + max(0.0, dc - max(abs_p, abs_s))
+    abs_p = abs(pearson) if pearson is not None else None
+    abs_s = abs(spearman) if spearman is not None else None
+
+    # Rank-vs-linear gap: only defined when both metrics are available.
+    rank_gap = (
+        abs(abs_p - abs_s) if abs_p is not None and abs_s is not None else 0.0
+    )
+    # Nonmonotonic contribution: distance correlation in excess of the strongest
+    # linear/rank signal. Absent dcor contributes nothing.
+    linear_signal = max([v for v in (abs_p, abs_s) if v is not None], default=0.0)
+    nonmonotonic = max(0.0, dcor - linear_signal) if dcor is not None else 0.0
+
+    disagreement_score = rank_gap + nonmonotonic
     diagnostics = _build_diagnostics(metrics_map, disagreement_score, outlier_sensitivity)
     bootstrap_result = compute_bootstrap(
         pair,
