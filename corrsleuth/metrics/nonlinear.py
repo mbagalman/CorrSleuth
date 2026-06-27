@@ -27,6 +27,17 @@ def _compute_xi_directional(
     """Core ξ computation: sort by ``x_sort_key`` (with ``y_values`` as tie-break)
     and accumulate Y-rank differences.
 
+    Uses the tie-corrected estimator from Chatterjee (2020), eq. (2):
+
+        ξ = 1 − (n · Σ |r_{i+1} − r_i|) / (2 · Σ l_i (n − l_i))
+
+    where, in ``x_sort_key`` order, ``r_i = #{j : Y_j ≤ Y_i}`` and
+    ``l_i = #{j : Y_j ≥ Y_i}``. When ``Y`` has no ties this reduces exactly to
+    the simplified ``1 − 3·Σ|Δr| / (n²−1)`` form, but with ties — e.g. a
+    discrete or low-cardinality response — the simplified form overstates
+    dependence, so the correction matters most for the feature-engineering
+    (reverse) direction against a low-cardinality target.
+
     The lexicographic tie-break makes the result a pure function of the
     multiset of ``(x, y)`` pairs — shuffling rows of the input DataFrame does
     not change the value.
@@ -35,9 +46,16 @@ def _compute_xi_directional(
     try:
         order = np.lexsort((y_values, x_sort_key))
         y_sorted = y_values[order]
-        y_ranks = stats.rankdata(y_sorted, method="ordinal")
-        diffs = np.abs(np.diff(y_ranks))
-        xi = 1.0 - (3.0 * float(np.sum(diffs))) / (n * n - 1.0)
+        # r_i = #{j : Y_j <= Y_i} (max rank), l_i = #{j : Y_j >= Y_i}.
+        r = stats.rankdata(y_sorted, method="max")
+        l = stats.rankdata(-y_sorted, method="max")
+        numerator = n * float(np.sum(np.abs(np.diff(r))))
+        denominator = 2.0 * float(np.sum(l * (n - l)))
+        if denominator == 0.0:
+            # All l_i == n, i.e. a constant Y. Constant inputs are guarded
+            # upstream, but guard here too rather than divide by zero.
+            return MetricResult(name=name, value=None, available=True)
+        xi = 1.0 - numerator / denominator
     except (ValueError, RuntimeError, FloatingPointError) as e:
         raise MetricComputationError(
             f"Failed to compute {name}: {type(e).__name__}: {e}"
@@ -60,9 +78,11 @@ def compute_chatterjee_xi(pair: CleanPair) -> MetricResult:
       argument order). For the reverse direction call
       :func:`compute_chatterjee_xi_reverse`.
     - Ties in ``X`` are broken lexicographically by ``Y``, and ties in ``Y``
-      are broken via ordinal ranking. This makes the value invariant to the
-      row order of the underlying DataFrame; the existing ``high_tie_rate``
-      warning already flags datasets where the canonical tie-break may matter.
+      are handled with Chatterjee's tie-corrected denominator (rather than an
+      arbitrary ordinal rank-break), so the value stays well-calibrated for
+      discrete or low-cardinality responses. This makes the value invariant to
+      the row order of the underlying DataFrame; the existing ``high_tie_rate``
+      warning still flags datasets where ties compress the rank space.
 
     Returns ``None`` when either column is constant or when ``n_used`` is too
     small for a reliable estimate.

@@ -281,6 +281,48 @@ def test_chatterjee_xi_near_zero_for_independent_variables():
     assert abs(result.value) < 0.10
 
 
+def _reference_tie_corrected_xi(x, y):
+    """Brute-force Chatterjee (2020) tie-corrected ξ, independent of the
+    library implementation, used as an oracle in the tests below."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    n = len(x)
+    order = np.lexsort((y, x))
+    ys = y[order]
+    r = np.array([np.sum(ys <= v) for v in ys], dtype=float)
+    l = np.array([np.sum(ys >= v) for v in ys], dtype=float)
+    numerator = n * np.sum(np.abs(np.diff(r)))
+    denominator = 2.0 * np.sum(l * (n - l))
+    return 1.0 - numerator / denominator
+
+
+def test_chatterjee_xi_matches_tie_corrected_reference_on_discrete_y():
+    """With a tied (low-cardinality) response, ξ must equal the tie-corrected
+    formula, not the no-ties simplification."""
+    rng = np.random.default_rng(0)
+    n = 500
+    x = rng.uniform(0, 1, size=n)
+    y = np.round(rng.uniform(0, 1, size=n) * 3)  # only 4 distinct Y values
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_chatterjee_xi(pair)
+    expected = _reference_tie_corrected_xi(x, y)
+    assert result.value == pytest.approx(expected, abs=1e-12)
+
+
+def test_chatterjee_xi_near_zero_for_independent_discrete_y():
+    """Independent X with a discrete Y: the tie-corrected ξ stays near zero,
+    whereas the uncorrected n^2-1 formula overstates dependence."""
+    rng = np.random.default_rng(0)
+    n = 1000
+    x = rng.uniform(0, 1, size=n)
+    y = np.round(rng.uniform(0, 1, size=n) * 3)
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_chatterjee_xi(pair)
+    assert abs(result.value) < 0.05
+
+
 def test_chatterjee_xi_returns_none_for_constant_input():
     df = pd.DataFrame({"x": [1.0] * 50, "y": list(range(50))})
     pair = validate_pair(df, "x", "y")
