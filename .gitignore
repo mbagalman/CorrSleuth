@@ -13,6 +13,9 @@ dist/
 venv/
 env/
 
+# Internal code-review trackers (not shipped or published)
+docs/code-review-*.md
+
 # Local editor and OS files
 .idea/
 .vscode/
