@@ -124,6 +124,7 @@ class CorrSleuthResult:
             "Diagnostics:",
             f"  disagreement_score       : {self._format_value(self.diagnostics.disagreement_score)}",
             f"  rank_linear_gap          : {self._format_value(self.diagnostics.rank_linear_gap)}",
+            f"  pearson_spearman_signed_gap : {self._format_value(self.diagnostics.pearson_spearman_signed_gap)}",
             f"  nonmonotonic_gap         : {self._format_value(self.diagnostics.nonmonotonic_gap)}",
             f"  pearson_kendall_gap      : {self._format_value(self.diagnostics.pearson_kendall_gap)}",
             f"  pearson_trim_delta       : {self._format_value(self.diagnostics.pearson_trim_delta)}",
@@ -232,6 +233,7 @@ class CorrSleuthResult:
                 [
                     ["disagreement_score", format_markdown_value(self.diagnostics.disagreement_score)],
                     ["rank_linear_gap", format_markdown_value(self.diagnostics.rank_linear_gap)],
+                    ["pearson_spearman_signed_gap", format_markdown_value(self.diagnostics.pearson_spearman_signed_gap)],
                     ["nonmonotonic_gap", format_markdown_value(self.diagnostics.nonmonotonic_gap)],
                     ["pearson_kendall_gap", format_markdown_value(self.diagnostics.pearson_kendall_gap)],
                     ["pearson_trim_delta", format_markdown_value(self.diagnostics.pearson_trim_delta)],

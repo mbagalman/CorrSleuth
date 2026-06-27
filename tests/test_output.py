@@ -113,6 +113,31 @@ def test_summary():
     assert "Caveat:" in summary_text
 
 
+def test_signed_pearson_spearman_gap_surfaced_in_text_output():
+    """The signed Pearson-Spearman gap reveals sign disagreement that the
+    absolute rank_linear_gap hides, so it must appear in both summary() and
+    to_markdown(), not only in to_dict()/to_frame() (CR-7)."""
+    import numpy as np
+
+    x = np.arange(50, dtype=float)
+    y = -np.arange(50, dtype=float)
+    x[-1] = 10000  # one huge outlier flips Pearson positive while Spearman stays negative
+    y[-1] = 10000
+    res = profile_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    signed = res.diagnostics.pearson_spearman_signed_gap
+    assert signed is not None
+    # The signed gap carries strictly more (directional) information than its abs.
+    assert abs(signed) > res.diagnostics.rank_linear_gap
+
+    summary_text = res.summary()
+    assert "pearson_spearman_signed_gap" in summary_text
+    assert f"{signed:.3f}" in summary_text
+
+    markdown = res.to_markdown()
+    assert "pearson\\_spearman\\_signed\\_gap" in markdown
+
+
 def test_summary_can_hide_caveat():
     df = make_relationship("linear_positive", n=100)
     res = profile_pair(df, "x", "y")
