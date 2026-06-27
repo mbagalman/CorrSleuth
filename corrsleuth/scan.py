@@ -787,17 +787,44 @@ def _resolve_candidate_columns(
     candidate. When the caller passes an explicit list, we preserve their order
     and emit ``status="skipped"`` entries for missing or non-numeric names so
     the report still reflects the request.
-    """
-    if columns is None:
-        candidates = [
-            col
-            for col in data.columns
-            if col != target and pd.api.types.is_numeric_dtype(data[col])
-        ]
-        return candidates, []
 
-    candidates: List[str] = []
-    skipped: List[TargetScanEntry] = []
+    Duplicate column names are surfaced as ``DuplicateColumn`` skips in either
+    mode (rather than silently dropped), because ``data[col]`` returns a
+    DataFrame for a repeated name, which is ambiguous to profile and would
+    otherwise look non-numeric.
+    """
+    duplicated = set(data.columns[data.columns.duplicated(keep=False)])
+
+    def _duplicate_skip(col: str) -> TargetScanEntry:
+        return TargetScanEntry(
+            column=col,
+            status="skipped",
+            error_type="DuplicateColumn",
+            error_message=(
+                f"Column '{col}' matches multiple columns in data; "
+                f"column names must be unique."
+            ),
+        )
+
+    if columns is None:
+        candidates: List[str] = []
+        skipped: List[TargetScanEntry] = []
+        seen_duplicates: set = set()
+        for col in data.columns:
+            if col == target:
+                continue
+            if col in duplicated:
+                # Emit one skip entry per duplicated name, not per occurrence.
+                if col not in seen_duplicates:
+                    seen_duplicates.add(col)
+                    skipped.append(_duplicate_skip(col))
+                continue
+            if pd.api.types.is_numeric_dtype(data[col]):
+                candidates.append(col)
+        return candidates, skipped
+
+    candidates = []
+    skipped = []
     for col in columns:
         if col == target:
             skipped.append(
@@ -818,6 +845,9 @@ def _resolve_candidate_columns(
                     error_message=f"Column '{col}' not found in data.",
                 )
             )
+            continue
+        if col in duplicated:
+            skipped.append(_duplicate_skip(col))
             continue
         if not pd.api.types.is_numeric_dtype(data[col]):
             skipped.append(

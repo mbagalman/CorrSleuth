@@ -150,6 +150,40 @@ def test_scan_target_rejects_duplicate_target_columns():
         scan_target(df, "target")
 
 
+def test_scan_target_surfaces_duplicate_candidate_columns_in_auto_scan():
+    """A duplicated numeric predictor must not silently vanish from an automatic
+    scan; it is reported once as a DuplicateColumn skip, and other columns are
+    still profiled."""
+    df = _build_clean_df()
+    df = pd.concat([df, df["linear"]], axis=1)  # two 'linear' columns
+
+    report = scan_target(df, "target")
+    statuses = {e.column: e.status for e in report.entries}
+
+    assert statuses.get("linear") == "skipped"
+    linear_entry = next(e for e in report.entries if e.column == "linear")
+    assert linear_entry.error_type == "DuplicateColumn"
+    assert "matches multiple columns" in linear_entry.error_message
+    # Exactly one skip entry for the duplicated name, not one per occurrence.
+    assert sum(e.column == "linear" for e in report.entries) == 1
+    # A non-duplicated numeric predictor is still profiled.
+    assert statuses.get("noise") == "ok"
+
+
+def test_scan_target_duplicate_candidate_in_explicit_columns_reports_duplicate():
+    """An explicitly requested duplicated column is reported as DuplicateColumn,
+    not mislabeled NonNumeric."""
+    df = _build_clean_df()
+    df = pd.concat([df, df["linear"]], axis=1)  # two 'linear' columns
+
+    report = scan_target(df, "target", columns=["linear"])
+    entry = next(e for e in report.entries if e.column == "linear")
+
+    assert entry.status == "skipped"
+    assert entry.error_type == "DuplicateColumn"
+    assert "matches multiple columns" in entry.error_message
+
+
 def test_scan_target_sample_size_is_deterministic():
     rng = np.random.default_rng(0)
     df = pd.DataFrame({

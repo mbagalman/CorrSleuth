@@ -49,9 +49,9 @@ def _compute_xi_directional(
         y_sorted = y_values[order]
         # r_i = #{j : Y_j <= Y_i} (max rank), l_i = #{j : Y_j >= Y_i}.
         r = stats.rankdata(y_sorted, method="max")
-        l = stats.rankdata(-y_sorted, method="max")
+        l_counts = stats.rankdata(-y_sorted, method="max")
         numerator = n * float(np.sum(np.abs(np.diff(r))))
-        denominator = 2.0 * float(np.sum(l * (n - l)))
+        denominator = 2.0 * float(np.sum(l_counts * (n - l_counts)))
         if denominator == 0.0:
             # All l_i == n, i.e. a constant Y. Constant inputs are guarded
             # upstream, but guard here too rather than divide by zero.

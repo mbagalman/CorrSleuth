@@ -51,12 +51,12 @@ def test_optional_metrics_downsampling_override():
     pair = validate_pair(df, "x", "y")
 
     # Cap at 50
-    dc1 = compute_distance_correlation(pair, mode="standard", max_n_for_dcor=50)
+    compute_distance_correlation(pair, mode="standard", max_n_for_dcor=50)
     assert any("n_used > 50" in w for w in pair.warnings)
 
     # Disable cap
     pair2 = validate_pair(df, "x", "y")
-    dc2 = compute_distance_correlation(pair2, mode="standard", max_n_for_dcor=None)
+    compute_distance_correlation(pair2, mode="standard", max_n_for_dcor=None)
     assert not any("n_used >" in w for w in pair2.warnings)
 
 
@@ -290,9 +290,9 @@ def _reference_tie_corrected_xi(x, y):
     order = np.lexsort((y, x))
     ys = y[order]
     r = np.array([np.sum(ys <= v) for v in ys], dtype=float)
-    l = np.array([np.sum(ys >= v) for v in ys], dtype=float)
+    l_counts = np.array([np.sum(ys >= v) for v in ys], dtype=float)
     numerator = n * np.sum(np.abs(np.diff(r)))
-    denominator = 2.0 * np.sum(l * (n - l))
+    denominator = 2.0 * np.sum(l_counts * (n - l_counts))
     return 1.0 - numerator / denominator
 
 
