@@ -164,6 +164,26 @@ def test_detect_metric_warnings_xi_silent_when_not_computed():
     assert detect_metric_warnings(metrics, label="weak_or_no_relationship") == []
 
 
+def test_classifier_treats_nan_metric_as_not_computable():
+    """A NaN metric value must be treated as 'no value' (not_computable), not
+    slip past the None guard and fall through to mixed_or_ambiguous."""
+    metrics = {
+        "pearson": MetricResult("pearson", float("nan"), True),
+        "spearman": MetricResult("spearman", 0.5, True),
+        "kendall_tau_b": MetricResult("kendall_tau_b", 0.4, True),
+    }
+    res = apply_heuristics(metrics, flags=[], n_used=100)
+    assert res.label == "not_computable"
+
+
+def test_detect_metric_warnings_ignores_nan_xi():
+    """A NaN xi must not trigger (or crash) the dependence warning; max() over
+    candidates would otherwise be unreliable with NaN present."""
+    metrics = _weak_metrics_with_xi(xi=float("nan"), xi_reverse=0.30)
+    warnings = detect_metric_warnings(metrics, label="weak_or_no_relationship")
+    assert not any("chatterjee_xi" in w for w in warnings)
+
+
 def test_deep_mode_u_shape_warns_about_high_xi():
     # The cascade cannot assign nonmonotonic_dependence without distance
     # correlation, so a deep-mode U-shape keeps the weak_or_no_relationship

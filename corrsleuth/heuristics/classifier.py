@@ -23,6 +23,27 @@ _XI_CONTRADICTED_LABELS = frozenset(
 STANDARD_ONLY_LABELS = frozenset({"nonmonotonic_dependence"})
 
 
+def _finite_metric_value(
+    metric: Optional[MetricResult], *, require_available: bool = False
+) -> Optional[float]:
+    """Return a metric's value, or ``None`` when it is missing, unavailable,
+    ``None``, or ``NaN``.
+
+    NaN is treated as "no value" so it can never slip past the ``is None``
+    guards in the cascade: every comparison with NaN is ``False``, which would
+    otherwise misroute a degenerate pair to ``mixed_or_ambiguous`` instead of
+    ``not_computable``.
+    """
+    if metric is None or metric.value is None:
+        return None
+    if require_available and not metric.available:
+        return None
+    value = metric.value
+    if value != value:  # NaN is the only value not equal to itself
+        return None
+    return value
+
+
 def apply_heuristics(
     metrics: Dict[str, MetricResult], flags: List[str], n_used: int
 ) -> HeuristicResult:
@@ -38,10 +59,13 @@ def apply_heuristics(
     m_k = metrics.get("kendall_tau_b")
     m_dc = metrics.get("distance_correlation")
 
-    p = abs(m_p.value) if m_p and m_p.value is not None else None
-    s = abs(m_s.value) if m_s and m_s.value is not None else None
-    k = abs(m_k.value) if m_k and m_k.value is not None else None
-    dc = m_dc.value if m_dc and m_dc.available and m_dc.value is not None else None
+    p_val = _finite_metric_value(m_p)
+    s_val = _finite_metric_value(m_s)
+    k_val = _finite_metric_value(m_k)
+    p = abs(p_val) if p_val is not None else None
+    s = abs(s_val) if s_val is not None else None
+    k = abs(k_val) if k_val is not None else None
+    dc = _finite_metric_value(m_dc, require_available=True)
 
     label = "mixed_or_ambiguous"
 
@@ -93,10 +117,8 @@ def detect_metric_warnings(
     """
     warnings: List[str] = []
 
-    m_p = metrics.get("pearson")
-    m_s = metrics.get("spearman")
-    pearson = m_p.value if m_p and m_p.value is not None else None
-    spearman = m_s.value if m_s and m_s.value is not None else None
+    pearson = _finite_metric_value(metrics.get("pearson"))
+    spearman = _finite_metric_value(metrics.get("spearman"))
 
     if (
         pearson is not None
@@ -112,10 +134,9 @@ def detect_metric_warnings(
 
     if label in _XI_CONTRADICTED_LABELS:
         xi_candidates = [
-            (name, metric.value)
+            (name, value)
             for name in ("chatterjee_xi", "chatterjee_xi_reverse")
-            if (metric := metrics.get(name)) is not None
-            and metric.value is not None
+            if (value := _finite_metric_value(metrics.get(name))) is not None
         ]
         if xi_candidates:
             xi_name, xi_value = max(xi_candidates, key=lambda item: item[1])
