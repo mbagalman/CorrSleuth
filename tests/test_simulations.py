@@ -2,6 +2,7 @@ import pytest
 import numpy as np
 import pandas as pd
 from corrsleuth.datasets import make_relationship
+from corrsleuth.exceptions import InputError
 
 def test_make_relationship_shapes():
     shapes = [
@@ -25,5 +26,23 @@ def test_make_relationship_determinism():
     pd.testing.assert_frame_equal(df1, df2)
 
 def test_make_relationship_invalid_shape():
-    with pytest.raises(ValueError, match="Unknown shape_type"):
+    with pytest.raises(InputError, match="Unknown shape_type"):
         make_relationship("not_a_real_shape")
+
+
+@pytest.mark.parametrize("bad_n", [-5, 0, 1, 2.5, True, "10"])
+def test_make_relationship_rejects_invalid_n(bad_n):
+    with pytest.raises(InputError, match="n must be an integer >= 2"):
+        make_relationship("linear_positive", n=bad_n)
+
+
+@pytest.mark.parametrize("bad_noise", [-1, -0.001, float("nan"), True, "0.1"])
+def test_make_relationship_rejects_invalid_noise(bad_noise):
+    with pytest.raises(InputError, match="noise must be a non-negative number"):
+        make_relationship("linear_positive", n=50, noise=bad_noise)
+
+
+def test_make_relationship_accepts_zero_noise():
+    df = make_relationship("linear_positive", n=50, noise=0, random_state=0)
+    # Zero noise is valid: y == x exactly for the linear shape.
+    assert np.allclose(df["x"], df["y"])

@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 from typing import Optional, Union
 
+from corrsleuth.exceptions import InputError
+
 def make_relationship(
     shape_type: str,
     n: int = 500,
@@ -10,7 +12,7 @@ def make_relationship(
 ) -> pd.DataFrame:
     """
     Generate a DataFrame with a specific relationship between 'x' and 'y'.
-    
+
     Required for v0.1 tests:
     - linear_positive
     - linear_negative
@@ -18,18 +20,33 @@ def make_relationship(
     - u_shape
     - outlier_driven
     - independent
-    
+
     Parameters:
     - shape_type (str): The type of relationship to generate.
-    - n (int): Number of observations. Default is 500.
-    - noise (float): Amount of random noise to add. Default is 0.1.
+    - n (int): Number of observations. Must be an integer >= 2. Default is 500.
+    - noise (float): Amount of random noise to add. Must be a non-negative
+      number. Default is 0.1.
     - random_state: Random seed for reproducibility.
-    
+
     Returns:
     - pd.DataFrame: DataFrame with columns 'x' and 'y'.
+
+    Raises:
+    - InputError: if ``shape_type`` is unknown, ``n`` is not an integer >= 2,
+      or ``noise`` is negative.
     """
+    if isinstance(n, bool) or not isinstance(n, (int, np.integer)) or n < 2:
+        raise InputError("n must be an integer >= 2.")
+    if (
+        isinstance(noise, bool)
+        or not isinstance(noise, (int, float, np.floating, np.integer))
+        or pd.isna(noise)
+        or noise < 0
+    ):
+        raise InputError("noise must be a non-negative number.")
+
     rng = np.random.default_rng(random_state)
-    
+
     x = rng.uniform(-3, 3, size=n)
     y = np.zeros(n)
     
@@ -52,6 +69,6 @@ def make_relationship(
     elif shape_type == "independent":
         y = rng.normal(0, 1 + noise, size=n)
     else:
-        raise ValueError(f"Unknown shape_type: {shape_type}")
-        
+        raise InputError(f"Unknown shape_type: {shape_type}")
+
     return pd.DataFrame({"x": x, "y": y})
