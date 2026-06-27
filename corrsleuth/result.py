@@ -32,8 +32,14 @@ class HeuristicResult:
 
 @dataclass
 class MetricDiagnostics:
-    """
-    Public diagnostic components that describe metric agreement and disagreement.
+    """Diagnostic components describing metric agreement and disagreement.
+
+    Carries the absolute rank-vs-linear gap (``rank_linear_gap``), the signed
+    Pearson-minus-Spearman gap (``pearson_spearman_signed_gap``, which reveals
+    sign disagreement the absolute gap hides), the nonmonotonic and
+    Pearson-Kendall gaps, the overall ``disagreement_score``, and the
+    outlier-sensitivity fields (``pearson_trimmed``, ``pearson_trim_delta``).
+    Gap fields are ``None`` when the metrics they depend on are unavailable.
     """
     rank_linear_gap: Optional[float]
     pearson_spearman_signed_gap: Optional[float]
@@ -199,9 +205,24 @@ class CorrSleuthResult:
         return explanation
 
     def plot(self, show: bool = False) -> Any:
-        """
-        Returns a multi-panel scatter + rank plot with pattern annotation.
-        Returns a matplotlib.figure.Figure.
+        """Return a multi-panel scatter + rank plot with pattern annotation.
+
+        Parameters
+        ----------
+        show : bool, default False
+            If ``True``, display the figure via ``matplotlib.pyplot.show()``.
+
+        Returns
+        -------
+        matplotlib.figure.Figure
+            The diagnostic figure.
+
+        Raises
+        ------
+        ValueError
+            If the cleaned data was not preserved on this result object (e.g. a
+            result reconstructed without ``_clean_x``/``_clean_y``), so there is
+            nothing to plot.
         """
         if self._clean_x is None or self._clean_y is None:
             raise ValueError("Cleaned data was not preserved in this result object, so plotting is unavailable.")
@@ -310,8 +331,14 @@ class CorrSleuthResult:
         return "; ".join(f"{label}: {count}" for label, count in items)
 
     def to_dict(self) -> Dict[str, Any]:
-        """
-        Returns the result as a dictionary.
+        """Return the result as a plain dictionary.
+
+        Keys: ``x``, ``y``, ``pattern``, ``metrics`` (list of records),
+        ``disagreement_score``, ``diagnostics``, ``bootstrap_intervals``,
+        ``bootstrap_stability``, ``pattern_stability``,
+        ``bootstrap_label_counts``, ``stability_label``, ``warnings``, and
+        ``recommendations``. Bootstrap keys are ``None`` when bootstrapping was
+        not requested.
         """
         return {
             "x": self.x_name,

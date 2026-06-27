@@ -890,7 +890,9 @@ def scan_target(
     Returns
     -------
     CorrSleuthTargetReport
-        Aggregated per-column results with ``to_frame()`` and ``summary()``.
+        Aggregated per-column results. Inspect via ``to_frame()``,
+        ``summary()``, ``to_markdown()``, ``pearson_underrated()``, and
+        ``plot_top()``.
     """
     if errors not in _VALID_ERRORS_POLICIES:
         raise InputError(

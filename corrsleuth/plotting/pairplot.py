@@ -16,8 +16,21 @@ def _add_text(ax, y_pos: float, text: str, *, x_pos: float = 0.0, line_height: f
 
 
 def plot_pair(result, show: bool = False):
-    """
-    Creates a compact 1x3 diagnostic plot.
+    """Create a compact 1x3 diagnostic plot for a profiled pair.
+
+    Parameters
+    ----------
+    result : CorrSleuthResult
+        A result from :func:`corrsleuth.profile_pair`. Must retain the cleaned
+        data (``_clean_x``/``_clean_y``) used to draw the panels.
+    show : bool, default False
+        If ``True``, display the figure via ``matplotlib.pyplot.show()``.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The figure with three panels: a scatter of ``x`` vs ``y``, a
+        rank-transformed scatter, and a text summary of the metrics and label.
     """
     x_name = result.x_name
     y_name = result.y_name

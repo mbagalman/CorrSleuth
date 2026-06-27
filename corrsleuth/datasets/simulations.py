@@ -13,7 +13,7 @@ def make_relationship(
     """
     Generate a DataFrame with a specific relationship between 'x' and 'y'.
 
-    Required for v0.1 tests:
+    Supported ``shape_type`` values:
     - linear_positive
     - linear_negative
     - monotonic_log
@@ -26,7 +26,8 @@ def make_relationship(
     - n (int): Number of observations. Must be an integer >= 2. Default is 500.
     - noise (float): Amount of random noise to add. Must be a non-negative
       number. Default is 0.1.
-    - random_state: Random seed for reproducibility.
+    - random_state (int, numpy.random.Generator, or None): Seed or generator
+      for reproducibility. Default is None (nondeterministic).
 
     Returns:
     - pd.DataFrame: DataFrame with columns 'x' and 'y'.

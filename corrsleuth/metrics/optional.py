@@ -19,7 +19,7 @@ def compute_distance_correlation(
     not installed. In ``mode='lite'``, returns an unavailable :class:`MetricResult`
     instead. When ``pair.n_used > max_n_for_dcor`` the input is downsampled with a
     NumPy generator seeded by ``random_state``; pass ``max_n_for_dcor=None`` to
-    disable the cap.
+    disable the cap. Returns ``value=None`` when either column is constant.
     """
     try:
         import dcor
@@ -66,6 +66,8 @@ def compute_mutual_information(
     ``scikit-learn`` is not installed. In ``mode='lite'`` returns an unavailable
     :class:`MetricResult` instead. ``random_state`` is forwarded to
     :func:`sklearn.feature_selection.mutual_info_regression` for reproducibility.
+    Returns ``value=None`` when either column is constant or when
+    ``pair.n_used <= 3`` (too few observations for the estimator).
     """
     try:
         from sklearn.feature_selection import mutual_info_regression

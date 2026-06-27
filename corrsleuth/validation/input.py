@@ -67,6 +67,35 @@ def compute_heuristic_flags(pair: "CleanPair") -> List[str]:
 
 
 def validate_pair(data: pd.DataFrame, x: str, y: str, missing: str = "pairwise") -> CleanPair:
+    """Validate and clean a numeric ``x``/``y`` pair into a :class:`CleanPair`.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        Source data containing both columns.
+    x, y : str
+        Names of the two numeric columns to validate.
+    missing : {"pairwise", "listwise", "raise"}, default "pairwise"
+        Missing-value policy. ``"pairwise"`` drops rows missing in ``x`` or
+        ``y`` only. ``"listwise"`` drops rows missing in *any* column of
+        ``data`` (complete-case deletion) before selecting the pair, so the two
+        coincide only when ``data`` contains just ``x`` and ``y``. ``"raise"``
+        errors if the pair contains any missing values.
+
+    Returns
+    -------
+    CleanPair
+        The cleaned pair with derived statistics (counts, unique/tie rates,
+        constant-column flags) and validation warnings.
+
+    Raises
+    ------
+    InputError
+        If ``x == y``, a column is missing or non-numeric, a name matches
+        multiple columns, ``missing`` is not a supported mode, missing values
+        are present when ``missing="raise"``, the rows used contain infinite
+        values, or fewer than two valid observations remain.
+    """
     if x == y:
         raise InputError(
             f"x and y must be different columns; got '{x}' for both."

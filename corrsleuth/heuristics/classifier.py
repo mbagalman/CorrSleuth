@@ -47,9 +47,13 @@ def _finite_metric_value(
 def apply_heuristics(
     metrics: Dict[str, MetricResult], flags: List[str], n_used: int
 ) -> HeuristicResult:
-    """Apply the 8-level heuristic priority cascade to assign a primary label.
+    """Apply the heuristic priority cascade to assign a primary label.
 
-    See ``AGENTS.md`` for the cascade definition. Trim-sensitivity flags
+    The cascade evaluates labels in priority order and returns the first that
+    matches: ``not_computable``, ``low_power_or_uncertain``,
+    ``possible_outlier_or_leverage``, ``nonmonotonic_dependence``,
+    ``monotonic_nonlinear``, ``near_linear``, ``weak_or_no_relationship``,
+    falling back to ``mixed_or_ambiguous``. Trim-sensitivity flags
     (``pearson_trim_sensitive``, ``outlier_sensitivity_unavailable``) gate the
     ``possible_outlier_or_leverage`` label so it is only assigned when there is
     independent evidence of leverage.

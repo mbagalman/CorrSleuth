@@ -4,9 +4,10 @@ Currently exposes Chatterjee's xi — an asymmetric coefficient of association
 that detects whether one variable is a (noisy) function of another. Both
 directions are available: ``compute_chatterjee_xi`` returns
 ``xi(pair.x -> pair.y)`` and ``compute_chatterjee_xi_reverse`` returns
-``xi(pair.y -> pair.x)``. See ``docs/phase4-nonlinear-metrics-design-note.md``
-for the candidate evaluation that motivated picking xi over HSIC, Hoeffding's
-D, MGC, and MIC.
+``xi(pair.y -> pair.x)``. xi was chosen over alternatives such as HSIC,
+Hoeffding's D, MGC, and MIC for its near-linear ``O(n log n)`` cost, its
+interpretable scale (0 under independence, approaching 1 for a functional
+relationship), and its directionality.
 """
 from __future__ import annotations
 

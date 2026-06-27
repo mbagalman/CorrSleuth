@@ -32,8 +32,9 @@ _OUTLIER_MIN_N_AFTER_TRIM = 30
 #: Tail fraction trimmed from each variable (per side) before recomputing
 #: Pearson — i.e. drop below the 1st and above the 99th percentile.
 _OUTLIER_TRIM_QUANTILE = 0.01
-#: Signed change in Pearson after trimming above which the relationship is
-#: flagged as leverage-sensitive.
+#: Magnitude of the change in Pearson after trimming above which the
+#: relationship is flagged as leverage-sensitive. Computed from the signed
+#: difference (``abs(baseline - trimmed)``) so a sign flip counts in full.
 _OUTLIER_SENSITIVE_DELTA = 0.20
 
 
@@ -171,6 +172,27 @@ def profile_pair(
         relative to the full-sample sampling variability; a warning is emitted
         when this happens. ``None`` disables the cap so every replicate uses all
         rows.
+
+    Returns
+    -------
+    CorrSleuthResult
+        The diagnostic profile: the computed metrics, the assigned pattern
+        label, diagnostics, warnings, recommendations, and (when requested)
+        bootstrap intervals and pattern stability. Render it with
+        ``.summary()``, ``.explain()``, ``.to_markdown()``, ``.to_dict()``,
+        ``.to_frame()``, or ``.plot()``.
+
+    Raises
+    ------
+    InputError
+        If ``mode`` is not one of ``"lite"``, ``"standard"``, or ``"deep"``, or
+        if the input fails validation (``x`` or ``y`` missing or non-numeric,
+        ``x == y``, duplicate column names, infinite values in the rows used,
+        missing values when ``missing="raise"``, or fewer than two valid
+        observations after applying the missing-value policy).
+    OptionalDependencyError
+        If ``mode="standard"`` and the ``corrsleuth[standard]`` extras
+        (``dcor``, ``scikit-learn``) are not installed.
     """
     if mode not in ("lite", "standard", "deep"):
         raise InputError(
