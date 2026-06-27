@@ -55,8 +55,11 @@ _PATTERN_SECTIONS: tuple[tuple[str, str], ...] = (
     ("weak_or_no_relationship", "Weak or no pairwise relationships"),
 )
 
-#: Threshold above which `rank_linear_gap` or `nonmonotonic_gap` qualifies a
-#: variable for the cross-cutting "Pearson may underrate" section.
+#: Threshold by which rank (Spearman/Kendall) or nonmonotonic evidence must
+#: exceed Pearson for a variable to qualify for the cross-cutting "Pearson may
+#: underrate" section. The gap is directional (see
+#: ``_directional_underrate_components``), so leverage cases where Pearson is
+#: stronger than the rank metrics do not qualify.
 _PEARSON_UNDERRATE_GAP = 0.20
 
 #: Substrings used to surface a variable in the "missingness or tie warnings"
@@ -193,8 +196,10 @@ class CorrSleuthTargetReport:
            ``weak_or_no_relationship``).
         2. ``Other or inconclusive`` — variables with patterns outside the
            explicit set (e.g., ``low_power_or_uncertain``).
-        3. ``Variables Pearson may underrate`` — cross-cutting; entries whose
-           ``rank_linear_gap`` or ``nonmonotonic_gap`` exceeds 0.20.
+        3. ``Variables Pearson may underrate`` — cross-cutting; entries where
+           rank (Spearman/Kendall) or nonmonotonic evidence exceeds Pearson by
+           more than 0.20. The gap is directional, so leverage cases where
+           Pearson is stronger than the rank metrics are excluded.
         4. ``Variables with missingness or tie warnings`` — cross-cutting;
            entries whose ``warnings`` mention ties, missing data, low unique
            ratio, small samples, or constant inputs.
