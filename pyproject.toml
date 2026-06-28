@@ -51,6 +51,11 @@ standard = [
 progress = [
     "tqdm>=4.0",
 ]
+# Optional LOWESS trend overlay on the diagnostic scatter (plotting/pairplot.py).
+# Without it the plot still renders, just without the smoother.
+plot = [
+    "statsmodels>=0.13",
+]
 dev = [
     "pytest",
     "pytest-cov",

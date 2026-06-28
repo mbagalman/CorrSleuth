@@ -136,7 +136,13 @@ def _resolve_candidate_columns(
 
     candidates = []
     skipped = []
+    seen: set[str] = set()
     for col in columns:
+        # Skip names the caller listed more than once so a column is profiled
+        # (and reported) at most once, mirroring the columns=None branch.
+        if col in seen:
+            continue
+        seen.add(col)
         if col == target:
             skipped.append(
                 TargetScanEntry(

@@ -59,6 +59,12 @@ For a progress bar during `scan_target(progress=True)`, install the optional
 pip install corrsleuth[progress]
 ```
 
+For the optional LOWESS trend overlay on the diagnostic scatter plots, install
+the `plot` extra (the plot still renders without it, just without the smoother):
+```bash
+pip install corrsleuth[plot]
+```
+
 ## Quick Start
 
 Point CorrSleuth at two numeric columns of your own DataFrame and read the

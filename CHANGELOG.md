@@ -5,7 +5,15 @@ All notable changes to CorrSleuth are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-06-28
+
+### Fixed
+- `biweight_midcorrelation` now uses the raw median absolute deviation
+  (`scale=1.0`) in its Tukey weights, matching the canonical biweight
+  midcorrelation (Wilcox; Langfelder & Horvath 2012). It previously used the
+  normal-consistent MAD, which pushed the outlier-rejection cutoff out to ~13
+  MADs and made the estimator less outlier-resistant than its name implies.
+  This changes the metric's numeric output for non-degenerate data.
 
 ### Changed
 - Unified the trimmed-Pearson logic: the outlier/leverage-sensitivity check in
@@ -104,4 +112,5 @@ Initial release.
   each replicate resamples that many rows (an m-out-of-n bootstrap); the
   resulting intervals are conservative (wider) and the emitted warning says so.
 
+[0.2.0]: https://github.com/mbagalman/CorrSleuth/releases/tag/v0.2.0
 [0.1.0]: https://github.com/mbagalman/CorrSleuth/releases/tag/v0.1.0

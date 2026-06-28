@@ -114,6 +114,10 @@ def _metric_context(pattern: str, metrics: pd.DataFrame | None) -> list[str]:
                     "that disagreement is evidence consistent with dependence that is not simply increasing or decreasing."
                 )
             ]
+        # Defensive fallback: the nonmonotonic_dependence label can only be
+        # assigned when distance correlation is available, so this branch is not
+        # expected to render for a genuine result — it guards against being
+        # called with a dcor-less metric set.
         return [
             (
                 f"Pearson ({_fmt(pearson)}) and Spearman ({_fmt(spearman)}) "
@@ -126,11 +130,15 @@ def _metric_context(pattern: str, metrics: pd.DataFrame | None) -> list[str]:
         and abs_p is not None
         and abs_s is not None
     ):
+        # Phrased in terms of rank-based metrics generally (not just Spearman):
+        # this label can be reached via the Pearson-vs-Kendall gap alone, so
+        # naming Spearman specifically could overstate that particular gap.
         return [
             (
-                f"Pearson ({_fmt(pearson)}) is much stronger than Spearman "
-                f"({_fmt(spearman)}), so the linear association may be more sensitive "
-                "to extreme values than the rank-based metrics."
+                f"Pearson ({_fmt(pearson)}) is much stronger than the rank-based "
+                f"metrics (Spearman {_fmt(spearman)}, Kendall tau-b {_fmt(kendall)}), "
+                "so the linear association may be more sensitive to extreme values "
+                "than the rank-based metrics."
             )
         ]
 

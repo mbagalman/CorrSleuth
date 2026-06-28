@@ -96,16 +96,17 @@ The plain-language version of each rule and its failure modes is in
 
 ## Outlier / robustness thresholds
 
-Defined in [`corrsleuth/api.py`](../corrsleuth/api.py) (deep-mode outlier
-sensitivity check) and [`corrsleuth/metrics/robust.py`](../corrsleuth/metrics/robust.py).
+All defined in [`corrsleuth/metrics/robust.py`](../corrsleuth/metrics/robust.py).
+The deep-mode leverage check (`assess_outlier_sensitivity`) and the robust
+metrics share these constants; `profile_pair` in `api.py` only calls into them.
 
 | Constant | Value | Location | Gates | Rationale |
 |---|---|---|---|---|
-| `_OUTLIER_TRIM_QUANTILE` / `_TAIL_FRACTION` | 0.01 | `api.py`, `robust.py` | tail fraction trimmed per side (1% per side, 2% per variable) before recomputing Pearson | Gentle trim: neutralizes a few extreme leverage points without reshaping a clean distribution, so a large gap implicates a handful of rows. See the [1%-trim limitation](../README.md) for what it misses. |
-| `_OUTLIER_SENSITIVE_DELTA` | 0.20 | `api.py` | change in Pearson after trimming above which the pair is flagged leverage-sensitive | One effect-size band of movement is "material." Computed from the **signed** difference so a sign flip counts in full. |
-| `_OUTLIER_MIN_N_FOR_TRIM` | 50 | `api.py` | minimum n before the trim check runs | Same reasoning as `_MIN_N_FOR_ROBUST`. |
-| `_OUTLIER_MIN_N_AFTER_TRIM` | 30 | `api.py` | minimum n remaining after trim | Same reasoning as `_MIN_N_AFTER_TRIM`. |
-| `_bend` `beta` | 0.20 | `robust.py` | bending constant of the biweight midcorrelation | Standard default from Wilcox's robust-statistics work (matches scipy/astropy biweight), trading a little Gaussian efficiency for resistance to ~20% contamination. |
+| `_TAIL_FRACTION` | 0.01 | `robust.py` | tail fraction trimmed/winsorized per side (1% per side, 2% per variable) before recomputing Pearson | Gentle trim: neutralizes a few extreme leverage points without reshaping a clean distribution, so a large gap implicates a handful of rows. See the [1%-trim limitation](interpretation-guide.md#outlier-sensitive-correlations) for what it misses. |
+| `_OUTLIER_SENSITIVE_DELTA` | 0.20 | `robust.py` | change in Pearson after trimming above which the pair is flagged leverage-sensitive | One effect-size band of movement is "material." Computed from the **signed** difference so a sign flip counts in full. |
+| `_MIN_N_FOR_ROBUST` / `ROBUST_METRIC_MIN_N` | 50 | `robust.py` | minimum n before the trim check and the robust metrics run | A 1% trim removes too few rows to matter below ~50 (also in the [sample-size table](#sample-size-and-data-quality-gates)). |
+| `_MIN_N_AFTER_TRIM` | 30 | `robust.py` | minimum n remaining after trim | Mirrors `LOW_N_THRESHOLD` (also in the [sample-size table](#sample-size-and-data-quality-gates)). |
+| `_bend` `beta` | 0.20 | `robust.py` | fraction of the largest absolute deviations clipped by the percentage-bend / median-clip estimator (`pearson_median_clipped_20pct`) | Wilcox's standard default for the percentage-bend correlation, trading a little Gaussian efficiency for resistance to ~20% contamination. (Distinct from the biweight midcorrelation's `9 · MAD` tuning.) |
 
 ## Bootstrap stability bands
 
@@ -141,13 +142,13 @@ Defined in [`corrsleuth/scan/report.py`](../corrsleuth/scan/report.py).
 
 `0.20` is `RANK_LINEAR_GAP_THRESHOLD`, `WEAK_MAGNITUDE_THRESHOLD`,
 `WEAK_DC_THRESHOLD`, `_OUTLIER_SENSITIVE_DELTA`, `_PEARSON_UNDERRATE_GAP`, and
-the biweight `beta`. This is partly intentional and partly coincidental:
+the percentage-bend `beta`. This is partly intentional and partly coincidental:
 
 - As a **magnitude ceiling** (weak labels) it marks "below a medium effect."
 - As a **gap / delta** (nonlinearity, leverage, underrate callout) it marks
   "one effect-size band of separation," which is large enough to exceed the
   sampling spread of these coefficients at n ≥ 30 while staying sensitive.
-- The biweight `beta = 0.20` is unrelated — it is a robustness convention
+- The percentage-bend `beta = 0.20` is unrelated — it is a robustness convention
   (resist ~20% contamination), not an effect-size band.
 
 Sharing the value keeps related signals (e.g. the `monotonic_nonlinear` label
