@@ -41,10 +41,11 @@ jobs:
           python-version: "3.12"
 
       # Install the standard extra so pandas/numpy/scipy/dcor/scikit-learn are
-      # importable; the mypy version is pinned here for reproducible results
-      # (config lives in pyproject.toml [tool.mypy]).
+      # importable. mypy and pandas-stubs are pinned here for reproducible
+      # results (config lives in pyproject.toml [tool.mypy]); pandas-stubs is
+      # what type-checks our pandas usage, so it must match the dev environment.
       - name: Install package and mypy
-        run: pip install ".[standard]" mypy==1.20.2
+        run: pip install ".[standard]" mypy==1.20.2 pandas-stubs==3.0.3.260530
 
       - name: Run mypy
         run: mypy
@@ -114,8 +115,10 @@ jobs:
       # Install every optional dependency so all code paths (distance
       # correlation, mutual information, LOWESS plotting) are exercised; the
       # coverage floor is enforced via [tool.coverage.report] fail_under.
+      # Editable (-e) so coverage measures the source tree that the tests
+      # actually execute, rather than a separate copy in site-packages.
       - name: Install package with all extras
-        run: pip install ".[standard,dev]" statsmodels
+        run: pip install -e ".[standard,dev]" statsmodels
 
       - name: Run pytest with coverage
         run: pytest -q --cov --cov-report=term-missing --cov-report=xml

@@ -57,6 +57,7 @@ dev = [
     "hypothesis",
     "ruff",
     "mypy",
+    "pandas-stubs",
 ]
 
 [project.urls]
