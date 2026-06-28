@@ -1,12 +1,12 @@
 from collections.abc import Sequence
 
 import pandas as pd
-import scipy.stats as stats
 
 from corrsleuth.exceptions import InputError
 from corrsleuth.heuristics import apply_heuristics, detect_metric_warnings
 from corrsleuth.metrics import (
     ROBUST_METRIC_MIN_N,
+    assess_outlier_sensitivity,
     compute_biweight_midcorrelation,
     compute_bootstrap,
     compute_chatterjee_xi,
@@ -19,57 +19,13 @@ from corrsleuth.metrics import (
     compute_spearman,
     compute_winsorized_pearson,
 )
-from corrsleuth.result import CorrSleuthResult, MetricDiagnostics, MetricResult
+from corrsleuth.result import CorrSleuthResult, MetricDiagnostics
 from corrsleuth.validation.input import validate_pair
-
-#: Minimum rows required before the outlier-sensitivity check trims tails;
-#: trimming a tiny sample is unstable, so it is skipped below this.
-_OUTLIER_MIN_N_FOR_TRIM = 50
-#: Minimum rows that must remain after trimming for the trimmed Pearson to be
-#: meaningful.
-_OUTLIER_MIN_N_AFTER_TRIM = 30
-#: Tail fraction trimmed from each variable (per side) before recomputing
-#: Pearson — i.e. drop below the 1st and above the 99th percentile.
-_OUTLIER_TRIM_QUANTILE = 0.01
-#: Magnitude of the change in Pearson after trimming above which the
-#: relationship is flagged as leverage-sensitive. Computed from the signed
-#: difference (``abs(baseline - trimmed)``) so a sign flip counts in full.
-_OUTLIER_SENSITIVE_DELTA = 0.20
 
 
 def _metric_value(metrics_map, metric_name: str) -> float | None:
     metric = metrics_map.get(metric_name)
     return metric.value if metric and metric.value is not None else None
-
-
-def _compute_outlier_sensitivity(pair, baseline_pearson: float | None) -> dict:
-    if baseline_pearson is None:
-        return {"status": "unavailable", "trimmed": None, "delta": None}
-
-    if pair.n_used < _OUTLIER_MIN_N_FOR_TRIM:
-        return {"status": "unavailable", "trimmed": None, "delta": None}
-
-    x_low = pair.x.quantile(_OUTLIER_TRIM_QUANTILE)
-    x_high = pair.x.quantile(1 - _OUTLIER_TRIM_QUANTILE)
-    y_low = pair.y.quantile(_OUTLIER_TRIM_QUANTILE)
-    y_high = pair.y.quantile(1 - _OUTLIER_TRIM_QUANTILE)
-    mask = pair.x.between(x_low, x_high) & pair.y.between(y_low, y_high)
-    x_trimmed = pair.x[mask]
-    y_trimmed = pair.y[mask]
-
-    if len(x_trimmed) < _OUTLIER_MIN_N_AFTER_TRIM:
-        return {"status": "unavailable", "trimmed": None, "delta": None}
-    if x_trimmed.nunique() <= 1 or y_trimmed.nunique() <= 1:
-        return {"status": "unavailable", "trimmed": None, "delta": None}
-
-    trimmed_pearson, _ = stats.pearsonr(x_trimmed, y_trimmed)
-    trimmed_pearson = float(trimmed_pearson)
-    # Compare signed values, not magnitudes: a sign flip after trimming
-    # (e.g. +0.55 -> -0.55) is the most leverage-sensitive case there is, and
-    # an abs-of-abs delta would score it 0.0 and mislabel it "stable".
-    delta = abs(baseline_pearson - trimmed_pearson)
-    status = "sensitive" if delta > _OUTLIER_SENSITIVE_DELTA else "stable"
-    return {"status": status, "trimmed": trimmed_pearson, "delta": delta}
 
 
 def _build_diagnostics(
@@ -105,12 +61,10 @@ def _build_diagnostics(
         nonmonotonic_gap=nonmonotonic_gap,
         pearson_kendall_gap=pearson_kendall_gap,
         disagreement_score=disagreement_score,
-        pearson_trimmed=outlier_sensitivity.get("trimmed")
+        pearson_trimmed=outlier_sensitivity.trimmed.value
         if outlier_sensitivity
         else None,
-        pearson_trim_delta=outlier_sensitivity.get("delta")
-        if outlier_sensitivity
-        else None,
+        pearson_trim_delta=outlier_sensitivity.delta if outlier_sensitivity else None,
     )
 
 
@@ -230,14 +184,14 @@ def profile_pair(
     # mutable builder reads more clearly than threading a growing immutable copy
     # through each step. The flags/warnings lists are read once at step 4/5.
     baseline_pearson = _metric_value(metrics_map, "pearson")
-    outlier_sensitivity = _compute_outlier_sensitivity(pair, baseline_pearson)
-    if outlier_sensitivity["status"] == "sensitive":
+    outlier_sensitivity = assess_outlier_sensitivity(pair, baseline_pearson)
+    if outlier_sensitivity.status == "sensitive":
         pair.flags.append("pearson_trim_sensitive")
         pair.warnings.append(
             "Pearson changes materially after trimming extreme x/y values; "
             "the apparent linear association may be leverage-sensitive."
         )
-    elif outlier_sensitivity["status"] == "stable":
+    elif outlier_sensitivity.status == "stable":
         pair.flags.append("pearson_trim_stable")
     else:
         pair.flags.append("outlier_sensitivity_unavailable")
@@ -248,11 +202,9 @@ def profile_pair(
                 f"n_used < {ROBUST_METRIC_MIN_N}; deep-mode robust correlation "
                 "diagnostics are not computed."
             )
-        metrics_map["pearson_trimmed_1pct"] = MetricResult(
-            name="pearson_trimmed_1pct",
-            value=outlier_sensitivity["trimmed"],
-            available=True,
-        )
+        # Reuse the trimmed Pearson already computed for the leverage check, so
+        # the metric and the flag never disagree.
+        metrics_map["pearson_trimmed_1pct"] = outlier_sensitivity.trimmed
         metrics_map["pearson_winsorized_1pct"] = compute_winsorized_pearson(pair)
         metrics_map["biweight_midcorrelation"] = compute_biweight_midcorrelation(pair)
         metrics_map["pearson_median_clipped_20pct"] = compute_median_clipped_pearson(

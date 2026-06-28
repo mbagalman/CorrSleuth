@@ -7,6 +7,8 @@ replace visual inspection or model validation.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import scipy.stats as stats
 
@@ -30,6 +32,10 @@ _MIN_N_FOR_ROBUST = 50
 #: computed on a sample CorrSleuth would otherwise flag as low-power.
 _MIN_N_AFTER_TRIM = 30
 ROBUST_METRIC_MIN_N = _MIN_N_FOR_ROBUST
+#: Magnitude of the change in Pearson after the 1% trim above which the
+#: relationship is flagged leverage-sensitive. Computed from the signed
+#: difference (``abs(baseline - trimmed)``) so a sign flip counts in full.
+_OUTLIER_SENSITIVE_DELTA = 0.20
 
 
 def _pearson_from_arrays(name: str, x: np.ndarray, y: np.ndarray) -> MetricResult:
@@ -74,6 +80,44 @@ def compute_trimmed_pearson(pair: CleanPair) -> MetricResult:
         )
         return MetricResult.no_value(name)
     return _pearson_from_arrays(name, x, y)
+
+
+@dataclass
+class OutlierSensitivity:
+    """Outcome of the leverage-sensitivity check.
+
+    ``status`` is ``"sensitive"``, ``"stable"``, or ``"unavailable"``.
+    ``trimmed`` is the 1%-trimmed Pearson :class:`MetricResult` (reused as the
+    deep-mode ``pearson_trimmed_1pct`` metric, so the value behind the leverage
+    flag and the reported metric are one and the same). ``delta`` is
+    ``abs(baseline - trimmed)`` when both are available, else ``None``.
+    """
+
+    status: str
+    trimmed: MetricResult
+    delta: float | None
+
+
+def assess_outlier_sensitivity(
+    pair: CleanPair, baseline_pearson: float | None
+) -> OutlierSensitivity:
+    """Flag Pearson as leverage-sensitive when the 1% trim moves it materially.
+
+    Delegates the trimming to :func:`compute_trimmed_pearson` so the trimmed
+    value is computed exactly once and the same way wherever it is consumed.
+    The status is ``"unavailable"`` whenever a baseline or trimmed Pearson
+    cannot be computed (constant input, ``n_used`` below the robust minimum, or
+    too few rows surviving the trim).
+    """
+    trimmed = compute_trimmed_pearson(pair)
+    if baseline_pearson is None or trimmed.value is None:
+        return OutlierSensitivity(status="unavailable", trimmed=trimmed, delta=None)
+    # Signed comparison: a sign flip after trimming (e.g. +0.55 -> -0.55) is the
+    # most leverage-sensitive case there is; an abs-of-abs delta would score it
+    # 0.0 and mislabel it "stable".
+    delta = abs(baseline_pearson - trimmed.value)
+    status = "sensitive" if delta > _OUTLIER_SENSITIVE_DELTA else "stable"
+    return OutlierSensitivity(status=status, trimmed=trimmed, delta=delta)
 
 
 def compute_winsorized_pearson(pair: CleanPair) -> MetricResult:
