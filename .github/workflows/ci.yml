@@ -26,6 +26,30 @@ jobs:
       - name: Run ruff
         run: ruff check .
 
+      - name: Check formatting
+        run: ruff format --check .
+
+  typecheck:
+    name: mypy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Install the standard extra so pandas/numpy/scipy/dcor/scikit-learn are
+      # importable. mypy and pandas-stubs are pinned here for reproducible
+      # results (config lives in pyproject.toml [tool.mypy]); pandas-stubs is
+      # what type-checks our pandas usage, so it must match the dev environment.
+      - name: Install package and mypy
+        run: pip install ".[standard]" mypy==1.20.2 pandas-stubs==3.0.3.260530
+
+      - name: Run mypy
+        run: mypy
+
   test:
     name: ${{ matrix.install }} / Python ${{ matrix.python-version }} / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -76,6 +100,34 @@ jobs:
 
       - name: Run pytest
         run: pytest -q
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Install every optional dependency so all code paths (distance
+      # correlation, mutual information, LOWESS plotting) are exercised; the
+      # coverage floor is enforced via [tool.coverage.report] fail_under.
+      # Editable (-e) so coverage measures the source tree that the tests
+      # actually execute, rather than a separate copy in site-packages.
+      - name: Install package with all extras
+        run: pip install -e ".[standard,dev]" statsmodels
+
+      - name: Run pytest with coverage
+        run: pytest -q --cov --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
 
   build:
     name: build & twine check

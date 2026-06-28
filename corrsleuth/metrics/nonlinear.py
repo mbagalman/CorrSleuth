@@ -9,6 +9,7 @@ Hoeffding's D, MGC, and MIC for its near-linear ``O(n log n)`` cost, its
 interpretable scale (0 under independence, approaching 1 for a functional
 relationship), and its directionality.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -18,7 +19,11 @@ from corrsleuth.exceptions import MetricComputationError
 from corrsleuth.result import MetricResult
 from corrsleuth.validation.input import CleanPair
 
-
+#: Minimum rows before Chatterjee's xi is computed. xi is consistent but
+#: converges slowly, and on tiny samples its finite-sample bias is large enough
+#: to be misleading; 20 is a conservative floor (below the n = 30 used to gate
+#: the heuristic labels, since xi is only ever reported as a supplementary
+#: diagnostic, never as the basis for a label).
 _MIN_N_FOR_CHATTERJEE_XI = 20
 
 
@@ -55,7 +60,7 @@ def _compute_xi_directional(
         if denominator == 0.0:
             # All l_i == n, i.e. a constant Y. Constant inputs are guarded
             # upstream, but guard here too rather than divide by zero.
-            return MetricResult(name=name, value=None, available=True)
+            return MetricResult.no_value(name)
         xi = 1.0 - numerator / denominator
     except (ValueError, RuntimeError, FloatingPointError) as e:
         raise MetricComputationError(
@@ -91,14 +96,14 @@ def compute_chatterjee_xi(pair: CleanPair) -> MetricResult:
     name = "chatterjee_xi"
 
     if pair.x_is_constant or pair.y_is_constant:
-        return MetricResult(name=name, value=None, available=True)
+        return MetricResult.no_value(name)
 
     if pair.n_used < _MIN_N_FOR_CHATTERJEE_XI:
         pair.warnings.append(
             f"n_used < {_MIN_N_FOR_CHATTERJEE_XI}. chatterjee_xi is not "
             "computed because it converges slowly on small samples."
         )
-        return MetricResult(name=name, value=None, available=True)
+        return MetricResult.no_value(name)
 
     return _compute_xi_directional(pair.x.to_numpy(), pair.y.to_numpy(), name)
 
@@ -121,9 +126,9 @@ def compute_chatterjee_xi_reverse(pair: CleanPair) -> MetricResult:
     name = "chatterjee_xi_reverse"
 
     if pair.x_is_constant or pair.y_is_constant:
-        return MetricResult(name=name, value=None, available=True)
+        return MetricResult.no_value(name)
 
     if pair.n_used < _MIN_N_FOR_CHATTERJEE_XI:
-        return MetricResult(name=name, value=None, available=True)
+        return MetricResult.no_value(name)
 
     return _compute_xi_directional(pair.y.to_numpy(), pair.x.to_numpy(), name)

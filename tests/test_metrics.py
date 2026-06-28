@@ -4,16 +4,23 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from corrsleuth.validation.input import validate_pair
 from corrsleuth.api import profile_pair
 from corrsleuth.exceptions import MetricComputationError, OptionalDependencyError
 from corrsleuth.metrics import (
-    compute_pearson, compute_spearman, compute_kendall,
-    compute_distance_correlation, compute_mutual_information,
-    compute_trimmed_pearson, compute_winsorized_pearson,
-    compute_biweight_midcorrelation, compute_median_clipped_pearson,
-    compute_chatterjee_xi, compute_chatterjee_xi_reverse,
+    compute_biweight_midcorrelation,
+    compute_chatterjee_xi,
+    compute_chatterjee_xi_reverse,
+    compute_distance_correlation,
+    compute_kendall,
+    compute_median_clipped_pearson,
+    compute_mutual_information,
+    compute_pearson,
+    compute_spearman,
+    compute_trimmed_pearson,
+    compute_winsorized_pearson,
 )
+from corrsleuth.validation.input import validate_pair
+
 
 def test_core_metrics():
     df = pd.DataFrame({"x": [1, 2, 3, 4, 5], "y": [2, 4, 5, 4, 5]})
@@ -31,6 +38,7 @@ def test_core_metrics():
     assert k.name == "kendall_tau_b"
     assert k.value is not None
 
+
 def test_optional_metrics():
     pytest.importorskip("dcor")
     pytest.importorskip("sklearn")
@@ -44,6 +52,7 @@ def test_optional_metrics():
     mi = compute_mutual_information(pair, mode="standard")
     assert mi.available is True
     assert mi.value is not None
+
 
 def test_optional_metrics_downsampling_override():
     pytest.importorskip("dcor")
@@ -77,7 +86,9 @@ def test_distance_correlation_missing_dependency_raises_in_standard_mode(monkeyp
         compute_distance_correlation(pair, mode="standard")
 
 
-def test_distance_correlation_missing_dependency_returns_unavailable_in_lite_mode(monkeypatch):
+def test_distance_correlation_missing_dependency_returns_unavailable_in_lite_mode(
+    monkeypatch,
+):
     _hide_module(monkeypatch, "dcor")
     df = pd.DataFrame({"x": [1, 2, 3, 4, 5], "y": [2, 4, 5, 4, 5]})
     pair = validate_pair(df, "x", "y")
@@ -96,7 +107,9 @@ def test_mutual_information_missing_dependency_raises_in_standard_mode(monkeypat
         compute_mutual_information(pair, mode="standard")
 
 
-def test_mutual_information_missing_dependency_returns_unavailable_in_lite_mode(monkeypatch):
+def test_mutual_information_missing_dependency_returns_unavailable_in_lite_mode(
+    monkeypatch,
+):
     _hide_module(monkeypatch, "sklearn")
     df = pd.DataFrame({"x": [1, 2, 3, 4, 5], "y": [2, 4, 5, 4, 5]})
     pair = validate_pair(df, "x", "y")
@@ -114,7 +127,9 @@ def test_standard_mode_small_sample_returns_low_power_result():
     result = profile_pair(df, "x", "y", mode="standard")
 
     assert result.pattern == "low_power_or_uncertain"
-    mi = result.metrics.loc[result.metrics["metric"] == "mutual_information", "value"].iloc[0]
+    mi = result.metrics.loc[
+        result.metrics["metric"] == "mutual_information", "value"
+    ].iloc[0]
     assert pd.isna(mi)
     assert any("Mutual information is not computed" in w for w in result.warnings)
 
@@ -191,10 +206,7 @@ def test_outlier_driven_data_shows_meaningful_pearson_robust_gap():
     df = pd.DataFrame({"x": x, "y": y})
 
     result = profile_pair(df, "x", "y", mode="deep")
-    metrics = {
-        row["metric"]: row["value"]
-        for _, row in result.metrics.iterrows()
-    }
+    metrics = {row["metric"]: row["value"] for _, row in result.metrics.iterrows()}
 
     assert metrics["pearson"] > 0.90
     for metric_name in (
@@ -264,8 +276,12 @@ def test_chatterjee_xi_is_asymmetric_for_many_to_one_relationship():
 
     fwd = profile_pair(df, "x", "y", mode="deep")
     rev = profile_pair(df, "y", "x", mode="deep")
-    fwd_xi = next(r["value"] for _, r in fwd.metrics.iterrows() if r["metric"] == "chatterjee_xi")
-    rev_xi = next(r["value"] for _, r in rev.metrics.iterrows() if r["metric"] == "chatterjee_xi")
+    fwd_xi = next(
+        r["value"] for _, r in fwd.metrics.iterrows() if r["metric"] == "chatterjee_xi"
+    )
+    rev_xi = next(
+        r["value"] for _, r in rev.metrics.iterrows() if r["metric"] == "chatterjee_xi"
+    )
 
     assert fwd_xi - rev_xi > 0.40
 

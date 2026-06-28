@@ -189,7 +189,7 @@ This PR ships:
 
 - `corrsleuth/metrics/nonlinear.py` exposing `compute_chatterjee_xi(pair)`.
 - Wire-up in `corrsleuth/api.py`'s deep-mode dispatch.
-- `chatterjee_xi` added to `_VALID_SORT_KEYS` in `corrsleuth/scan.py` so
+- `chatterjee_xi` added to `_VALID_SORT_KEYS` in `corrsleuth/scan/plot.py` so
   target scans can sort `plot_top()` by ξ.
 - Tests in `tests/test_metrics.py` covering: clean-linear → high ξ; U-shape
   detected when Pearson/Spearman miss it; asymmetry on many-to-one

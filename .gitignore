@@ -2,6 +2,15 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+
+# Coverage artifacts
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
 # Build and packaging artifacts
 build/

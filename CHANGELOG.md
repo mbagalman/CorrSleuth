@@ -5,6 +5,51 @@ All notable changes to CorrSleuth are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Extracted the heuristic cascade's label-driving cut points into public,
+  documented module-level constants in `corrsleuth/heuristics/classifier.py`
+  (`STRONG_MAGNITUDE_THRESHOLD`, `WEAK_MAGNITUDE_THRESHOLD`,
+  `RANK_LINEAR_GAP_THRESHOLD`, `PEARSON_KENDALL_GAP_THRESHOLD`,
+  `NONMONOTONIC_MONOTONE_CEILING`, `NONMONOTONIC_DC_THRESHOLD`,
+  `NEAR_LINEAR_GAP_THRESHOLD`, `WEAK_DC_THRESHOLD`) so they can be inspected and
+  overridden. Behavior is unchanged.
+- Replaced remaining inline threshold literals (low-n, missingness, unique-ratio
+  in validation; bootstrap min-n) with named constants and added rationale
+  docstrings to the existing robustness, bootstrap, and Chatterjee's-ξ
+  thresholds.
+- Split the `corrsleuth/scan.py` monolith into a `corrsleuth/scan/` package:
+  `core` (the `scan_target` orchestration and `TargetScanEntry`), `report`
+  (`CorrSleuthTargetReport` text/frame/Markdown rendering), and `plot`
+  (`plot_top`). The public API (`scan_target`, `CorrSleuthTargetReport`,
+  `TargetScanEntry` from `corrsleuth` or `corrsleuth.scan`) is unchanged.
+- Documented that `scan_target` runs sequentially, with guidance on bounding
+  cost for very wide DataFrames, in the scan docstring and interpretation guide.
+- Expanded the ruff ruleset (added isort, pep8-naming, pyupgrade, simplify, and
+  bugbear) and applied `ruff format` across the codebase; CI now enforces both
+  `ruff check` and `ruff format --check`.
+- Centralized the repeated "computed but no value" metric guard behind
+  `MetricResult.no_value(...)`, and documented the intentional in-place
+  enrichment of the internal `CleanPair` in `profile_pair`.
+
+### Added
+- `docs/thresholds-and-rationale.md` cataloguing every threshold in the package
+  — its value, location, what it gates, the justification, and how to override
+  the label-driving ones. Linked from the README and the interpretation guide.
+- Static type checking: a `[tool.mypy]` configuration and a `mypy` CI job
+  (non-strict) that the package now passes cleanly, plus `mypy` in the `dev`
+  extra. Added docstrings to the internal bootstrap helpers.
+- Property-based tests (`tests/test_property.py`, Hypothesis) asserting metric
+  invariants over generated inputs: joint row-permutation invariance,
+  constant-input → `None`, magnitude bounds, and symmetric-metric symmetry /
+  Chatterjee ξ forward-reverse consistency.
+- End-to-end smoke tests (`tests/test_smoke.py`) exercising the documented
+  `profile_pair` / `scan_target` workflow across every render surface.
+- Coverage reporting: `[tool.coverage]` config (branch coverage, `fail_under`
+  floor), a `coverage` CI job, and `pytest-cov` / `hypothesis` in the `dev`
+  extra.
+
 ## [0.1.0] - 2026-06-27
 
 Initial release.

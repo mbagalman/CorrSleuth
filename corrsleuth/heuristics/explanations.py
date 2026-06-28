@@ -1,8 +1,8 @@
-from typing import List, Optional
-
 import pandas as pd
 
-_CAVEAT = "Do not interpret this association causally without proper design or controls."
+_CAVEAT = (
+    "Do not interpret this association causally without proper design or controls."
+)
 
 _EXPLANATIONS = {
     "not_computable": "The metrics could not be computed. This usually happens when one or both variables are entirely constant, or there are no valid overlapping data points.",
@@ -12,44 +12,45 @@ _EXPLANATIONS = {
     "monotonic_nonlinear": "Evidence consistent with a directional relationship that is not well summarized by a straight line. Pearson may significantly understate the relationship compared to rank-based measures.",
     "near_linear": "Evidence consistent with an approximately linear or near-linear relationship. Both variables appear to scale together smoothly.",
     "weak_or_no_relationship": "Little to no evidence of a pairwise association in the observed data.",
-    "mixed_or_ambiguous": "The metrics disagree in a way that doesn't strongly match a canonical pattern. The relationship may be complex or noisy."
+    "mixed_or_ambiguous": "The metrics disagree in a way that doesn't strongly match a canonical pattern. The relationship may be complex or noisy.",
 }
 
 _RECOMMENDATIONS = {
     "not_computable": [
         "Check for constant variables (zero variance).",
-        "Check for data misalignment or missingness."
+        "Check for data misalignment or missingness.",
     ],
     "low_power_or_uncertain": [
         "Collect more data.",
-        "Rely on domain knowledge rather than statistical significance here."
+        "Rely on domain knowledge rather than statistical significance here.",
     ],
     "possible_outlier_or_leverage": [
         "Inspect scatter plots for extreme points.",
-        "Consider robust or winsorized sensitivity checks."
+        "Consider robust or winsorized sensitivity checks.",
     ],
     "nonmonotonic_dependence": [
         "Inspect the relationship visually (e.g., scatter plot with a smoother).",
-        "Consider modeling with polynomials, splines, or tree-based methods."
+        "Consider modeling with polynomials, splines, or tree-based methods.",
     ],
     "monotonic_nonlinear": [
         "Inspect the scatter plot for curvature.",
-        "Consider logarithmic or other monotonic transformations."
+        "Consider logarithmic or other monotonic transformations.",
     ],
     "near_linear": [
         "A standard linear model or Pearson correlation is likely appropriate here."
     ],
     "weak_or_no_relationship": [
         "Consider whether the relationship might be conditionally masked by a third variable.",
-        "This feature may not be a strong linear predictor on its own."
+        "This feature may not be a strong linear predictor on its own.",
     ],
     "mixed_or_ambiguous": [
         "Inspect the data visually.",
-        "Check whether this pattern holds within important segments or clusters."
-    ]
+        "Check whether this pattern holds within important segments or clusters.",
+    ],
 }
 
-def _metric_map(metrics: Optional[pd.DataFrame]) -> dict[str, float]:
+
+def _metric_map(metrics: pd.DataFrame | None) -> dict[str, float]:
     if metrics is None:
         return {}
 
@@ -61,13 +62,13 @@ def _metric_map(metrics: Optional[pd.DataFrame]) -> dict[str, float]:
     return values
 
 
-def _fmt(value: Optional[float]) -> str:
+def _fmt(value: float | None) -> str:
     if value is None:
         return "NA"
     return f"{value:.3f}"
 
 
-def _metric_context(pattern: str, metrics: Optional[pd.DataFrame]) -> list[str]:
+def _metric_context(pattern: str, metrics: pd.DataFrame | None) -> list[str]:
     values = _metric_map(metrics)
     if not values:
         return []
@@ -120,7 +121,11 @@ def _metric_context(pattern: str, metrics: Optional[pd.DataFrame]) -> list[str]:
             )
         ]
 
-    if pattern == "possible_outlier_or_leverage" and abs_p is not None and abs_s is not None:
+    if (
+        pattern == "possible_outlier_or_leverage"
+        and abs_p is not None
+        and abs_s is not None
+    ):
         return [
             (
                 f"Pearson ({_fmt(pearson)}) is much stronger than Spearman "
@@ -149,7 +154,7 @@ def _metric_context(pattern: str, metrics: Optional[pd.DataFrame]) -> list[str]:
 
 def generate_explanation(
     pattern: str,
-    metrics: Optional[pd.DataFrame] = None,
+    metrics: pd.DataFrame | None = None,
     include_caveat: bool = True,
 ) -> str:
     exp = _EXPLANATIONS.get(pattern, _EXPLANATIONS["mixed_or_ambiguous"])
@@ -162,5 +167,6 @@ def generate_explanation(
         exp = f"{exp} {_CAVEAT}"
     return exp
 
-def generate_recommendations(pattern: str) -> List[str]:
+
+def generate_recommendations(pattern: str) -> list[str]:
     return _RECOMMENDATIONS.get(pattern, _RECOMMENDATIONS["mixed_or_ambiguous"])

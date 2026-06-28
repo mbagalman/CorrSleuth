@@ -1,5 +1,5 @@
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
-from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -12,6 +12,7 @@ from corrsleuth.metrics.optional import (
     compute_mutual_information,
 )
 from corrsleuth.validation.input import (
+    LOW_N_THRESHOLD,
     CleanPair,
     compute_heuristic_flags,
     compute_tie_rate,
@@ -27,7 +28,14 @@ _STANDARD_BOOTSTRAP_METRICS = (
     "mutual_information",
 )
 
+#: Pattern stability (the fraction of bootstrap replicates whose label matches
+#: the original) at or above which the relationship is labeled "high" stability.
+#: 0.80 means at most ~1 in 5 resamples disagreed. These two cut points are
+#: presentation bands for a continuous score, not significance tests.
 _STABILITY_HIGH_THRESHOLD = 0.80
+#: Pattern stability at or above which stability is "medium"; below it, "low".
+#: 0.50 is the point at which the modal label no longer holds a majority of
+#: replicates, which is the natural boundary for "treat this label as shaky".
 _STABILITY_MEDIUM_THRESHOLD = 0.50
 
 
@@ -40,17 +48,26 @@ class BootstrapStability:
     n_bootstrap: int
     n_iterations: int
 
-    def to_dict(self):
+    def to_dict(self) -> dict:
+        """Return the stability fields as a plain dict (for serialization/export)."""
         return asdict(self)
 
 
 @dataclass
 class BootstrapResult:
-    intervals: Optional[pd.DataFrame]
-    stability: Optional[BootstrapStability]
+    intervals: pd.DataFrame | None
+    stability: BootstrapStability | None
 
 
-def _resolve_bootstrap_metrics(bootstrap_metrics: str | Sequence[str]) -> tuple[str, ...]:
+def _resolve_bootstrap_metrics(
+    bootstrap_metrics: str | Sequence[str],
+) -> tuple[str, ...]:
+    """Normalize the ``bootstrap_metrics`` argument to a tuple of metric names.
+
+    Accepts the ``"lite"`` / ``"standard"`` presets or an explicit sequence of
+    metric names. Raises :class:`InputError` for an unknown string preset or for
+    any name outside the standard bootstrap set, listing the supported names.
+    """
     if bootstrap_metrics == "lite":
         return _LITE_BOOTSTRAP_METRICS
     if bootstrap_metrics == "standard":
@@ -77,12 +94,27 @@ def _resolve_bootstrap_metrics(bootstrap_metrics: str | Sequence[str]) -> tuple[
 def _metric_set_label(
     bootstrap_metrics: str | Sequence[str], metric_names: Sequence[str]
 ) -> str:
+    """Return the human-readable label recorded on the stability result.
+
+    Presets keep their name (``"lite"`` / ``"standard"``); an explicit sequence
+    is rendered as its sorted, comma-joined names so the label is deterministic
+    regardless of the order the caller passed them in.
+    """
     if isinstance(bootstrap_metrics, str):
         return bootstrap_metrics
     return ",".join(sorted(metric_names))
 
 
 def _bootstrap_sample_pair(pair: CleanPair, idx) -> CleanPair:
+    """Build a fresh :class:`CleanPair` for one bootstrap replicate.
+
+    ``idx`` is the array of resampled row positions (drawn with replacement).
+    Rebuilding the full ``CleanPair`` — rather than just resampling x/y — lets
+    each replicate be re-profiled through the same constant/tie/low-n machinery
+    as the original pair, so the per-replicate label is computed under identical
+    rules. Missing-data fields are zeroed because the source pair is already
+    clean; tie/unique/constant fields are recomputed from the resample.
+    """
     x = pd.Series(pair.x.to_numpy()[idx], name=pair.x_name)
     y = pd.Series(pair.y.to_numpy()[idx], name=pair.y_name)
     n_used = len(idx)
@@ -107,6 +139,12 @@ def _bootstrap_sample_pair(pair: CleanPair, idx) -> CleanPair:
 
 
 def _bootstrap_flags(pair: CleanPair) -> list[str]:
+    """Return the heuristic flags for a replicate, matching the original's context.
+
+    Mirrors the flags ``profile_pair`` would synthesize, with one deliberate
+    addition described below, so the cascade routes each replicate the same way
+    it routed the original pair.
+    """
     flags = compute_heuristic_flags(pair)
     # Bootstrap doesn't recompute Pearson trim sensitivity per replicate; signal
     # that to the heuristic via outlier_sensitivity_unavailable so the
@@ -117,6 +155,13 @@ def _bootstrap_flags(pair: CleanPair) -> list[str]:
 
 
 def _compute_bootstrap_metric(name: str, pair: CleanPair, random_state: int):
+    """Dispatch a single metric computation by name for one replicate.
+
+    Distance correlation and mutual information are computed with
+    ``max_n_for_dcor=None`` (no per-replicate downsampling) so every replicate
+    uses its full resampled rows. Raises :class:`InputError` for an unknown
+    name (the input is pre-validated, so this is a guard against drift).
+    """
     if name == "pearson":
         return compute_pearson(pair)
     if name == "spearman":
@@ -128,28 +173,34 @@ def _compute_bootstrap_metric(name: str, pair: CleanPair, random_state: int):
             pair, mode="standard", max_n_for_dcor=None, random_state=random_state
         )
     if name == "mutual_information":
-        return compute_mutual_information(pair, mode="standard", random_state=random_state)
+        return compute_mutual_information(
+            pair, mode="standard", random_state=random_state
+        )
     raise InputError(f"Unsupported bootstrap metric: {name}")
 
 
 def _validate_bootstrap_inputs(
-    bootstrap: Optional[int],
+    bootstrap: int | None,
     bootstrap_metrics: str | Sequence[str],
-    max_n_for_bootstrap: Optional[int],
-) -> Optional[tuple[tuple[str, ...], str]]:
+    max_n_for_bootstrap: int | None,
+) -> tuple[tuple[str, ...], str] | None:
+    """Validate bootstrap arguments and resolve the metric set.
+
+    Returns ``None`` when ``bootstrap`` is ``None`` (the no-op case, so callers
+    can early-return), otherwise ``(metric_names, metric_set_label)``. Raises
+    :class:`InputError` for a non-positive-integer ``bootstrap``, a bad
+    ``max_n_for_bootstrap``, or an empty/unsupported metric set.
+    """
     if bootstrap is None:
         return None
     if isinstance(bootstrap, bool) or not isinstance(bootstrap, int):
         raise InputError("bootstrap must be a positive integer or None.")
     if bootstrap < 1:
         raise InputError("bootstrap must be a positive integer or None.")
-    if (
-        max_n_for_bootstrap is not None
-        and (
-            isinstance(max_n_for_bootstrap, bool)
-            or not isinstance(max_n_for_bootstrap, int)
-            or max_n_for_bootstrap < 1
-        )
+    if max_n_for_bootstrap is not None and (
+        isinstance(max_n_for_bootstrap, bool)
+        or not isinstance(max_n_for_bootstrap, int)
+        or max_n_for_bootstrap < 1
     ):
         raise InputError("max_n_for_bootstrap must be a positive integer or None.")
 
@@ -161,6 +212,11 @@ def _validate_bootstrap_inputs(
 
 
 def _stability_label(pattern_stability: float) -> str:
+    """Bucket a continuous pattern-stability fraction into high/medium/low.
+
+    Boundaries are :data:`_STABILITY_HIGH_THRESHOLD` and
+    :data:`_STABILITY_MEDIUM_THRESHOLD`; see their definitions for the rationale.
+    """
     if pattern_stability >= _STABILITY_HIGH_THRESHOLD:
         return "high"
     if pattern_stability >= _STABILITY_MEDIUM_THRESHOLD:
@@ -170,11 +226,11 @@ def _stability_label(pattern_stability: float) -> str:
 
 def compute_bootstrap(
     pair: CleanPair,
-    bootstrap: Optional[int],
+    bootstrap: int | None,
     bootstrap_metrics: str | Sequence[str],
     random_state: int,
-    max_n_for_bootstrap: Optional[int],
-    original_pattern: Optional[str] = None,
+    max_n_for_bootstrap: int | None,
+    original_pattern: str | None = None,
 ) -> BootstrapResult:
     """Compute percentile bootstrap intervals and pattern stability.
 
@@ -197,6 +253,8 @@ def compute_bootstrap(
         return BootstrapResult(intervals=None, stability=None)
 
     metric_names, metric_set = resolved
+    # _validate_bootstrap_inputs only returns non-None for a valid positive int.
+    assert bootstrap is not None
 
     sample_size = pair.n_used
     if max_n_for_bootstrap is not None and sample_size > max_n_for_bootstrap:
@@ -210,13 +268,13 @@ def compute_bootstrap(
         )
         sample_size = max_n_for_bootstrap
 
-    if pair.n_used < 30:
+    if pair.n_used < LOW_N_THRESHOLD:
         pair.warnings.append(
             "Bootstrap intervals requested with n_used < 30; intervals may be unstable."
         )
 
     generator = np.random.default_rng(random_state)
-    values = {name: [] for name in metric_names}
+    values: dict[str, list[float]] = {name: [] for name in metric_names}
     label_counts: dict[str, int] = {}
     n_iterations = 0
 
@@ -302,11 +360,11 @@ def compute_bootstrap(
 
 def compute_bootstrap_intervals(
     pair: CleanPair,
-    bootstrap: Optional[int],
+    bootstrap: int | None,
     bootstrap_metrics: str | Sequence[str],
     random_state: int,
-    max_n_for_bootstrap: Optional[int],
-) -> Optional[pd.DataFrame]:
+    max_n_for_bootstrap: int | None,
+) -> pd.DataFrame | None:
     return compute_bootstrap(
         pair=pair,
         bootstrap=bootstrap,

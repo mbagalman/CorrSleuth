@@ -1,12 +1,13 @@
 """Small deterministic Markdown formatting helpers."""
+
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any
 
 import pandas as pd
 
 
-def format_markdown_value(value: Optional[float]) -> str:
+def format_markdown_value(value: float | None) -> str:
     return f"{value:.3f}" if value is not None and pd.notna(value) else "NA"
 
 
@@ -32,7 +33,7 @@ def escape_markdown_cell(value: Any) -> str:
     )
 
 
-def markdown_table(headers: List[str], rows: List[List[Any]]) -> str:
+def markdown_table(headers: list[str], rows: list[list[Any]]) -> str:
     lines = [
         "| " + " | ".join(headers) + " |",
         "| " + " | ".join("---" for _ in headers) + " |",

@@ -1,10 +1,32 @@
+from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
-from dataclasses import dataclass
-from typing import List
+
 from corrsleuth.exceptions import InputError
 
+#: Minimum number of paired observations before metrics are considered to have
+#: adequate power. Below this the ``low_n`` flag is set, which the heuristic
+#: cascade maps to ``low_power_or_uncertain``. n = 30 is the conventional
+#: "small sample" rule of thumb (the point near which the t-distribution
+#: approaches normal); it is intentionally a floor, not a guarantee — see the
+#: caveat in docs/interpretation-guide.md and docs/thresholds-and-rationale.md.
+LOW_N_THRESHOLD = 30
+
+#: Fraction of an input column that may be tied (non-unique) before a rank
+#: metric reliability warning is emitted. Above ~30% ties, Spearman/Kendall
+#: tie-correction is working hard enough that their effective resolution drops.
 _TIE_RATE_WARN_THRESHOLD = 0.30
+
+#: Missing-data fraction above which a high-missingness warning is emitted. At
+#: more than half missing, listwise/pairwise deletion has removed most of the
+#: data and any coefficient is computed on an unrepresentative remainder.
+_HIGH_MISSINGNESS_THRESHOLD = 0.5
+
+#: Unique-value ratio (distinct values / n) below which a column is treated as
+#: near-discrete and rank metrics are warned as tie-unstable. 5% distinct
+#: values means each value is shared by ~20 rows on average.
+_LOW_UNIQUE_RATIO_THRESHOLD = 0.05
 
 
 @dataclass
@@ -12,6 +34,7 @@ class CleanPair:
     """
     Internal contract representing a validated, paired, and cleaned numerical dataset.
     """
+
     x: pd.Series
     y: pd.Series
     x_name: str
@@ -26,8 +49,8 @@ class CleanPair:
     y_is_constant: bool
     x_tie_rate: float
     y_tie_rate: float
-    flags: List[str]          # machine-readable
-    warnings: List[str]       # raw validation warnings only
+    flags: list[str]  # machine-readable
+    warnings: list[str]  # raw validation warnings only
 
 
 def is_constant_series(series: pd.Series) -> bool:
@@ -50,7 +73,7 @@ def compute_tie_rate(series: pd.Series) -> float:
     return float((n - n_singletons) / n)
 
 
-def compute_heuristic_flags(pair: "CleanPair") -> List[str]:
+def compute_heuristic_flags(pair: "CleanPair") -> list[str]:
     """Return the subset of CleanPair flags that the heuristic cascade reads.
 
     Validation also emits warning-only flags (``high_missingness``,
@@ -58,15 +81,17 @@ def compute_heuristic_flags(pair: "CleanPair") -> List[str]:
     the heuristic-relevant flags so bootstrap replicates can synthesize the same
     decision context as the original validated pair.
     """
-    flags: List[str] = []
+    flags: list[str] = []
     if pair.x_is_constant or pair.y_is_constant:
         flags.append("constant_input")
-    if pair.n_used < 30:
+    if pair.n_used < LOW_N_THRESHOLD:
         flags.append("low_n")
     return flags
 
 
-def validate_pair(data: pd.DataFrame, x: str, y: str, missing: str = "pairwise") -> CleanPair:
+def validate_pair(
+    data: pd.DataFrame, x: str, y: str, missing: str = "pairwise"
+) -> CleanPair:
     """Validate and clean a numeric ``x``/``y`` pair into a :class:`CleanPair`.
 
     Parameters
@@ -97,9 +122,7 @@ def validate_pair(data: pd.DataFrame, x: str, y: str, missing: str = "pairwise")
         values, or fewer than two valid observations remain.
     """
     if x == y:
-        raise InputError(
-            f"x and y must be different columns; got '{x}' for both."
-        )
+        raise InputError(f"x and y must be different columns; got '{x}' for both.")
     if x not in data.columns:
         raise InputError(f"Column '{x}' not found in data.")
     if y not in data.columns:
@@ -124,7 +147,9 @@ def validate_pair(data: pd.DataFrame, x: str, y: str, missing: str = "pairwise")
 
     # Missing value handling
     if missing not in ["pairwise", "listwise", "raise"]:
-        raise InputError(f"Unsupported missing mode: '{missing}'. Supported modes are 'pairwise', 'listwise', and 'raise'.")
+        raise InputError(
+            f"Unsupported missing mode: '{missing}'. Supported modes are 'pairwise', 'listwise', and 'raise'."
+        )
 
     if missing == "listwise":
         # Complete-case deletion: drop any row that is missing a value in ANY
@@ -151,19 +176,19 @@ def validate_pair(data: pd.DataFrame, x: str, y: str, missing: str = "pairwise")
     n_used = len(df_pair)
     missing_count = n_original - n_used
     missing_ratio = missing_count / n_original if n_original > 0 else 1.0
-    
+
     flags = []
     warnings = []
-    
+
     if n_used < 2:
         raise InputError(
             f"At least 2 valid observations are required to profile a relationship; "
             f"got n_used={n_used} after handling missing values."
         )
-        
+
     x_clean = df_pair[x].astype(float)
     y_clean = df_pair[y].astype(float)
-    
+
     x_unique_ratio = x_clean.nunique() / n_used
     y_unique_ratio = y_clean.nunique() / n_used
 
@@ -173,13 +198,18 @@ def validate_pair(data: pd.DataFrame, x: str, y: str, missing: str = "pairwise")
     x_tie_rate = compute_tie_rate(x_clean)
     y_tie_rate = compute_tie_rate(y_clean)
 
-    if missing_ratio > 0.5:
+    if missing_ratio > _HIGH_MISSINGNESS_THRESHOLD:
         flags.append("high_missingness")
         warnings.append(f">50% missing data ({missing_ratio:.1%} missing).")
 
-    if x_unique_ratio < 0.05 or y_unique_ratio < 0.05:
+    if (
+        x_unique_ratio < _LOW_UNIQUE_RATIO_THRESHOLD
+        or y_unique_ratio < _LOW_UNIQUE_RATIO_THRESHOLD
+    ):
         flags.append("low_unique_ratio")
-        warnings.append("Low unique value ratio (< 0.05). Rank-based metrics may be unstable due to ties.")
+        warnings.append(
+            "Low unique value ratio (< 0.05). Rank-based metrics may be unstable due to ties."
+        )
 
     for name, tie_rate in ((x, x_tie_rate), (y, y_tie_rate)):
         if tie_rate > _TIE_RATE_WARN_THRESHOLD:
@@ -191,13 +221,17 @@ def validate_pair(data: pd.DataFrame, x: str, y: str, missing: str = "pairwise")
     if x_tie_rate > _TIE_RATE_WARN_THRESHOLD or y_tie_rate > _TIE_RATE_WARN_THRESHOLD:
         flags.append("high_tie_rate")
 
-    if n_used < 30:
+    if n_used < LOW_N_THRESHOLD:
         flags.append("low_n")
-        warnings.append(f"Small sample size (n={n_used}). Interpret metrics with caution.")
+        warnings.append(
+            f"Small sample size (n={n_used}). Interpret metrics with caution."
+        )
 
     if x_is_constant or y_is_constant:
         flags.append("constant_input")
-        warnings.append("One or both variables are constant. Metrics may not be computable.")
+        warnings.append(
+            "One or both variables are constant. Metrics may not be computable."
+        )
 
     return CleanPair(
         x=x_clean,
@@ -215,5 +249,5 @@ def validate_pair(data: pd.DataFrame, x: str, y: str, missing: str = "pairwise")
         x_tie_rate=x_tie_rate,
         y_tie_rate=y_tie_rate,
         flags=flags,
-        warnings=warnings
+        warnings=warnings,
     )
