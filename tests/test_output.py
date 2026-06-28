@@ -89,7 +89,8 @@ def test_explain_possible_outlier_or_leverage_references_rank_disagreement():
 
     explanation = res.explain(include_caveat=False)
 
-    assert "Pearson (0.820) is much stronger than Spearman (0.310)" in explanation
+    assert "Pearson (0.820) is much stronger than the rank-based metrics" in explanation
+    assert "Spearman 0.310" in explanation
     assert "extreme values" in explanation
 
 

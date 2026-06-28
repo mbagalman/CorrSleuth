@@ -5,7 +5,8 @@
 #   owner: mbagalman, repository: CorrSleuth,
 #   workflow: publish.yml, environment: pypi
 # Then create a GitHub environment named "pypi" in the repo settings and cut a
-# GitHub release (tag v0.1.0) to trigger this workflow.
+# GitHub release whose tag matches the version in corrsleuth/__init__.py
+# (e.g. tag v0.2.0) to trigger this workflow.
 name: Publish to PyPI
 
 on:

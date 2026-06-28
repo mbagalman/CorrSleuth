@@ -20,10 +20,12 @@ from .explanations import generate_recommendations
 #      with margin to spare, rather than by formal optimization.
 #
 # The cascade is deliberately conservative: a borderline pair falls through to
-# ``mixed_or_ambiguous`` rather than overclaiming a pattern. These are public,
-# module-level constants so advanced users can read or override them; see
-# docs/thresholds-and-rationale.md for the full rationale and the trade-offs of
-# moving any of them.
+# ``mixed_or_ambiguous`` rather than overclaiming a pattern. These are
+# module-level constants that advanced users can read or override on this module
+# (e.g. ``import corrsleuth.heuristics.classifier as clf; clf.WEAK_MAGNITUDE_THRESHOLD = ...``);
+# they are intentionally not re-exported from the package root. See
+# docs/thresholds-and-rationale.md for the full rationale, the documented
+# override recipe, and the trade-offs of moving any of them.
 # ---------------------------------------------------------------------------
 
 #: Magnitude (|pearson| or |spearman|) above which an association counts as
@@ -174,6 +176,11 @@ def apply_heuristics(
     ):
         label = "nonmonotonic_dependence"
     # 5. monotonic_nonlinear
+    # Gated on Spearman alone (no Kendall fallback, unlike the leverage rule):
+    # Spearman is the primary monotone measure here, and tau-b is numerically
+    # smaller for the same signal, so adding an OR on tau would only loosen the
+    # rule. A borderline-Spearman case deliberately falls through to
+    # mixed_or_ambiguous rather than overclaiming nonlinearity.
     elif s > STRONG_MAGNITUDE_THRESHOLD and (s - p > RANK_LINEAR_GAP_THRESHOLD):
         label = "monotonic_nonlinear"
     # 6. near_linear

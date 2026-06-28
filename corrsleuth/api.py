@@ -25,7 +25,15 @@ from corrsleuth.validation.input import validate_pair
 
 def _metric_value(metrics_map, metric_name: str) -> float | None:
     metric = metrics_map.get(metric_name)
-    return metric.value if metric and metric.value is not None else None
+    if metric is None or metric.value is None:
+        return None
+    value = metric.value
+    # Treat NaN as "no value", mirroring the classifier's _finite_metric_value so
+    # the disagreement score and diagnostics can never diverge from the label
+    # cascade by letting a NaN slip through abs()/max() comparisons.
+    if value != value:  # NaN is the only value not equal to itself
+        return None
+    return value
 
 
 def _build_diagnostics(

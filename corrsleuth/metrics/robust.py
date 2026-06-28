@@ -21,7 +21,7 @@ from corrsleuth.validation.input import CleanPair
 #: neutralize a handful of extreme leverage points without materially reshaping
 #: a clean distribution, so a large baseline-vs-robust gap points to a few
 #: influential rows rather than to broad trimming. See the 1%-trim limitation
-#: note in the README for when this misses mid-range leverage.
+#: note in docs/interpretation-guide.md for when this misses mid-range leverage.
 _TAIL_FRACTION = 0.01
 #: Minimum rows before robust deep-mode metrics are computed. Below this a 1%
 #: trim removes too few rows to be meaningful and the estimates are noisy; 50
@@ -147,8 +147,14 @@ def compute_biweight_midcorrelation(pair: CleanPair) -> MetricResult:
     y = pair.y.to_numpy(dtype=float)
     x_median = np.median(x)
     y_median = np.median(y)
-    x_mad = stats.median_abs_deviation(x, scale="normal")
-    y_mad = stats.median_abs_deviation(y, scale="normal")
+    # Raw MAD (scale=1.0), not the normal-consistent MAD: the canonical biweight
+    # midcorrelation (Wilcox; Langfelder & Horvath 2012) defines the Tukey
+    # weights as u = (x - median) / (9 * MAD) with the *unscaled* MAD, so the
+    # rejection cutoff is 9 raw MADs. Using scale="normal" would multiply MAD by
+    # ~1.4826 and push the cutoff to ~13 MADs, downweighting outliers far less
+    # aggressively than the estimator this metric is named for.
+    x_mad = stats.median_abs_deviation(x, scale=1.0)
+    y_mad = stats.median_abs_deviation(y, scale=1.0)
     if x_mad == 0 or y_mad == 0:
         return MetricResult.no_value(name)
 
@@ -185,11 +191,11 @@ def compute_median_clipped_pearson(pair: CleanPair) -> MetricResult:
 
 
 def _bend(values: np.ndarray, beta: float = 0.20) -> np.ndarray:
-    # beta is the bending constant of the biweight midcorrelation: observations
-    # beyond the (1 - beta) quantile of absolute deviations from the median get
-    # zero weight. 0.20 is the standard default from Wilcox's robust-statistics
-    # work (and matches scipy/astropy biweight implementations), trading a small
-    # amount of efficiency at the Gaussian for resistance to ~20% contamination.
+    # beta is the bending constant of the percentage-bend correlation (Wilcox),
+    # NOT the biweight midcorrelation above: absolute deviations from the median
+    # beyond the (1 - beta) quantile are clipped to that quantile. 0.20 is
+    # Wilcox's standard default, trading a small amount of efficiency at the
+    # Gaussian for resistance to ~20% contamination.
     median = np.median(values)
     centered = values - median
     omega = np.quantile(np.abs(centered), 1 - beta)

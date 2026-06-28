@@ -1,5 +1,5 @@
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
@@ -87,7 +87,7 @@ class CorrSleuthResult:
         disagreement_score: float,
         diagnostics: MetricDiagnostics | None = None,
         bootstrap_intervals: pd.DataFrame | None = None,
-        bootstrap_stability: Optional["BootstrapStability"] = None,
+        bootstrap_stability: "BootstrapStability | None" = None,
         _clean_x: pd.Series | None = None,
         _clean_y: pd.Series | None = None,
         _include_caveat: bool = True,
