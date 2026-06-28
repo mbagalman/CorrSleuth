@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Unified the trimmed-Pearson logic: the outlier/leverage-sensitivity check in
+  `api.py` now delegates to `metrics/robust.py` via a new
+  `assess_outlier_sensitivity()` (which reuses `compute_trimmed_pearson`),
+  removing a duplicate 1%-trim implementation, the previously dead-in-pipeline
+  `compute_trimmed_pearson`, and three redundant `api.py` constants. The
+  deep-mode `pearson_trimmed_1pct` metric and the leverage flag are now computed
+  from the same trimmed value. Behavior is unchanged.
 - Extracted the heuristic cascade's label-driving cut points into public,
   documented module-level constants in `corrsleuth/heuristics/classifier.py`
   (`STRONG_MAGNITUDE_THRESHOLD`, `WEAK_MAGNITUDE_THRESHOLD`,

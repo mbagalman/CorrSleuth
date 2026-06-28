@@ -4,6 +4,8 @@ from .nonlinear import compute_chatterjee_xi, compute_chatterjee_xi_reverse
 from .optional import compute_distance_correlation, compute_mutual_information
 from .robust import (
     ROBUST_METRIC_MIN_N,
+    OutlierSensitivity,
+    assess_outlier_sensitivity,
     compute_biweight_midcorrelation,
     compute_median_clipped_pearson,
     compute_trimmed_pearson,
@@ -17,6 +19,8 @@ __all__ = [
     "compute_distance_correlation",
     "compute_mutual_information",
     "compute_trimmed_pearson",
+    "assess_outlier_sensitivity",
+    "OutlierSensitivity",
     "compute_winsorized_pearson",
     "compute_biweight_midcorrelation",
     "compute_median_clipped_pearson",
