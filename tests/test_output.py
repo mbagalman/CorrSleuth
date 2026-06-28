@@ -1,9 +1,10 @@
-import pytest
-import numpy as np
-from corrsleuth.datasets import make_relationship
-from corrsleuth.api import profile_pair
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+import pytest
+
+from corrsleuth.api import profile_pair
+from corrsleuth.datasets import make_relationship
 from corrsleuth.exceptions import InputError
 from corrsleuth.result import CorrSleuthResult
 from corrsleuth.utils.markdown import escape_markdown_cell, markdown_table
@@ -14,7 +15,10 @@ def _result_for_explanation(pattern, metric_values):
         x_name="x",
         y_name="y",
         metrics=pd.DataFrame(
-            [{"metric": metric, "value": value} for metric, value in metric_values.items()]
+            [
+                {"metric": metric, "value": value}
+                for metric, value in metric_values.items()
+            ]
         ),
         pattern=pattern,
         warnings=[],
@@ -22,13 +26,14 @@ def _result_for_explanation(pattern, metric_values):
         disagreement_score=0.0,
     )
 
+
 def test_explain_caveat():
     df = make_relationship("linear_positive", n=100)
     res = profile_pair(df, "x", "y")
-    
+
     exp_with = res.explain(include_caveat=True)
     assert "causally without proper design" in exp_with
-    
+
     exp_without = res.explain(include_caveat=False)
     assert "causally without proper design" not in exp_without
 
@@ -53,7 +58,9 @@ def test_explain_monotonic_nonlinear_references_rank_linear_gap():
 
     explanation = res.explain(include_caveat=False)
 
-    assert "Spearman (0.780) is meaningfully stronger than Pearson (0.310)" in explanation
+    assert (
+        "Spearman (0.780) is meaningfully stronger than Pearson (0.310)" in explanation
+    )
     assert "straight line" in explanation
 
 
@@ -97,10 +104,11 @@ def test_explain_weak_or_no_relationship_references_lite_metric_limits():
     assert "Pearson (0.020) and Spearman (-0.040) are weak" in explanation
     assert "without standard-mode nonlinear metrics" in explanation
 
+
 def test_summary():
     df = make_relationship("linear_positive", n=100)
     res = profile_pair(df, "x", "y")
-    
+
     summary_text = res.summary()
     assert "Relationship Profile: x vs y" in summary_text
     assert "Primary pattern:" in summary_text
@@ -121,7 +129,9 @@ def test_signed_pearson_spearman_gap_surfaced_in_text_output():
 
     x = np.arange(50, dtype=float)
     y = -np.arange(50, dtype=float)
-    x[-1] = 10000  # one huge outlier flips Pearson positive while Spearman stays negative
+    x[-1] = (
+        10000  # one huge outlier flips Pearson positive while Spearman stays negative
+    )
     y[-1] = 10000
     res = profile_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
 
@@ -197,11 +207,12 @@ def test_markdown_helpers_escape_cells_and_handle_arrays():
     rendered = markdown_table(["Value"], [[np.array([1, 2])]])
 
     assert "\\[1 2\\]" in rendered
-    
+
+
 def test_plot_returns_figure():
     df = make_relationship("linear_positive", n=100)
     res = profile_pair(df, "x", "y")
-    
+
     fig = res.plot(show=False)
     assert isinstance(fig, plt.Figure)
 
@@ -225,20 +236,21 @@ def test_plot_text_panel_includes_pattern_metrics_and_diagnostics():
     assert "Rank-linear gap:" in rendered_text
     assert "Warnings" in rendered_text
 
+
 def test_serialization():
     df = make_relationship("linear_positive", n=100)
     res = profile_pair(df, "x", "y")
-    
+
     d = res.to_dict()
     assert d["x"] == "x"
     assert d["y"] == "y"
     assert "pattern" in d
     assert isinstance(d["metrics"], list)
-    
+
     frame = res.to_frame()
     assert "pattern" in frame.columns
     assert "value" in frame.columns
-    assert len(frame) >= 3 # at least core metrics
+    assert len(frame) >= 3  # at least core metrics
     assert res.bootstrap_intervals is None
     assert d["bootstrap_intervals"] is None
 
@@ -262,7 +274,7 @@ def test_disagreement_score_zero_when_correlations_unavailable():
     res = profile_pair(df, "x", "y")
 
     # Both correlations are unavailable, so no metric is in disagreement.
-    metric_values = dict(zip(res.metrics["metric"], res.metrics["value"]))
+    metric_values = dict(zip(res.metrics["metric"], res.metrics["value"], strict=True))
     assert metric_values["pearson"] is None
     assert metric_values["spearman"] is None
     assert res.disagreement_score == pytest.approx(0.0)
@@ -303,7 +315,9 @@ def test_bootstrap_intervals_are_deterministic_and_serialized():
     ]
     pd.testing.assert_frame_equal(res1.bootstrap_intervals, res2.bootstrap_intervals)
     assert res1.bootstrap_stability.to_dict() == res2.bootstrap_stability.to_dict()
-    assert (res1.bootstrap_intervals["ci_low"] <= res1.bootstrap_intervals["ci_high"]).all()
+    assert (
+        res1.bootstrap_intervals["ci_low"] <= res1.bootstrap_intervals["ci_high"]
+    ).all()
 
     summary = res1.summary(include_caveat=False)
     assert "Bootstrap intervals:" in summary
@@ -425,9 +439,7 @@ def test_bootstrap_cap_warning_reaches_result_and_records_sample_size():
     assert any("Bootstrap samples are capped at 40 rows" in w for w in res.warnings)
     # The cap warning must disclose the m-out-of-n widening, not read as a pure
     # performance cap (CR-3).
-    assert any(
-        "m-out-of-n" in w and "conservative" in w for w in res.warnings
-    )
+    assert any("m-out-of-n" in w and "conservative" in w for w in res.warnings)
 
 
 def test_bootstrap_incomplete_warning_attributes_degenerate_resamples():
@@ -527,14 +539,18 @@ def test_compute_bootstrap_intervals_wrapper_returns_only_intervals():
 
 
 def test_high_tie_rate_warning_reaches_result():
-    df = pd.DataFrame({
-        "category": [0, 1, 2] * 33 + [0],
-        "score": np.linspace(0, 1, 100),
-    })
+    df = pd.DataFrame(
+        {
+            "category": [0, 1, 2] * 33 + [0],
+            "score": np.linspace(0, 1, 100),
+        }
+    )
     res = profile_pair(df, "category", "score")
 
     matching = [w for w in res.warnings if "category" in w and "tie rate" in w]
-    assert matching, f"expected tie-rate warning for 'category' in result, got {res.warnings}"
+    assert matching, (
+        f"expected tie-rate warning for 'category' in result, got {res.warnings}"
+    )
 
 
 def test_constant_input_safe_rendering():
@@ -546,17 +562,19 @@ def test_constant_input_safe_rendering():
     fig = res.plot()
     assert isinstance(fig, plt.Figure)
 
+
 def test_plotting_uses_clean_data():
     df = make_relationship("linear_positive", n=100)
     df.loc[0, "x"] = np.nan
     res = profile_pair(df, "x", "y")
-    
+
     # Mutate df after profiling
     df["x"] = 0
-    
+
     fig = res.plot()
     # It shouldn't crash or plot zeroes if it stored clean data properly
     assert isinstance(fig, plt.Figure)
+
 
 @pytest.fixture
 def fake_statsmodels(monkeypatch):
@@ -601,7 +619,7 @@ def test_plot_lowess_subsample_is_deterministic(fake_statsmodels):
     lines1 = fig1.axes[0].get_lines()
     lines2 = fig2.axes[0].get_lines()
     assert lines1 and lines2, "expected a LOWESS line on the scatter axis"
-    for line1, line2 in zip(lines1, lines2):
+    for line1, line2 in zip(lines1, lines2, strict=True):
         x1, y1 = line1.get_data()
         x2, y2 = line2.get_data()
         assert np.array_equal(x1, x2)

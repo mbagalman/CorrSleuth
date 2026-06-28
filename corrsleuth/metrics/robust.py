@@ -4,6 +4,7 @@ These metrics are lightweight sensitivity checks for Pearson-style association.
 They are intended to help identify leverage-sensitive relationships, not to
 replace visual inspection or model validation.
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -13,16 +14,27 @@ from corrsleuth.exceptions import MetricComputationError
 from corrsleuth.result import MetricResult
 from corrsleuth.validation.input import CleanPair
 
-
+#: Fraction trimmed/winsorized from each tail of each variable (1% per side, so
+#: 2% per variable). One percent is a deliberately gentle trim: it is enough to
+#: neutralize a handful of extreme leverage points without materially reshaping
+#: a clean distribution, so a large baseline-vs-robust gap points to a few
+#: influential rows rather than to broad trimming. See the 1%-trim limitation
+#: note in the README for when this misses mid-range leverage.
 _TAIL_FRACTION = 0.01
+#: Minimum rows before robust deep-mode metrics are computed. Below this a 1%
+#: trim removes too few rows to be meaningful and the estimates are noisy; 50
+#: keeps at least one row in each trimmed tail.
 _MIN_N_FOR_ROBUST = 50
+#: Minimum rows that must survive trimming for the robust estimate to be
+#: reported. Mirrors :data:`LOW_N_THRESHOLD` so a trimmed correlation is never
+#: computed on a sample CorrSleuth would otherwise flag as low-power.
 _MIN_N_AFTER_TRIM = 30
 ROBUST_METRIC_MIN_N = _MIN_N_FOR_ROBUST
 
 
 def _pearson_from_arrays(name: str, x: np.ndarray, y: np.ndarray) -> MetricResult:
     if len(x) < 2 or np.all(x == x[0]) or np.all(y == y[0]):
-        return MetricResult(name=name, value=None, available=True)
+        return MetricResult.no_value(name)
     try:
         r, _ = stats.pearsonr(x, y)
     except (ValueError, RuntimeError, FloatingPointError) as e:
@@ -34,9 +46,9 @@ def _pearson_from_arrays(name: str, x: np.ndarray, y: np.ndarray) -> MetricResul
 
 def _insufficient_pair(pair: CleanPair, name: str) -> MetricResult | None:
     if pair.x_is_constant or pair.y_is_constant:
-        return MetricResult(name=name, value=None, available=True)
+        return MetricResult.no_value(name)
     if pair.n_used < _MIN_N_FOR_ROBUST:
-        return MetricResult(name=name, value=None, available=True)
+        return MetricResult.no_value(name)
     return None
 
 
@@ -60,7 +72,7 @@ def compute_trimmed_pearson(pair: CleanPair) -> MetricResult:
             f"Fewer than {_MIN_N_AFTER_TRIM} rows remain after trimming extremes; "
             f"{name} is not computed."
         )
-        return MetricResult(name=name, value=None, available=True)
+        return MetricResult.no_value(name)
     return _pearson_from_arrays(name, x, y)
 
 
@@ -94,13 +106,13 @@ def compute_biweight_midcorrelation(pair: CleanPair) -> MetricResult:
     x_mad = stats.median_abs_deviation(x, scale="normal")
     y_mad = stats.median_abs_deviation(y, scale="normal")
     if x_mad == 0 or y_mad == 0:
-        return MetricResult(name=name, value=None, available=True)
+        return MetricResult.no_value(name)
 
     x_u = (x - x_median) / (9.0 * x_mad)
     y_u = (y - y_median) / (9.0 * y_mad)
     mask = (np.abs(x_u) < 1) & (np.abs(y_u) < 1)
     if mask.sum() < 2:
-        return MetricResult(name=name, value=None, available=True)
+        return MetricResult.no_value(name)
 
     x_centered = x[mask] - x_median
     y_centered = y[mask] - y_median
@@ -108,7 +120,7 @@ def compute_biweight_midcorrelation(pair: CleanPair) -> MetricResult:
     y_weighted = y_centered * (1 - y_u[mask] ** 2) ** 2
     denominator = np.sqrt(np.sum(x_weighted**2) * np.sum(y_weighted**2))
     if denominator == 0:
-        return MetricResult(name=name, value=None, available=True)
+        return MetricResult.no_value(name)
     return MetricResult(
         name=name,
         value=float(np.sum(x_weighted * y_weighted) / denominator),
@@ -129,6 +141,11 @@ def compute_median_clipped_pearson(pair: CleanPair) -> MetricResult:
 
 
 def _bend(values: np.ndarray, beta: float = 0.20) -> np.ndarray:
+    # beta is the bending constant of the biweight midcorrelation: observations
+    # beyond the (1 - beta) quantile of absolute deviations from the median get
+    # zero weight. 0.20 is the standard default from Wilcox's robust-statistics
+    # work (and matches scipy/astropy biweight implementations), trading a small
+    # amount of efficiency at the Gaussian for resistance to ~20% contamination.
     median = np.median(values)
     centered = values - median
     omega = np.quantile(np.abs(centered), 1 - beta)

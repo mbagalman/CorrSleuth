@@ -1,7 +1,7 @@
 import matplotlib
+
 matplotlib.use("Agg")  # noqa: E402  (must be set before pyplot import)
 import matplotlib.pyplot as plt  # noqa: E402
-
 import numpy as np
 import pandas as pd
 import pytest
@@ -15,12 +15,14 @@ from corrsleuth.scan import CorrSleuthTargetReport, TargetScanEntry
 def _build_clean_df(n: int = 60, random_state: int = 42) -> pd.DataFrame:
     rng = np.random.default_rng(random_state)
     target = rng.normal(size=n)
-    return pd.DataFrame({
-        "target": target,
-        "linear": target + rng.normal(scale=0.2, size=n),
-        "noise": rng.normal(size=n),
-        "label": ["a", "b"] * (n // 2),
-    })
+    return pd.DataFrame(
+        {
+            "target": target,
+            "linear": target + rng.normal(scale=0.2, size=n),
+            "noise": rng.normal(size=n),
+            "label": ["a", "b"] * (n // 2),
+        }
+    )
 
 
 def test_scan_target_profiles_numeric_columns_excluding_target():
@@ -186,10 +188,12 @@ def test_scan_target_duplicate_candidate_in_explicit_columns_reports_duplicate()
 
 def test_scan_target_sample_size_is_deterministic():
     rng = np.random.default_rng(0)
-    df = pd.DataFrame({
-        "target": rng.normal(size=400),
-        "x": rng.normal(size=400),
-    })
+    df = pd.DataFrame(
+        {
+            "target": rng.normal(size=400),
+            "x": rng.normal(size=400),
+        }
+    )
     r1 = scan_target(df, "target", sample_size=100, random_state=7)
     r2 = scan_target(df, "target", sample_size=100, random_state=7)
 
@@ -251,15 +255,19 @@ def test_target_report_to_markdown_includes_grouped_sections():
     rng = np.random.default_rng(0)
     n = 200
     target = np.exp(rng.uniform(0.1, 10, size=n))
-    df = pd.DataFrame({
-        "target": target,
-        "log_shape": np.log(target) + rng.normal(0, 0.1, size=n),
-        "linear_match": target + rng.normal(0, 0.1, size=n),
-        "noise": rng.normal(0, 1, size=n),
-        "label": ["a", "b"] * (n // 2),
-    })
+    df = pd.DataFrame(
+        {
+            "target": target,
+            "log_shape": np.log(target) + rng.normal(0, 0.1, size=n),
+            "linear_match": target + rng.normal(0, 0.1, size=n),
+            "noise": rng.normal(0, 1, size=n),
+            "label": ["a", "b"] * (n // 2),
+        }
+    )
 
-    report = scan_target(df, "target", columns=["log_shape", "linear_match", "noise", "label"])
+    report = scan_target(
+        df, "target", columns=["log_shape", "linear_match", "noise", "label"]
+    )
     markdown = report.to_markdown(top_n=2)
 
     assert markdown.startswith("# CorrSleuth Target Report: `target`")
@@ -270,7 +278,10 @@ def test_target_report_to_markdown_includes_grouped_sections():
     assert "## Weak or no pairwise relationships" in markdown
     assert "## Variables Pearson may underrate" in markdown
     assert "## Skipped or failed" in markdown
-    assert "| Variable | Pattern | Pearson | Spearman | Disagreement | Warnings |" in markdown
+    assert (
+        "| Variable | Pattern | Pearson | Spearman | Disagreement | Warnings |"
+        in markdown
+    )
     assert "log\\_shape" in markdown
     assert "label" in markdown
     assert "## Caveat" in markdown
@@ -285,34 +296,38 @@ def test_target_report_to_markdown_is_deterministic_with_snapshot():
     second = report.to_markdown(include_caveat=False)
 
     assert first == second
-    assert first == "\n".join([
-        "# CorrSleuth Target Report: `target`",
-        "",
-        "## Overview",
-        "| Profiled | Errored | Skipped |",
-        "| --- | --- | --- |",
-        "| 2 | 0 | 0 |",
-        "",
-        "## Strongest near-linear relationships",
-        "| Variable | Pattern | Pearson | Spearman | Disagreement | Warnings |",
-        "| --- | --- | --- | --- | --- | --- |",
-        "| linear | near\\_linear | 0.981 | 0.976 | 0.005 |  |",
-        "",
-        "## Weak or no pairwise relationships",
-        "| Variable | Pattern | Pearson | Spearman | Disagreement | Warnings |",
-        "| --- | --- | --- | --- | --- | --- |",
-        "| noise | weak\\_or\\_no\\_relationship | 0.008 | 0.039 | 0.031 |  |",
-    ])
+    assert first == "\n".join(
+        [
+            "# CorrSleuth Target Report: `target`",
+            "",
+            "## Overview",
+            "| Profiled | Errored | Skipped |",
+            "| --- | --- | --- |",
+            "| 2 | 0 | 0 |",
+            "",
+            "## Strongest near-linear relationships",
+            "| Variable | Pattern | Pearson | Spearman | Disagreement | Warnings |",
+            "| --- | --- | --- | --- | --- | --- |",
+            "| linear | near\\_linear | 0.981 | 0.976 | 0.005 |  |",
+            "",
+            "## Weak or no pairwise relationships",
+            "| Variable | Pattern | Pearson | Spearman | Disagreement | Warnings |",
+            "| --- | --- | --- | --- | --- | --- |",
+            "| noise | weak\\_or\\_no\\_relationship | 0.008 | 0.039 | 0.031 |  |",
+        ]
+    )
 
 
 def test_target_report_to_markdown_lists_reliability_warning_section():
     rng = np.random.default_rng(0)
     n = 200
-    df = pd.DataFrame({
-        "target": rng.normal(size=n),
-        "discrete": (rng.integers(0, 12, size=n)).astype(float),
-        "clean": rng.normal(size=n),
-    })
+    df = pd.DataFrame(
+        {
+            "target": rng.normal(size=n),
+            "discrete": (rng.integers(0, 12, size=n)).astype(float),
+            "clean": rng.normal(size=n),
+        }
+    )
     report = scan_target(df, "target")
 
     markdown = report.to_markdown(include_caveat=False)
@@ -329,10 +344,12 @@ def test_target_report_to_markdown_omits_empty_cross_cutting_sections():
     rng = np.random.default_rng(0)
     n = 200
     target = rng.uniform(-3, 3, size=n)
-    df = pd.DataFrame({
-        "target": target,
-        "linear": target + rng.normal(0, 0.1, size=n),
-    })
+    df = pd.DataFrame(
+        {
+            "target": target,
+            "linear": target + rng.normal(0, 0.1, size=n),
+        }
+    )
     report = scan_target(df, "target")
 
     markdown = report.to_markdown(include_caveat=False)
@@ -345,10 +362,12 @@ def test_target_report_to_markdown_omits_empty_cross_cutting_sections():
 def test_target_report_to_markdown_includes_other_or_inconclusive():
     rng = np.random.default_rng(0)
     n = 25
-    df = pd.DataFrame({
-        "target": rng.normal(size=n),
-        "candidate": rng.normal(size=n),
-    })
+    df = pd.DataFrame(
+        {
+            "target": rng.normal(size=n),
+            "candidate": rng.normal(size=n),
+        }
+    )
     report = scan_target(df, "target")
 
     markdown = report.to_markdown(include_caveat=False)
@@ -379,12 +398,15 @@ def test_scan_summary_includes_pattern_sections_when_present():
     rng = np.random.default_rng(0)
     n = 200
     x = np.exp(rng.uniform(0.1, 10, size=n))
-    df = pd.DataFrame({
-        "target": x,                                                 # heavily skewed target
-        "log_shape": np.log(x) + rng.normal(0, 0.1, size=n),        # monotonic_nonlinear (rank >> linear)
-        "linear_match": x + rng.normal(0, 0.1, size=n),              # near_linear with x itself
-        "noise": rng.normal(0, 1, size=n),                           # weak_or_no_relationship
-    })
+    df = pd.DataFrame(
+        {
+            "target": x,  # heavily skewed target
+            "log_shape": np.log(x)
+            + rng.normal(0, 0.1, size=n),  # monotonic_nonlinear (rank >> linear)
+            "linear_match": x + rng.normal(0, 0.1, size=n),  # near_linear with x itself
+            "noise": rng.normal(0, 1, size=n),  # weak_or_no_relationship
+        }
+    )
     report = scan_target(df, "target")
     summary = report.summary(include_caveat=False)
 
@@ -421,7 +443,9 @@ def test_scan_summary_top_n_caps_section_entries():
 
     near_block_start = summary.index("Strongest near-linear relationships:")
     next_blank = summary.find("\n\n", near_block_start)
-    near_block = summary[near_block_start:next_blank if next_blank != -1 else len(summary)]
+    near_block = summary[
+        near_block_start : next_blank if next_blank != -1 else len(summary)
+    ]
     listed = [line for line in near_block.splitlines() if line.startswith("  linear_")]
     assert len(listed) == 2
 
@@ -430,10 +454,12 @@ def test_scan_summary_includes_pearson_underrate_section():
     rng = np.random.default_rng(0)
     n = 200
     x = np.exp(rng.uniform(0.1, 10, size=n))
-    df = pd.DataFrame({
-        "target": x,
-        "log_shape": np.log(x) + rng.normal(0, 0.1, size=n),
-    })
+    df = pd.DataFrame(
+        {
+            "target": x,
+            "log_shape": np.log(x) + rng.normal(0, 0.1, size=n),
+        }
+    )
     report = scan_target(df, "target")
     summary = report.summary(include_caveat=False)
 
@@ -449,11 +475,13 @@ def test_scan_summary_lists_reliability_warning_columns():
     n = 200
     # 12 levels keeps unique_ratio above 0.05 (so low_unique_ratio does not
     # fire) while still producing a high tie rate per the 30% threshold.
-    df = pd.DataFrame({
-        "target": rng.normal(size=n),
-        "discrete": (rng.integers(0, 12, size=n)).astype(float),
-        "clean": rng.normal(size=n),
-    })
+    df = pd.DataFrame(
+        {
+            "target": rng.normal(size=n),
+            "discrete": (rng.integers(0, 12, size=n)).astype(float),
+            "clean": rng.normal(size=n),
+        }
+    )
     report = scan_target(df, "target")
     summary = report.summary(include_caveat=False)
 
@@ -463,7 +491,9 @@ def test_scan_summary_lists_reliability_warning_columns():
     assert "discrete" in section
     assert "tie rate" in section
     # The clean column should not appear in the reliability section
-    clean_section_lines = [line for line in section.splitlines() if line.startswith("  clean")]
+    clean_section_lines = [
+        line for line in section.splitlines() if line.startswith("  clean")
+    ]
     assert not clean_section_lines
 
 
@@ -471,10 +501,12 @@ def test_scan_summary_omits_cross_cutting_sections_when_empty():
     rng = np.random.default_rng(0)
     n = 200
     target = rng.uniform(-3, 3, size=n)
-    df = pd.DataFrame({
-        "target": target,
-        "linear": target + rng.normal(0, 0.1, size=n),
-    })
+    df = pd.DataFrame(
+        {
+            "target": target,
+            "linear": target + rng.normal(0, 0.1, size=n),
+        }
+    )
     report = scan_target(df, "target")
     summary = report.summary(include_caveat=False)
 
@@ -531,7 +563,9 @@ def test_scan_summary_pearson_underrate_excludes_leverage_pattern():
         underrate_idx = summary.index("Variables Pearson may underrate:")
         # Find the next section break or end-of-string
         next_break = summary.find("\n\n", underrate_idx)
-        section = summary[underrate_idx : next_break if next_break != -1 else len(summary)]
+        section = summary[
+            underrate_idx : next_break if next_break != -1 else len(summary)
+        ]
         assert "leverage" not in section
 
 
@@ -539,11 +573,13 @@ def test_pearson_underrated_ranks_nonlinear_above_noise():
     rng = np.random.default_rng(0)
     n = 300
     target = np.exp(rng.uniform(0.1, 10, size=n))
-    df = pd.DataFrame({
-        "target": target,
-        "log_shape": np.log(target) + rng.normal(0, 0.1, size=n),
-        "noise": rng.normal(0, 1, size=n),
-    })
+    df = pd.DataFrame(
+        {
+            "target": target,
+            "log_shape": np.log(target) + rng.normal(0, 0.1, size=n),
+            "noise": rng.normal(0, 1, size=n),
+        }
+    )
     report = scan_target(df, "target")
 
     ranked = report.pearson_underrated()
@@ -561,10 +597,12 @@ def test_pearson_underrated_includes_metric_and_gap_columns():
     rng = np.random.default_rng(0)
     n = 300
     target = np.exp(rng.uniform(0.1, 10, size=n))
-    df = pd.DataFrame({
-        "target": target,
-        "log_shape": np.log(target) + rng.normal(0, 0.1, size=n),
-    })
+    df = pd.DataFrame(
+        {
+            "target": target,
+            "log_shape": np.log(target) + rng.normal(0, 0.1, size=n),
+        }
+    )
     ranked = scan_target(df, "target").pearson_underrated()
 
     for col in (
@@ -590,10 +628,12 @@ def test_pearson_underrated_threshold_controls_inclusion():
     rng = np.random.default_rng(0)
     n = 300
     target = np.exp(rng.uniform(0.1, 10, size=n))
-    df = pd.DataFrame({
-        "target": target,
-        "log_shape": np.log(target) + rng.normal(0, 0.1, size=n),
-    })
+    df = pd.DataFrame(
+        {
+            "target": target,
+            "log_shape": np.log(target) + rng.normal(0, 0.1, size=n),
+        }
+    )
     report = scan_target(df, "target")
 
     default_ranked = report.pearson_underrated()
@@ -657,11 +697,13 @@ def test_pearson_underrated_empty_report_keeps_documented_schema():
 
 
 def _underrated_entry(column: str, pearson: float, spearman: float) -> TargetScanEntry:
-    metrics = pd.DataFrame({
-        "metric": ["pearson", "spearman", "kendall_tau_b"],
-        "value": [pearson, spearman, 0.0],
-        "available": [True, True, True],
-    })
+    metrics = pd.DataFrame(
+        {
+            "metric": ["pearson", "spearman", "kendall_tau_b"],
+            "value": [pearson, spearman, 0.0],
+            "available": [True, True, True],
+        }
+    )
     result = CorrSleuthResult(
         x_name="target",
         y_name=column,
@@ -702,12 +744,14 @@ def _ranked_pearson_df(n: int = 100, random_state: int = 0) -> pd.DataFrame:
     """DataFrame with three columns of intentionally different abs(pearson)."""
     rng = np.random.default_rng(random_state)
     target = rng.uniform(-3, 3, size=n)
-    return pd.DataFrame({
-        "target": target,
-        "strong_lin": target + rng.normal(0, 0.05, size=n),  # near-perfect linear
-        "medium_lin": target + rng.normal(0, 0.50, size=n),  # moderate
-        "weak_lin": target + rng.normal(0, 2.0, size=n),     # weak
-    })
+    return pd.DataFrame(
+        {
+            "target": target,
+            "strong_lin": target + rng.normal(0, 0.05, size=n),  # near-perfect linear
+            "medium_lin": target + rng.normal(0, 0.50, size=n),  # moderate
+            "weak_lin": target + rng.normal(0, 2.0, size=n),  # weak
+        }
+    )
 
 
 def test_plot_top_returns_figure_with_scatter_panels():
@@ -741,11 +785,7 @@ def test_plot_top_filters_by_patterns():
         # And no panel for an excluded pattern
         weak_fig = report.plot_top(patterns=["weak_or_no_relationship"], ncols=3)
         try:
-            visible_text = [
-                t.get_text()
-                for ax in weak_fig.axes
-                for t in ax.texts
-            ]
+            visible_text = [t.get_text() for ax in weak_fig.axes for t in ax.texts]
             assert any("No variables to plot" in t for t in visible_text)
         finally:
             plt.close(weak_fig)
@@ -786,9 +826,7 @@ def test_plot_top_returns_placeholder_figure_when_no_matches():
     fig = report.plot_top(patterns=["nonmonotonic_dependence"])
     try:
         assert isinstance(fig, plt.Figure)
-        all_text = [
-            t.get_text() for ax in fig.axes for t in ax.texts
-        ]
+        all_text = [t.get_text() for ax in fig.axes for t in ax.texts]
         assert any("No variables to plot" in t for t in all_text)
     finally:
         plt.close(fig)
@@ -812,11 +850,13 @@ def test_plot_top_sort_by_metric_ranks_panels_by_absolute_value():
 def test_plot_top_uses_candidate_on_x_and_target_on_y():
     rng = np.random.default_rng(0)
     n = 50
-    df = pd.DataFrame({
-        "y_target": rng.uniform(-3, 3, size=n),
-        "predictor_a": rng.normal(size=n),
-        "predictor_b": rng.normal(size=n),
-    })
+    df = pd.DataFrame(
+        {
+            "y_target": rng.uniform(-3, 3, size=n),
+            "predictor_a": rng.normal(size=n),
+            "predictor_b": rng.normal(size=n),
+        }
+    )
     df["predictor_a"] = df["y_target"] + rng.normal(0, 0.1, size=n)
 
     report = scan_target(df, "y_target")

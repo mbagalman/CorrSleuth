@@ -343,6 +343,7 @@ The object returned by `scan_target()`.
 ## Documentation
 
 - [Interpretation Guide](https://github.com/mbagalman/CorrSleuth/blob/main/docs/interpretation-guide.md) — meaning, typical metric pattern, common examples, recommended next steps, and caveats for every diagnostic label, plus topic notes on Pearson misleads, monotonicity, leverage, ties, and performance modes.
+- [Thresholds and Rationale](https://github.com/mbagalman/CorrSleuth/blob/main/docs/thresholds-and-rationale.md) — every cut point that drives a label or warning, with its value, location, justification, and how to override the label-driving ones.
 - [Phase 4 Nonlinear Metrics Design Note](https://github.com/mbagalman/CorrSleuth/blob/main/docs/phase4-nonlinear-metrics-design-note.md) — why Chatterjee's ξ was chosen over HSIC, MGC, MIC, and Hoeffding's D for `mode="deep"`.
 
 ## License

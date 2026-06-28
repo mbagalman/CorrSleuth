@@ -85,8 +85,11 @@ order is:
 8. `mixed_or_ambiguous` — fallback when none of the above applies.
 
 The exact thresholds live in
-[`corrsleuth/heuristics/classifier.py`](../corrsleuth/heuristics/classifier.py).
-They are intentionally conservative — a borderline case usually drops to
+[`corrsleuth/heuristics/classifier.py`](../corrsleuth/heuristics/classifier.py)
+as documented module-level constants, and every cut point in the package —
+what it gates, its value, and why — is catalogued in
+[thresholds-and-rationale.md](thresholds-and-rationale.md). They are
+intentionally conservative — a borderline case usually drops to
 `mixed_or_ambiguous` rather than overclaiming a pattern.
 
 ## Diagnostic Labels
@@ -522,6 +525,14 @@ Notes:
   correlation and mutual information (slower).
 - Distance correlation downsamples to 20 000 rows by default
   (`max_n_for_dcor=20000`). The downsample is seeded for reproducibility.
+- `scan_target()` profiles columns **sequentially** — one `profile_pair`
+  call at a time, with no parallelism. For typical EDA this is fine, but a
+  very wide DataFrame (hundreds to thousands of columns) combined with
+  `mode="deep"` or `bootstrap=…` can take a while. Bound the cost by
+  narrowing the candidate set (`columns=`, `max_pairs=`) or downsampling
+  rows (`sample_size=`). There is no built-in `joblib`/multiprocessing
+  path today; if you need one, parallelize across columns at the call site
+  (each `profile_pair` is independent) or open an issue.
 
 If you are not sure which mode to use: start with `lite`. Move to
 `standard` when an analyst suspects nonmonotonic structure that the lite
@@ -534,6 +545,9 @@ dependence is the question, and you don't want to install extras.
 - [Phase 4 design note](phase4-nonlinear-metrics-design-note.md) — why
   Chatterjee's ξ was chosen over HSIC, MGC, and MIC, and which other
   nonlinear measures were deferred.
+- [thresholds-and-rationale.md](thresholds-and-rationale.md) — every threshold
+  in the package: what it gates, its value, the rationale, and how to override
+  the label-driving ones.
 - [`corrsleuth/heuristics/classifier.py`](../corrsleuth/heuristics/classifier.py)
   — exact thresholds for each label in the cascade.
 - [`corrsleuth/heuristics/explanations.py`](../corrsleuth/heuristics/explanations.py)

@@ -53,7 +53,10 @@ progress = [
 ]
 dev = [
     "pytest",
+    "pytest-cov",
+    "hypothesis",
     "ruff",
+    "mypy",
 ]
 
 [project.urls]
@@ -78,6 +81,53 @@ target-version = "py310"
 
 [tool.ruff.lint]
 # Pin the rule set explicitly so a future ruff release cannot silently add
-# rules and break CI. These are ruff's current defaults: Pyflakes (F) plus the
-# pycodestyle import (E4), statement (E7), and runtime (E9) error subsets.
-select = ["E4", "E7", "E9", "F"]
+# rules and break CI. On top of ruff's defaults — Pyflakes (F) plus the
+# pycodestyle import (E4), statement (E7), and runtime (E9) error subsets — we
+# enable: isort (I) for import ordering, pep8-naming (N), pyupgrade (UP) for
+# modern py3.10+ syntax, flake8-simplify (SIM), and flake8-bugbear (B) for
+# likely-bug patterns.
+select = ["E4", "E7", "E9", "F", "I", "N", "UP", "SIM", "B"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["corrsleuth"]
+# Non-strict gate: we don't yet require full annotation coverage, but we do want
+# real bugs surfaced — Optional access, bad argument types, unreachable code.
+warn_redundant_casts = true
+warn_unused_ignores = true
+# warn_unreachable is intentionally off: pandas' stubs type ``df[col]`` as a
+# Series, so our defensive ``isinstance(df[col], DataFrame)`` duplicate-column
+# guards (which fire at runtime) look unreachable to mypy.
+
+# Third-party libraries that don't ship type information. Without these
+# overrides mypy reports import-untyped and infers `Any`-returning calls as the
+# wrong concrete type (e.g. scipy.stats.pearsonr).
+[[tool.mypy.overrides]]
+module = [
+    "scipy.*",
+    "dcor",
+    "dcor.*",
+    "sklearn.*",
+    "matplotlib.*",
+    "tqdm",
+    "tqdm.*",
+    "statsmodels.*",
+]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["corrsleuth"]
+branch = true
+
+[tool.coverage.report]
+# Coverage is reported in CI (term-missing) and gated below. The floor sits a
+# few points under the current ~95% so an incidental dip doesn't fail CI, while
+# a real regression (a whole untested module/branch) still does.
+fail_under = 90
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]

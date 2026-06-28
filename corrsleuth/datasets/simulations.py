@@ -1,14 +1,14 @@
 import numpy as np
 import pandas as pd
-from typing import Optional, Union
 
 from corrsleuth.exceptions import InputError
+
 
 def make_relationship(
     shape_type: str,
     n: int = 500,
     noise: float = 0.1,
-    random_state: Optional[Union[int, np.random.Generator]] = None
+    random_state: int | np.random.Generator | None = None,
 ) -> pd.DataFrame:
     """
     Generate a DataFrame with a specific relationship between 'x' and 'y'.
@@ -50,7 +50,7 @@ def make_relationship(
 
     x = rng.uniform(-3, 3, size=n)
     y = np.zeros(n)
-    
+
     if shape_type == "linear_positive":
         y = x + rng.normal(0, noise, size=n)
     elif shape_type == "linear_negative":

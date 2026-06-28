@@ -1,16 +1,14 @@
-from typing import Optional
-
 import numpy as np
 
+from corrsleuth.exceptions import MetricComputationError, OptionalDependencyError
 from corrsleuth.result import MetricResult
 from corrsleuth.validation.input import CleanPair
-from corrsleuth.exceptions import MetricComputationError, OptionalDependencyError
 
 
 def compute_distance_correlation(
     pair: CleanPair,
     mode: str = "lite",
-    max_n_for_dcor: Optional[int] = 20000,
+    max_n_for_dcor: int | None = 20000,
     random_state: int = 42,
 ) -> MetricResult:
     """Compute distance correlation, downsampling deterministically for large pairs.
@@ -27,14 +25,14 @@ def compute_distance_correlation(
         if mode == "standard":
             raise OptionalDependencyError(
                 "dcor is required for standard mode. Run `pip install corrsleuth[standard]`"
-            )
+            ) from None
         return MetricResult(name="distance_correlation", value=None, available=False)
 
     if pair.x_is_constant or pair.y_is_constant:
-        return MetricResult(name="distance_correlation", value=None, available=True)
+        return MetricResult.no_value("distance_correlation")
 
-    x = pair.x.values
-    y = pair.y.values
+    x = pair.x.to_numpy()
+    y = pair.y.to_numpy()
 
     if max_n_for_dcor is not None and pair.n_used > max_n_for_dcor:
         pair.warnings.append(
@@ -75,21 +73,21 @@ def compute_mutual_information(
         if mode == "standard":
             raise OptionalDependencyError(
                 "scikit-learn is required for standard mode. Run `pip install corrsleuth[standard]`"
-            )
+            ) from None
         return MetricResult(name="mutual_information", value=None, available=False)
 
     if pair.x_is_constant or pair.y_is_constant:
-        return MetricResult(name="mutual_information", value=None, available=True)
+        return MetricResult.no_value("mutual_information")
 
     if pair.n_used <= 3:
         pair.warnings.append(
             "n_used <= 3. Mutual information is not computed because the estimator "
             "requires more observations."
         )
-        return MetricResult(name="mutual_information", value=None, available=True)
+        return MetricResult.no_value("mutual_information")
 
-    x = pair.x.values.reshape(-1, 1)
-    y = pair.y.values
+    x = pair.x.to_numpy().reshape(-1, 1)
+    y = pair.y.to_numpy()
 
     try:
         mi = mutual_info_regression(x, y, random_state=random_state)[0]

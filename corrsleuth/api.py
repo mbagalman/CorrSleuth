@@ -1,27 +1,26 @@
-from typing import Optional, Sequence
+from collections.abc import Sequence
 
 import pandas as pd
 import scipy.stats as stats
 
-from corrsleuth.result import CorrSleuthResult, MetricDiagnostics, MetricResult
-from corrsleuth.validation.input import validate_pair
+from corrsleuth.exceptions import InputError
+from corrsleuth.heuristics import apply_heuristics, detect_metric_warnings
 from corrsleuth.metrics import (
-    compute_pearson,
-    compute_spearman,
-    compute_kendall,
-    compute_distance_correlation,
-    compute_mutual_information,
     ROBUST_METRIC_MIN_N,
-    compute_winsorized_pearson,
     compute_biweight_midcorrelation,
-    compute_median_clipped_pearson,
+    compute_bootstrap,
     compute_chatterjee_xi,
     compute_chatterjee_xi_reverse,
-    compute_bootstrap,
+    compute_distance_correlation,
+    compute_kendall,
+    compute_median_clipped_pearson,
+    compute_mutual_information,
+    compute_pearson,
+    compute_spearman,
+    compute_winsorized_pearson,
 )
-from corrsleuth.heuristics import apply_heuristics, detect_metric_warnings
-from corrsleuth.exceptions import InputError
-
+from corrsleuth.result import CorrSleuthResult, MetricDiagnostics, MetricResult
+from corrsleuth.validation.input import validate_pair
 
 #: Minimum rows required before the outlier-sensitivity check trims tails;
 #: trimming a tiny sample is unstable, so it is skipped below this.
@@ -38,14 +37,12 @@ _OUTLIER_TRIM_QUANTILE = 0.01
 _OUTLIER_SENSITIVE_DELTA = 0.20
 
 
-def _metric_value(metrics_map, metric_name: str) -> Optional[float]:
+def _metric_value(metrics_map, metric_name: str) -> float | None:
     metric = metrics_map.get(metric_name)
     return metric.value if metric and metric.value is not None else None
 
 
-def _compute_outlier_sensitivity(
-    pair, baseline_pearson: Optional[float]
-) -> dict:
+def _compute_outlier_sensitivity(pair, baseline_pearson: float | None) -> dict:
     if baseline_pearson is None:
         return {"status": "unavailable", "trimmed": None, "delta": None}
 
@@ -108,8 +105,12 @@ def _build_diagnostics(
         nonmonotonic_gap=nonmonotonic_gap,
         pearson_kendall_gap=pearson_kendall_gap,
         disagreement_score=disagreement_score,
-        pearson_trimmed=outlier_sensitivity.get("trimmed") if outlier_sensitivity else None,
-        pearson_trim_delta=outlier_sensitivity.get("delta") if outlier_sensitivity else None,
+        pearson_trimmed=outlier_sensitivity.get("trimmed")
+        if outlier_sensitivity
+        else None,
+        pearson_trim_delta=outlier_sensitivity.get("delta")
+        if outlier_sensitivity
+        else None,
     )
 
 
@@ -120,11 +121,11 @@ def profile_pair(
     mode: str = "lite",
     missing: str = "pairwise",
     include_caveat: bool = True,
-    max_n_for_dcor: Optional[int] = 20000,
+    max_n_for_dcor: int | None = 20000,
     random_state: int = 42,
-    bootstrap: Optional[int] = None,
+    bootstrap: int | None = None,
     bootstrap_metrics: str | Sequence[str] = "lite",
-    max_n_for_bootstrap: Optional[int] = 5000,
+    max_n_for_bootstrap: int | None = 5000,
 ) -> CorrSleuthResult:
     """Profile the pairwise relationship between two numeric variables.
 
@@ -221,6 +222,13 @@ def profile_pair(
         )
 
     # 3. Outlier sensitivity check (informs the leverage label)
+    #
+    # Steps 3-4 enrich `pair` in place — appending to `pair.flags` and
+    # `pair.warnings` as new evidence (trim sensitivity, robust-metric n,
+    # metric-agreement warnings) accumulates. This is intentional: `pair` is an
+    # internal, single-use CleanPair owned by this call and never shared, so a
+    # mutable builder reads more clearly than threading a growing immutable copy
+    # through each step. The flags/warnings lists are read once at step 4/5.
     baseline_pearson = _metric_value(metrics_map, "pearson")
     outlier_sensitivity = _compute_outlier_sensitivity(pair, baseline_pearson)
     if outlier_sensitivity["status"] == "sensitive":
@@ -247,8 +255,8 @@ def profile_pair(
         )
         metrics_map["pearson_winsorized_1pct"] = compute_winsorized_pearson(pair)
         metrics_map["biweight_midcorrelation"] = compute_biweight_midcorrelation(pair)
-        metrics_map["pearson_median_clipped_20pct"] = (
-            compute_median_clipped_pearson(pair)
+        metrics_map["pearson_median_clipped_20pct"] = compute_median_clipped_pearson(
+            pair
         )
         # chatterjee_xi has its own (lower) min-n threshold than the robust
         # correlations, so it can produce a value even when the robust metrics
@@ -286,16 +294,16 @@ def profile_pair(
     abs_s = abs(spearman) if spearman is not None else None
 
     # Rank-vs-linear gap: only defined when both metrics are available.
-    rank_gap = (
-        abs(abs_p - abs_s) if abs_p is not None and abs_s is not None else 0.0
-    )
+    rank_gap = abs(abs_p - abs_s) if abs_p is not None and abs_s is not None else 0.0
     # Nonmonotonic contribution: distance correlation in excess of the strongest
     # linear/rank signal. Absent dcor contributes nothing.
     linear_signal = max([v for v in (abs_p, abs_s) if v is not None], default=0.0)
     nonmonotonic = max(0.0, dcor - linear_signal) if dcor is not None else 0.0
 
     disagreement_score = rank_gap + nonmonotonic
-    diagnostics = _build_diagnostics(metrics_map, disagreement_score, outlier_sensitivity)
+    diagnostics = _build_diagnostics(
+        metrics_map, disagreement_score, outlier_sensitivity
+    )
     bootstrap_result = compute_bootstrap(
         pair,
         bootstrap=bootstrap,
