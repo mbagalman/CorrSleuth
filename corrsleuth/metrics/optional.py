@@ -60,6 +60,13 @@ def compute_mutual_information(
 ) -> MetricResult:
     """Compute mutual information using scikit-learn's KSG estimator.
 
+    The returned value is **raw, unnormalized** mutual information in nats: it is
+    ``>= 0`` and unbounded above, **not** scaled to ``[0, 1]``. Do not read its
+    magnitude like a correlation coefficient or compare it directly against
+    Pearson/Spearman/distance-correlation values — interpret it relatively (a
+    larger MI means more shared information) or alongside the other metrics, not
+    on the same 0-1 scale.
+
     In ``mode='standard'``, raises :class:`OptionalDependencyError` if
     ``scikit-learn`` is not installed. In ``mode='lite'`` returns an unavailable
     :class:`MetricResult` instead. ``random_state`` is forwarded to

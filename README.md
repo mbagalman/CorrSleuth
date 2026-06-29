@@ -169,7 +169,7 @@ CorrSleuth takes a fundamentally different approach to bivariate analysis. Inste
 2. **Spearman**: Captures monotonic (rank-based) correlation.
 3. **Kendall tau-b**: A robust rank correlation that handles ties well.
 4. **Distance Correlation** *(Standard mode)*: Captures non-linear dependencies.
-5. **Mutual Information** *(Standard mode)*: Captures arbitrary statistical dependence.
+5. **Mutual Information** *(Standard mode)*: Captures arbitrary statistical dependence. Reported as raw, unnormalized MI (in nats) — it is `>= 0` and unbounded, **not** on a 0–1 scale, so read it relatively rather than like a correlation coefficient.
 6. **Robust Pearson-family diagnostics** *(Deep mode)*: Trimmed Pearson, winsorized Pearson, biweight midcorrelation, and median-clipped Pearson help check whether Pearson appears sensitive to extreme values.
 7. **Chatterjee's ξ** *(Deep mode)*: An asymmetric coefficient of association — `ξ(X → Y)` measures whether `Y` is a (noisy) function of `X`. Catches U-shape and other functional dependencies that Pearson and Spearman miss.
 
