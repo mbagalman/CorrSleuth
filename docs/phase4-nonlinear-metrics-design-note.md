@@ -120,10 +120,14 @@ function of `X`.
 - Slow asymptotic convergence — for `n < ~20` the empirical value has
   high variance. We gate this with a `_MIN_N_FOR_CHATTERJEE_XI = 20` check
   + warning, matching the style used for the robust metrics.
-- Tie-breaking in `X` matters; we use lexicographic `(x, y)` sorting plus
-  ordinal Y-ranking so the value is invariant to the row order of the input
-  DataFrame. Heavy-tie datasets are already flagged by the existing
-  `high_tie_rate` warning.
+- Tie-breaking in the sort variable matters; we break those ties with a seeded
+  random permutation (Chatterjee's prescription), **not** by `Y`. Ordering tied
+  sort-variable values by `Y` leaks the response and inflates ξ toward 1 even
+  under independence; random tie-breaking keeps it calibrated. Ties in `Y` are
+  handled by the tie-corrected denominator. A consequence is that, when the sort
+  variable has ties, ξ depends on the seeded tie-break rather than being
+  invariant to input row order. Heavy-tie datasets are also flagged by the
+  existing `high_tie_rate` warning.
 
 **Verdict: Implement.** Implemented in `corrsleuth/metrics/nonlinear.py`
 in the same PR as this note. Surfaces as `chatterjee_xi` in

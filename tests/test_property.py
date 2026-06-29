@@ -32,6 +32,12 @@ from corrsleuth.validation.input import validate_pair
 
 # Symmetric, dependency-free metrics: f(x, y) == f(y, x).
 SYMMETRIC_METRICS = (compute_pearson, compute_spearman, compute_kendall)
+# Metrics that are a pure function of the (x, y) multiset, hence invariant to
+# row order. Chatterjee's ξ is deliberately excluded: it breaks sort-key ties
+# with a seeded random permutation, so under ties (which Hypothesis readily
+# generates) its value depends on the input row order. Its calibration and
+# determinism are covered by dedicated tests in test_metrics.py.
+ROW_INVARIANT_METRICS = SYMMETRIC_METRICS
 # Every dependency-free metric, including the asymmetric ξ in both directions.
 ALL_METRICS = (*SYMMETRIC_METRICS, compute_chatterjee_xi, compute_chatterjee_xi_reverse)
 
@@ -79,11 +85,11 @@ def _approx_equal(a, b):
     return a == pytest.approx(b, rel=1e-9, abs=1e-9)
 
 
-@pytest.mark.parametrize("metric", ALL_METRICS, ids=lambda m: m.__name__)
+@pytest.mark.parametrize("metric", ROW_INVARIANT_METRICS, ids=lambda m: m.__name__)
 @_SETTINGS
 @given(data=paired_xy())
 def test_metric_is_invariant_to_joint_row_permutation(metric, data):
-    """Permuting the rows of (x, y) together must not change any metric."""
+    """Permuting the rows of (x, y) together must not change a multiset metric."""
     x, y = data
     rng = np.random.default_rng(0)
     perm = rng.permutation(len(x))
