@@ -94,6 +94,22 @@ def test_explain_possible_outlier_or_leverage_references_rank_disagreement():
     assert "extreme values" in explanation
 
 
+def test_explain_possible_outlier_or_leverage_sign_conflict_describes_direction():
+    """When the leverage label comes from a Pearson/Spearman sign conflict, the
+    explanation must describe a direction conflict — not 'Pearson is much
+    stronger', which is false when the rank metrics are equally strong but
+    opposite in sign."""
+    res = _result_for_explanation(
+        "possible_outlier_or_leverage",
+        {"pearson": 0.96, "spearman": -0.94, "kendall_tau_b": -0.96},
+    )
+
+    explanation = res.explain(include_caveat=False)
+
+    assert "opposite directions" in explanation
+    assert "much stronger" not in explanation
+
+
 def test_explain_weak_or_no_relationship_references_lite_metric_limits():
     res = _result_for_explanation(
         "weak_or_no_relationship",

@@ -16,7 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   such pairs are `possible_outlier_or_leverage` (with leverage evidence) or
   `mixed_or_ambiguous`, never `near_linear`/`monotonic_nonlinear`, and the
   `disagreement_score` uses the signed Pearson−Spearman difference so it
-  reflects the conflict instead of hiding it.
+  reflects the conflict instead of hiding it. The `explain()` text for a
+  sign-conflict leverage result now describes the *direction* conflict rather
+  than claiming Pearson is "much stronger" than the rank metrics (which is false
+  when they are equally strong but opposite in sign).
 - **Bootstrap stability no longer over-assigns leverage labels.** Trim
   sensitivity is now recomputed per bootstrap replicate instead of assuming
   `outlier_sensitivity_unavailable`. Previously, a trim-stable `near_linear`

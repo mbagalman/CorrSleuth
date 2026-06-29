@@ -4,6 +4,13 @@ _CAVEAT = (
     "Do not interpret this association causally without proper design or controls."
 )
 
+#: Magnitude both Pearson and Spearman must reach before opposite signs are
+#: described as a *direction conflict* (rather than Pearson simply dominating a
+#: near-zero rank metric). Mirrors ``classifier.CONFLICTING_SIGN_THRESHOLD``;
+#: duplicated here because importing it would create a circular import
+#: (classifier imports ``generate_recommendations`` from this module).
+_SIGN_CONFLICT_MIN_MAGNITUDE = 0.3
+
 _EXPLANATIONS = {
     "not_computable": "The metrics could not be computed. This usually happens when one or both variables are entirely constant, or there are no valid overlapping data points.",
     "low_power_or_uncertain": "The evidence is too uncertain to confidently describe the relationship shape, often due to a very small sample size.",
@@ -127,11 +134,31 @@ def _metric_context(pattern: str, metrics: pd.DataFrame | None) -> list[str]:
 
     if (
         pattern == "possible_outlier_or_leverage"
-        and abs_p is not None
-        and abs_s is not None
+        and pearson is not None
+        and spearman is not None
     ):
+        # This label has two routes, with opposite statistical evidence, so the
+        # explanation must match the one that fired:
+        #  - direction conflict: Pearson and the rank metrics point opposite ways
+        #    (leverage flips the linear sign relative to the monotone trend);
+        #  - magnitude dominance: Pearson is much larger than the rank metrics in
+        #    the same direction (leverage inflates the linear correlation).
+        if (
+            pearson * spearman < 0
+            and abs(pearson) >= _SIGN_CONFLICT_MIN_MAGNITUDE
+            and abs(spearman) >= _SIGN_CONFLICT_MIN_MAGNITUDE
+        ):
+            return [
+                (
+                    f"Pearson ({_fmt(pearson)}) and the rank metrics (Spearman "
+                    f"{_fmt(spearman)}, Kendall tau-b {_fmt(kendall)}) point in "
+                    "opposite directions; the trim/robust check indicates a few "
+                    "high-leverage points are driving the linear correlation "
+                    "against the monotone trend."
+                )
+            ]
         # Phrased in terms of rank-based metrics generally (not just Spearman):
-        # this label can be reached via the Pearson-vs-Kendall gap alone, so
+        # this route can be reached via the Pearson-vs-Kendall gap alone, so
         # naming Spearman specifically could overstate that particular gap.
         return [
             (
