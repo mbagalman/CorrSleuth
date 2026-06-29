@@ -11,6 +11,7 @@ from corrsleuth.metrics.optional import (
     compute_distance_correlation,
     compute_mutual_information,
 )
+from corrsleuth.metrics.robust import assess_outlier_sensitivity
 from corrsleuth.validation.input import (
     LOW_N_THRESHOLD,
     CleanPair,
@@ -138,18 +139,23 @@ def _bootstrap_sample_pair(pair: CleanPair, idx) -> CleanPair:
     )
 
 
-def _bootstrap_flags(pair: CleanPair) -> list[str]:
-    """Return the heuristic flags for a replicate, matching the original's context.
+def _bootstrap_flags(pair: CleanPair, outlier_status: str) -> list[str]:
+    """Return the heuristic flags for a replicate, matching profile_pair's context.
 
-    Mirrors the flags ``profile_pair`` would synthesize, with one deliberate
-    addition described below, so the cascade routes each replicate the same way
-    it routed the original pair.
+    Mirrors the flags ``profile_pair`` synthesizes — including the Pearson
+    trim-sensitivity flag, which is recomputed per replicate and passed in as
+    ``outlier_status`` (``"sensitive"`` / ``"stable"`` / ``"unavailable"``)
+    rather than assumed unavailable. Blanket-flagging
+    ``outlier_sensitivity_unavailable`` would let the leverage rule fire on
+    resamples of a relationship the original profile already proved trim-stable,
+    biasing pattern stability against a stable, non-leverage label.
     """
     flags = compute_heuristic_flags(pair)
-    # Bootstrap doesn't recompute Pearson trim sensitivity per replicate; signal
-    # that to the heuristic via outlier_sensitivity_unavailable so the
-    # possible_outlier_or_leverage rule can still gate when n is large enough.
-    if "low_n" not in flags:
+    if outlier_status == "sensitive":
+        flags.append("pearson_trim_sensitive")
+    elif outlier_status == "stable":
+        flags.append("pearson_trim_stable")
+    else:
         flags.append("outlier_sensitivity_unavailable")
     return flags
 
@@ -302,9 +308,16 @@ def compute_bootstrap(
             ):
                 values[name].append(float(metric.value))
 
+        # Recompute trim sensitivity on this replicate (same check profile_pair
+        # runs) so the leverage rule gates on real per-resample evidence rather
+        # than a blanket "unavailable".
+        baseline_pearson = sample_metrics["pearson"].value
+        outlier_status = assess_outlier_sensitivity(
+            sample_pair, baseline_pearson
+        ).status
         heuristic = apply_heuristics(
             sample_metrics,
-            _bootstrap_flags(sample_pair),
+            _bootstrap_flags(sample_pair, outlier_status),
             sample_pair.n_used,
         )
         label_counts[heuristic.label] = label_counts.get(heuristic.label, 0) + 1

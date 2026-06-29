@@ -508,6 +508,41 @@ def test_lite_pattern_stability_caveat_for_standard_nonmonotonic_label():
     assert "may not fully test" in res.explain(include_caveat=False)
 
 
+def test_bootstrap_stability_recomputes_trim_sensitivity_per_replicate():
+    """A trim-stable near_linear relationship with a large Pearson-Kendall gap
+    must not be labeled possible_outlier_or_leverage in the bootstrap.
+
+    The leverage rule gates on trim sensitivity. Replicates previously inherited
+    a blanket ``outlier_sensitivity_unavailable`` flag, so any resample with
+    ``|pearson| - |kendall| > 0.25`` was labeled leverage even though the
+    original profile proved Pearson trim-stable — collapsing pattern stability
+    to ~0 against the real near_linear label. Trim sensitivity is now recomputed
+    per replicate."""
+    rng = np.random.default_rng(3)
+    n = 300
+    x = rng.standard_t(2.0, size=n)
+    y = x + rng.standard_t(2.0, size=n) * 0.45
+    res = profile_pair(
+        pd.DataFrame({"x": x, "y": y}),
+        "x",
+        "y",
+        mode="deep",
+        bootstrap=50,
+        random_state=0,
+    )
+    metrics = {row["metric"]: row["value"] for _, row in res.metrics.iterrows()}
+
+    # Preconditions: this is the leverage-flag trigger regime.
+    assert res.pattern == "near_linear"
+    assert abs(metrics["pearson"]) - abs(metrics["kendall_tau_b"]) > 0.25
+    assert res.diagnostics.pearson_trim_delta < 0.20  # trim-stable, not leverage
+
+    # The fix: replicates of a trim-stable pair are not labeled leverage, so
+    # stability reflects the real label instead of collapsing to ~0.
+    assert res.bootstrap_label_counts.get("possible_outlier_or_leverage", 0) == 0
+    assert res.pattern_stability >= 0.5
+
+
 def test_bootstrap_stability_is_none_when_disabled():
     df = make_relationship("linear_positive", n=80, random_state=42)
     res = profile_pair(df, "x", "y")
