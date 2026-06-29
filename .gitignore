@@ -22,8 +22,9 @@ dist/
 venv/
 env/
 
-# Internal code-review trackers (not shipped or published)
-docs/code-review-*.md
+# Internal code-review trackers (not shipped or published) — matched in any
+# directory (docs/, docs/archive/, etc.), not just the docs/ root.
+code-review-*.md
 
 # Local editor and OS files
 .idea/

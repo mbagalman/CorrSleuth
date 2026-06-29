@@ -149,6 +149,21 @@ def apply_heuristics(
     k = abs(k_val) if k_val is not None else None
     dc = _finite_metric_value(m_dc, require_available=True)
 
+    # Pearson and Spearman pointing in opposite directions, both non-trivial, is
+    # a directional conflict — not a clean linear or monotone signal, and almost
+    # always leverage-driven (a few points flip the linear fit's sign relative to
+    # the rank trend). It must be detected on the *signed* values: the
+    # magnitude-based gaps below would read |+0.8| vs |-0.8| as a gap of 0 and
+    # mislabel the pair near_linear. (assess_outlier_sensitivity makes the same
+    # signed-comparison choice for exactly this reason.)
+    pearson_spearman_conflict = (
+        p_val is not None
+        and s_val is not None
+        and p_val * s_val < 0
+        and abs(p_val) >= CONFLICTING_SIGN_THRESHOLD
+        and abs(s_val) >= CONFLICTING_SIGN_THRESHOLD
+    )
+
     label = "mixed_or_ambiguous"
 
     # 1. not_computable
@@ -160,7 +175,11 @@ def apply_heuristics(
     # 3. possible_outlier_or_leverage
     elif (
         p > STRONG_MAGNITUDE_THRESHOLD
-        and (p - s > RANK_LINEAR_GAP_THRESHOLD or p - k > PEARSON_KENDALL_GAP_THRESHOLD)
+        and (
+            p - s > RANK_LINEAR_GAP_THRESHOLD
+            or p - k > PEARSON_KENDALL_GAP_THRESHOLD
+            or pearson_spearman_conflict
+        )
         and (
             "pearson_trim_sensitive" in flags
             or "outlier_sensitivity_unavailable" in flags
@@ -181,13 +200,18 @@ def apply_heuristics(
     # smaller for the same signal, so adding an OR on tau would only loosen the
     # rule. A borderline-Spearman case deliberately falls through to
     # mixed_or_ambiguous rather than overclaiming nonlinearity.
-    elif s > STRONG_MAGNITUDE_THRESHOLD and (s - p > RANK_LINEAR_GAP_THRESHOLD):
+    elif (
+        s > STRONG_MAGNITUDE_THRESHOLD
+        and (s - p > RANK_LINEAR_GAP_THRESHOLD)
+        and not pearson_spearman_conflict
+    ):
         label = "monotonic_nonlinear"
     # 6. near_linear
     elif (
         p > STRONG_MAGNITUDE_THRESHOLD
         and s > STRONG_MAGNITUDE_THRESHOLD
         and abs(p - s) < NEAR_LINEAR_GAP_THRESHOLD
+        and not pearson_spearman_conflict
     ):
         label = "near_linear"
     # 7. weak_or_no_relationship
