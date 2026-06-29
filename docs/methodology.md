@@ -168,8 +168,8 @@ the defaults.
 5. **`monotonic_nonlinear`** — Spearman is meaningfully stronger than Pearson
    (`|s| > 0.50` and `|s| − |p| > 0.20`), without a Pearson/Spearman sign
    conflict.
-6. **`near_linear`** — Pearson and Spearman are both strong (`> 0.50`) and close
-   (`||p|−|s|| < 0.15`), without a sign conflict.
+6. **`near_linear`** — Pearson and Spearman are both strong (`|p| > 0.50` and
+   `|s| > 0.50`) and close (`||p|−|s|| < 0.15`), without a sign conflict.
 7. **`weak_or_no_relationship`** — all available measures are small (`|p|, |s| <
    0.20`, and `dc < 0.20` when present).
 8. **`mixed_or_ambiguous`** — fallback when none of the above matches.
@@ -216,21 +216,28 @@ midcorrelation) require `n ≥ 50` to be meaningful.
 ## 7. Sampling uncertainty: the bootstrap
 
 `bootstrap=B` adds a **nonparametric percentile bootstrap** assessment of how
-stable the result is under resampling. Each of the `B` replicates draws rows
-with replacement and is re-validated and re-profiled exactly like the original
-pair. Re-running the *full* validation + heuristic cascade on every replicate
-(rather than just resampling the already-computed metrics) is deliberate: the
-stability estimate then reflects the exact decision procedure a user applies —
-data-quality guards, leverage check, and all — not just the sampling variability
-of a single coefficient.
+stable the result is under resampling. Each of the `B` replicates resamples the
+already-cleaned paired rows with replacement and rebuilds a per-replicate
+`CleanPair` — recomputing the constant/tie/unique-ratio/low-n state, the metrics,
+the trim-sensitivity check, and the label. (It does **not** re-run raw-input
+validation or the missing-data policy; those run once on the original data.)
+Re-running the heuristic cascade — not just resampling the already-computed
+metrics — on every replicate is deliberate: the stability estimate then reflects
+the actual decision procedure (data-quality guards, leverage check, and the
+label rule), not just the sampling variability of a single coefficient.
 
 - **Percentile intervals.** For each requested metric, the 2.5th/97.5th
   percentiles of its bootstrap distribution form an approximate 95% interval.
 - **Pattern stability.** Each replicate is re-labeled through the same cascade;
   `pattern_stability` is the fraction of replicates whose label matches the
   original. The cascade always evaluates at least the lite triple per replicate,
-  so stability is meaningful even when intervals are requested for a custom
-  metric subset.
+  so stability is meaningful for lite-expressible labels even when intervals are
+  requested for a custom metric subset. **Caveat:** a *standard-only* label —
+  currently `nonmonotonic_dependence`, which needs distance correlation — can
+  only be re-tested faithfully when `bootstrap_metrics` includes
+  `distance_correlation` (or `"standard"`). With the default lite bootstrap the
+  replicate cascade cannot reassess dCor, so stability is approximate for that
+  label and CorrSleuth emits a warning saying so.
 - **m-out-of-n capping.** `max_n_for_bootstrap` caps the rows drawn per replicate
   for cost. Resampling fewer rows than the data contains widens the intervals
   (they become conservative by roughly `sqrt(n / m)`); a warning discloses this
@@ -256,11 +263,14 @@ across Python 3.10–3.14 with a branch-coverage gate — not merely asserted he
 
 - **Property-based tests** (Hypothesis, `tests/test_property.py`) check invariants
   that must hold for *any* generated input, not just hand-picked cases: joint
-  row-permutation invariance for the order-independent measures, constant input
-  → `None`, each coefficient staying inside its mathematical range, symmetry of
-  the symmetric measures, and the forward/reverse consistency of Chatterjee's ξ.
-  ξ is *deliberately excluded* from the permutation-invariance check, because its
-  seeded tie-break makes it non-invariant under ties (§3, §9) — encoding the
+  row-permutation invariance for the order-independent measures; constant input
+  → `None`; Pearson/Spearman/Kendall staying within `[-1, 1]` and Chatterjee's ξ
+  at or below 1; symmetry of the symmetric measures; and the forward/reverse
+  consistency of ξ. (Distance correlation gets a single representative
+  property check under an optional-dependency guard, not the full generated
+  sweep.) ξ is *deliberately excluded* from the permutation-invariance check,
+  because its seeded tie-break makes it non-invariant under ties (§3, §9) —
+  encoding the
   limitation as a test rather than hiding it.
 - **Synthetic data generators** (`make_relationship` in `datasets/simulations.py`)
   produce known data-generating processes — linear, monotone-log, U-shape,
