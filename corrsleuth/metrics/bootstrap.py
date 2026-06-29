@@ -283,20 +283,34 @@ def compute_bootstrap(
         )
         sample_size = max_n_for_bootstrap
 
-    # Below _MIN_N_FOR_INTERVALS the percentile interval is unreliable enough to
-    # be misleading, so we skip it entirely (intervals=None) rather than report
-    # false precision; pattern stability is still computed below.
-    skip_intervals = pair.n_used < _MIN_N_FOR_INTERVALS
+    # The gates below key off the *effective* per-replicate size (sample_size),
+    # not pair.n_used: max_n_for_bootstrap can cap replicates well below the
+    # original sample, and an interval/label computed on tiny resamples is
+    # unreliable however large the original data is.
+
+    # Interval floor: below _MIN_N_FOR_INTERVALS a percentile bootstrap is too
+    # unreliable to report, so we return intervals=None with a warning rather
+    # than imply false precision.
+    skip_intervals = sample_size < _MIN_N_FOR_INTERVALS
     if skip_intervals:
         pair.warnings.append(
-            f"n_used < {_MIN_N_FOR_INTERVALS}: bootstrap intervals are not "
-            "computed (too few rows for a reliable percentile bootstrap). "
-            "Pattern stability is still reported."
+            f"Each bootstrap replicate draws {sample_size} rows "
+            f"(< {_MIN_N_FOR_INTERVALS}); bootstrap intervals are not computed "
+            "(too few rows for a reliable percentile bootstrap)."
         )
-    elif pair.n_used < LOW_N_THRESHOLD:
+    elif sample_size < LOW_N_THRESHOLD:
         pair.warnings.append(
-            "Bootstrap intervals requested with n_used < 30; intervals may be unstable."
+            f"Each bootstrap replicate draws {sample_size} rows "
+            f"(< {LOW_N_THRESHOLD}); bootstrap intervals may be unstable."
         )
+
+    # Stability suppression: when max_n_for_bootstrap caps replicates below the
+    # low-power threshold while the original sample is above it, every replicate
+    # is judged low_power_or_uncertain and pattern stability collapses to a
+    # meaningless 0 against the full-sample label. Genuinely small data
+    # (sample_size == pair.n_used < 30) is unaffected — it keeps its stability
+    # signal, which consistently and correctly reports low power.
+    suppress_stability = sample_size < LOW_N_THRESHOLD and sample_size < pair.n_used
 
     # Decouple interval selection from the stability cascade: intervals are
     # reported for the caller's requested metrics (``metric_names``), but the
@@ -383,7 +397,14 @@ def compute_bootstrap(
 
         intervals = pd.DataFrame(records)
     stability = None
-    if original_pattern is not None:
+    if original_pattern is not None and suppress_stability:
+        pair.warnings.append(
+            f"max_n_for_bootstrap caps each replicate at {sample_size} rows "
+            f"(< {LOW_N_THRESHOLD}), so every replicate is judged low-power and "
+            "pattern stability cannot meaningfully test the full-sample label; "
+            "it is not reported. Raise max_n_for_bootstrap to assess stability."
+        )
+    elif original_pattern is not None:
         pattern_stability = (
             label_counts.get(original_pattern, 0) / n_iterations
             if n_iterations
