@@ -39,6 +39,15 @@ _STABILITY_HIGH_THRESHOLD = 0.80
 #: replicates, which is the natural boundary for "treat this label as shaky".
 _STABILITY_MEDIUM_THRESHOLD = 0.50
 
+#: Minimum rows before percentile bootstrap *intervals* are computed at all.
+#: Below this a with-replacement resample of so few points cannot represent the
+#: distribution's tails, so the 2.5/97.5 percentiles are erratic and imply false
+#: precision — we return ``intervals=None`` with a warning instead. Matches the
+#: Chatterjee-xi floor (:data:`~corrsleuth.metrics.nonlinear._MIN_N_FOR_CHATTERJEE_XI`).
+#: Pattern stability is *not* gated here (it is a label-agreement signal, and the
+#: profile is already labeled low_power_or_uncertain below n=30).
+_MIN_N_FOR_INTERVALS = 20
+
 
 @dataclass
 class BootstrapStability:
@@ -274,7 +283,17 @@ def compute_bootstrap(
         )
         sample_size = max_n_for_bootstrap
 
-    if pair.n_used < LOW_N_THRESHOLD:
+    # Below _MIN_N_FOR_INTERVALS the percentile interval is unreliable enough to
+    # be misleading, so we skip it entirely (intervals=None) rather than report
+    # false precision; pattern stability is still computed below.
+    skip_intervals = pair.n_used < _MIN_N_FOR_INTERVALS
+    if skip_intervals:
+        pair.warnings.append(
+            f"n_used < {_MIN_N_FOR_INTERVALS}: bootstrap intervals are not "
+            "computed (too few rows for a reliable percentile bootstrap). "
+            "Pattern stability is still reported."
+        )
+    elif pair.n_used < LOW_N_THRESHOLD:
         pair.warnings.append(
             "Bootstrap intervals requested with n_used < 30; intervals may be unstable."
         )
@@ -323,43 +342,46 @@ def compute_bootstrap(
         label_counts[heuristic.label] = label_counts.get(heuristic.label, 0) + 1
         n_iterations += 1
 
-    records = []
-    for name in metric_names:
-        metric_values = values[name]
-        if metric_values:
-            ci_low, ci_high = np.percentile(metric_values, [2.5, 97.5])
-            ci_low = float(ci_low)
-            ci_high = float(ci_high)
-        else:
-            ci_low = None
-            ci_high = None
-        records.append(
-            {
-                "metric": name,
-                "ci_low": ci_low,
-                "ci_high": ci_high,
-                "n_success": len(metric_values),
-                "n_bootstrap": bootstrap,
-                "sample_size": sample_size,
-                "metric_set": metric_set,
-            }
-        )
+    if skip_intervals:
+        intervals = None
+    else:
+        records = []
+        for name in metric_names:
+            metric_values = values[name]
+            if metric_values:
+                ci_low, ci_high = np.percentile(metric_values, [2.5, 97.5])
+                ci_low = float(ci_low)
+                ci_high = float(ci_high)
+            else:
+                ci_low = None
+                ci_high = None
+            records.append(
+                {
+                    "metric": name,
+                    "ci_low": ci_low,
+                    "ci_high": ci_high,
+                    "n_success": len(metric_values),
+                    "n_bootstrap": bootstrap,
+                    "sample_size": sample_size,
+                    "metric_set": metric_set,
+                }
+            )
 
-    incomplete_metrics = [
-        row["metric"]
-        for row in records
-        if row["n_success"] == 0 or row["n_success"] / bootstrap < 0.95
-    ]
-    if incomplete_metrics:
-        pair.warnings.append(
-            "Bootstrap intervals for "
-            + ", ".join(incomplete_metrics)
-            + " are based on fewer than 95% of the requested resamples because "
-            + "the metric was undefined on some resamples (e.g. a resample drew "
-            + "a near-constant column); treat these intervals as less reliable."
-        )
+        incomplete_metrics = [
+            row["metric"]
+            for row in records
+            if row["n_success"] == 0 or row["n_success"] / bootstrap < 0.95
+        ]
+        if incomplete_metrics:
+            pair.warnings.append(
+                "Bootstrap intervals for "
+                + ", ".join(incomplete_metrics)
+                + " are based on fewer than 95% of the requested resamples because "
+                + "the metric was undefined on some resamples (e.g. a resample drew "
+                + "a near-constant column); treat these intervals as less reliable."
+            )
 
-    intervals = pd.DataFrame(records)
+        intervals = pd.DataFrame(records)
     stability = None
     if original_pattern is not None:
         pattern_stability = (

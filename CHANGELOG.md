@@ -50,6 +50,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   This changes the metric's numeric output for non-degenerate data.
 
 ### Changed
+- Bootstrap **intervals** are now computed only when `n_used >= 20`. Below that
+  a percentile bootstrap is too unreliable to report (false precision), so
+  `bootstrap_intervals` is `None` with a warning; pattern stability is still
+  reported. The previous behavior computed intervals at any n with only a
+  "may be unstable" warning at n < 30.
+- Documented that mutual information is reported as **raw, unnormalized** MI (in
+  nats, `>= 0`, unbounded — not a 0–1 scale) in the `compute_mutual_information`
+  docstring and the README, so its magnitude isn't misread as a correlation.
+- Noted in the Chatterjee's ξ docstring that a heavily tied sort variable adds
+  sampling variability (the random tie-break would shift the value), so ξ is
+  noisier for low-cardinality sort variables.
 - Unified the trimmed-Pearson logic: the outlier/leverage-sensitivity check in
   `api.py` now delegates to `metrics/robust.py` via a new
   `assess_outlier_sensitivity()` (which reuses `compute_trimmed_pearson`),

@@ -559,6 +559,42 @@ def test_bootstrap_stability_recomputes_trim_sensitivity_per_replicate():
     assert res.pattern_stability >= 0.5
 
 
+def test_bootstrap_intervals_skipped_below_min_n_floor():
+    """Below n=20 a percentile bootstrap is too unreliable, so intervals are
+    returned as None with a warning; pattern stability is still reported
+    (intervals-only floor)."""
+    rng = np.random.default_rng(0)
+    n = 12
+    x = rng.normal(size=n)
+    y = 2 * x + rng.normal(0, 0.1, size=n)
+    res = profile_pair(
+        pd.DataFrame({"x": x, "y": y}), "x", "y", bootstrap=50, random_state=1
+    )
+
+    assert res.bootstrap_intervals is None
+    assert any("bootstrap intervals are not computed" in w for w in res.warnings)
+    # Stability is intentionally still computed below the interval floor.
+    assert res.bootstrap_stability is not None
+    assert res.pattern_stability is not None
+    # Rendering must tolerate stability-without-intervals.
+    res.summary()
+    res.to_markdown()
+
+
+def test_bootstrap_intervals_present_at_floor():
+    """At n >= 20 intervals are still produced (the floor is exclusive)."""
+    rng = np.random.default_rng(0)
+    n = 22
+    x = rng.normal(size=n)
+    y = 2 * x + rng.normal(0, 0.1, size=n)
+    res = profile_pair(
+        pd.DataFrame({"x": x, "y": y}), "x", "y", bootstrap=50, random_state=1
+    )
+
+    assert res.bootstrap_intervals is not None
+    assert not any("bootstrap intervals are not computed" in w for w in res.warnings)
+
+
 def test_bootstrap_stability_is_none_when_disabled():
     df = make_relationship("linear_positive", n=80, random_state=42)
     res = profile_pair(df, "x", "y")

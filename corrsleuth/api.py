@@ -122,7 +122,10 @@ def profile_pair(
         the same input return the same numbers.
     bootstrap : int or None, default None
         Number of bootstrap resamples to use for approximate metric intervals.
-        Disabled by default.
+        Disabled by default. Intervals are only computed when ``n_used >= 20``;
+        below that the percentile bootstrap is too unreliable to report, so
+        ``bootstrap_intervals`` is ``None`` (with a warning) while pattern
+        stability is still computed.
     bootstrap_metrics : {"lite", "standard"} or sequence of str, default "lite"
         Metric set to bootstrap. ``"lite"`` bootstraps Pearson, Spearman, and
         Kendall tau-b even when the main profile uses ``mode="standard"``.

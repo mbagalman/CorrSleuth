@@ -97,7 +97,10 @@ def compute_chatterjee_xi(pair: CleanPair, random_state: int = 42) -> MetricResu
       value stays well-calibrated for discrete or low-cardinality responses.
     - ``random_state`` seeds that tie-break, so the value is reproducible for a
       given input. When ``X`` has ties the value depends on the random
-      tie-break and is therefore not invariant to the input row order.
+      tie-break and is therefore not invariant to the input row order; a heavily
+      tied ``X`` also carries additional sampling variability in ξ, since a
+      different tie-break (a different ``random_state``) would shift the value,
+      so treat ξ as noisier for low-cardinality sort variables.
 
     Returns ``None`` when either column is constant or when ``n_used`` is too
     small for a reliable estimate.
