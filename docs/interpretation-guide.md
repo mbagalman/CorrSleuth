@@ -65,10 +65,13 @@ pairs deserve closer inspection.
 ## How a Label Is Assigned
 
 CorrSleuth uses a fixed-priority cascade. Higher-priority rules short-circuit
-later ones, so each pair gets exactly one label. Comparisons use the
-**absolute** Pearson, Spearman, and Kendall values — the direction of the
-association (positive vs negative) does not change the label. The current
-order is:
+later ones, so each pair gets exactly one label. Comparisons mostly use the
+**absolute** Pearson, Spearman, and Kendall values, so the overall direction of
+the association (positive vs negative) does not by itself change the label. The
+one exception is a **sign conflict** between Pearson and Spearman (opposite
+signs, both at least moderate): that is a leverage signature, so it is routed to
+`possible_outlier_or_leverage` (or `mixed_or_ambiguous`) and kept out of
+`near_linear`/`monotonic_nonlinear`. The current order is:
 
 1. `not_computable` — when one variable is constant or core metrics fail to
    compute.
@@ -542,6 +545,10 @@ dependence is the question, and you don't want to install extras.
 ## Further Reading
 
 - [README](../README.md) — installation, quickstart, full API surface.
+- [Methodology](methodology.md) — the statistical "how it works": the pipeline,
+  each measure's assumptions, the `disagreement_score`, the label cascade, and
+  the bootstrap-stability approach. This guide is the field manual; that doc is
+  the theory.
 - [Phase 4 design note](phase4-nonlinear-metrics-design-note.md) — why
   Chatterjee's ξ was chosen over HSIC, MGC, and MIC, and which other
   nonlinear measures were deferred.

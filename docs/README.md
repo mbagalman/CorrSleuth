@@ -5,6 +5,11 @@ User-facing documentation for the CorrSleuth package. Start with the
 
 ## For analysts using CorrSleuth
 
+- [Methodology](methodology.md) — for statisticians and data scientists: what
+  CorrSleuth computes and how it turns those computations into a diagnosis — the
+  pipeline, the association measures and their assumptions, the
+  `disagreement_score`, the label cascade, bootstrap stability, reproducibility,
+  and limitations. Start here if you want to evaluate the approach.
 - [Interpretation Guide](interpretation-guide.md) — what each diagnostic
   label means, when each metric can mislead, and what to do next. Covers
   every label with meaning, typical metric pattern, common examples,
