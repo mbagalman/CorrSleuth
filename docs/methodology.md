@@ -12,12 +12,13 @@ justifies every numeric cut point).
 A single correlation coefficient summarizes a bivariate relationship in one
 number, and that compression is lossy in ways that routinely mislead:
 
-- **Pearson's *r* assumes a linear relationship.** A strong nonlinear or
+- **Pearson's *r* summarizes *linear* association.** A strong nonlinear or
   non-monotonic dependence (e.g. a U-shape) can give *r* ≈ 0.
 - **Pearson is not robust.** A handful of high-leverage points can inflate *r*,
   or even flip its sign, relative to the bulk of the data.
-- **Rank coefficients (Spearman, Kendall) fix linearity but only see monotone
-  structure** — they also miss U-shapes, and they don't tell you whether a
+- **Rank coefficients (Spearman, Kendall) replace the linear target with a
+  monotone/rank one, so they only see monotone structure** — they also miss
+  U-shapes, and they don't tell you whether a
   strong *r* is leverage-driven.
 
 CorrSleuth's premise is that **the disagreements between complementary
@@ -36,7 +37,8 @@ paired with a non-causal caveat and a recommendation to inspect the scatter.
 `profile_pair(data, x, y, mode=...)` runs a fixed sequence:
 
 1. **Validate & clean** (`validation/input.py`). Apply the missing-data policy,
-   coerce to numeric, drop the unusable rows, and record data-quality flags
+   verify each column is a numeric dtype (non-numeric input raises) and cast it
+   to float, drop the unusable rows, and record data-quality flags
    (constant input, low *n*, high tie rate, low unique ratio, high
    missingness). The result is an internal `CleanPair` that downstream steps can
    assume is well-formed.
@@ -57,18 +59,23 @@ identical.
 
 ## 3. The association measures
 
-Measures are grouped into three **modes** of increasing cost. Each higher mode is
-a superset of the information in the lower ones.
+Measures are grouped into three **modes**. All modes compute the lite metrics;
+`standard` and `deep` are *separate* extensions aimed at different questions —
+`standard` adds distance correlation and mutual information (for non-monotone
+dependence), while `deep` adds the robust-Pearson family and Chatterjee's ξ (for
+leverage and asymmetric functional dependence) **without** the standard metrics.
+So `deep` is not a superset of `standard`; choose the extension that matches the
+question (or call `profile_pair` twice).
 
 | Measure | Mode | Detects | Key assumptions / sensitivities |
 |---|---|---|---|
-| **Pearson *r*** | lite | Linear association | Assumes linearity; not robust to outliers/leverage |
+| **Pearson *r*** | lite | Linear association | Captures linear association only; not robust to outliers/leverage |
 | **Spearman ρ** | lite | Monotone association (rank) | Monotone only; robust to monotone outliers; degraded by heavy ties |
 | **Kendall τ-b** | lite | Monotone association (rank, tie-corrected) | Monotone only; built from concordant−discordant *pair* counts (not rank variance like ρ), so it is numerically smaller than ρ for the same signal |
 | **Distance correlation** | standard | *Any* statistical dependence | Population dCor = 0 **iff** independent; range [0, 1]; needs `dcor` |
 | **Mutual information** | standard | *Any* statistical dependence | KSG estimator; **raw/unnormalized (nats, ≥ 0, unbounded)** — not a 0–1 scale; needs `scikit-learn` |
 | **Trimmed / winsorized / median-clipped Pearson, biweight midcorrelation** | deep | Whether Pearson is leverage-driven | Robust variants of Pearson; computed only when *n* ≥ 50 |
-| **Chatterjee's ξ** (both directions) | deep | *Functional* dependence, **asymmetric** | ξ(X→Y) → 1 when Y is a function of X, → 0 under independence; *n* ≥ 20 |
+| **Chatterjee's ξ** (both directions) | deep | *Functional* dependence, **asymmetric** | ξ(X→Y) → 0 under independence and → 1 for functional dependence with a rich/tie-free sort variable (discrete or heavily tied X can stay below 1 even under perfect dependence); *n* ≥ 20 |
 
 Notes that matter for interpretation:
 
@@ -136,7 +143,8 @@ the defaults.
 3. **`possible_outlier_or_leverage`** — Pearson is strong (`|p| > 0.50`) **and**
    either materially exceeds the rank metrics in magnitude (`|p| − |s| > 0.20` or
    `|p| − |k| > 0.25`) **or conflicts in sign** with Spearman (opposite signs,
-   both `≥ 0.30`), **and** the trimmed-Pearson check says Pearson is
+   both absolute magnitudes `≥ 0.30`), **and** the trimmed-Pearson check says
+   Pearson is
    leverage-sensitive (or sensitivity could not be computed). This rule requires
    *independent* leverage evidence — a gap alone is not enough.
 4. **`nonmonotonic_dependence`** — `|p|` and `|s|` are both weak (`< 0.25`) while
@@ -154,7 +162,8 @@ Two design choices a reviewer should know:
 
 - **Magnitude with a signed-conflict guard.** Most comparisons use absolute
   magnitudes (direction alone does not change the label). The exception is a
-  **Pearson/Spearman sign conflict** (opposite signs, both `≥ 0.30`): it is a
+  **Pearson/Spearman sign conflict** (opposite signs, both absolute magnitudes
+  `≥ 0.30`): it is a
   leverage signature, so it routes to `possible_outlier_or_leverage` (with trim
   evidence) or `mixed_or_ambiguous`, and is explicitly disqualified from
   `near_linear`/`monotonic_nonlinear`.
