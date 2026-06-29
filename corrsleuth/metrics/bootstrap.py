@@ -39,13 +39,18 @@ _STABILITY_HIGH_THRESHOLD = 0.80
 #: replicates, which is the natural boundary for "treat this label as shaky".
 _STABILITY_MEDIUM_THRESHOLD = 0.50
 
-#: Minimum rows before percentile bootstrap *intervals* are computed at all.
-#: Below this a with-replacement resample of so few points cannot represent the
-#: distribution's tails, so the 2.5/97.5 percentiles are erratic and imply false
-#: precision — we return ``intervals=None`` with a warning instead. Matches the
-#: Chatterjee-xi floor (:data:`~corrsleuth.metrics.nonlinear._MIN_N_FOR_CHATTERJEE_XI`).
-#: Pattern stability is *not* gated here (it is a label-agreement signal, and the
-#: profile is already labeled low_power_or_uncertain below n=30).
+#: Minimum effective per-replicate size before percentile bootstrap *intervals*
+#: are computed at all. Below this a with-replacement resample of so few points
+#: cannot represent the distribution's tails, so the 2.5/97.5 percentiles are
+#: erratic and imply false precision — we return ``intervals=None`` with a
+#: warning instead. Matches the Chatterjee-xi floor
+#: (:data:`~corrsleuth.metrics.nonlinear._MIN_N_FOR_CHATTERJEE_XI`).
+#:
+#: This interval floor does *not* by itself suppress pattern stability:
+#: genuinely small (uncapped) samples keep their stability signal, which
+#: correctly reports a stably low-power label. Cap-induced low-power replicates
+#: are handled separately below — see ``suppress_stability`` in
+#: :func:`compute_bootstrap`, gated on :data:`LOW_N_THRESHOLD`.
 _MIN_N_FOR_INTERVALS = 20
 
 
