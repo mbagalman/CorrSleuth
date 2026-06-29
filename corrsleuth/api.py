@@ -257,8 +257,15 @@ def profile_pair(
     abs_p = abs(pearson) if pearson is not None else None
     abs_s = abs(spearman) if spearman is not None else None
 
-    # Rank-vs-linear gap: only defined when both metrics are available.
-    rank_gap = abs(abs_p - abs_s) if abs_p is not None and abs_s is not None else 0.0
+    # Rank-vs-linear gap: only defined when both metrics are available. Computed
+    # from the *signed* difference, not the gap of magnitudes: when Pearson and
+    # Spearman point in opposite directions (e.g. +0.8 vs -0.8, a leverage
+    # signature) the magnitude gap is 0 and would report perfect agreement,
+    # whereas |pearson - spearman| = 1.6 correctly reflects the conflict. For
+    # same-sign metrics the two are identical.
+    rank_gap = (
+        abs(pearson - spearman) if pearson is not None and spearman is not None else 0.0
+    )
     # Nonmonotonic contribution: distance correlation in excess of the strongest
     # linear/rank signal. Absent dcor contributes nothing.
     linear_signal = max([v for v in (abs_p, abs_s) if v is not None], default=0.0)

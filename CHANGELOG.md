@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - 2026-06-28
 
 ### Fixed
+- **Directional sign conflicts are no longer mislabeled as agreement.** When
+  Pearson and Spearman point in opposite directions with comparable magnitude
+  (e.g. +0.8 vs −0.8, a leverage signature), the cascade compared *absolute*
+  magnitudes, so the gap read as 0 and the pair was labeled `near_linear` with a
+  `disagreement_score` of ~0. The cascade now detects the signed conflict:
+  such pairs are `possible_outlier_or_leverage` (with leverage evidence) or
+  `mixed_or_ambiguous`, never `near_linear`/`monotonic_nonlinear`, and the
+  `disagreement_score` uses the signed Pearson−Spearman difference so it
+  reflects the conflict instead of hiding it. The `explain()` text for a
+  sign-conflict leverage result now describes the *direction* conflict rather
+  than claiming Pearson is "much stronger" than the rank metrics (which is false
+  when they are equally strong but opposite in sign).
 - **Bootstrap stability no longer over-assigns leverage labels.** Trim
   sensitivity is now recomputed per bootstrap replicate instead of assuming
   `outlier_sensitivity_unavailable`. Previously, a trim-stable `near_linear`

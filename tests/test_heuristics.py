@@ -55,6 +55,56 @@ def test_conflicting_signs_warning():
     assert any("conflicting directions" in w for w in res.warnings)
 
 
+def test_sign_conflict_is_never_labeled_near_linear_or_monotonic():
+    """Opposite-sign Pearson/Spearman must not read as agreement. With nearly
+    equal magnitudes the abs gap is ~0, which previously mislabeled the pair
+    near_linear; the cascade now keys off the signed conflict."""
+
+    def metrics(p, s, k):
+        return {
+            "pearson": MetricResult("pearson", p, True),
+            "spearman": MetricResult("spearman", s, True),
+            "kendall_tau_b": MetricResult("kendall_tau_b", k, True),
+        }
+
+    conflict = metrics(0.8, -0.8, -0.6)
+    # With independent leverage evidence, the conflict is a leverage signature.
+    assert (
+        apply_heuristics(conflict, ["pearson_trim_sensitive"], 200).label
+        == "possible_outlier_or_leverage"
+    )
+    # Without it, it must not be near_linear/monotonic — it is ambiguous.
+    assert (
+        apply_heuristics(conflict, ["pearson_trim_stable"], 200).label
+        == "mixed_or_ambiguous"
+    )
+    # Same magnitudes but agreeing signs is still near_linear (unchanged).
+    assert (
+        apply_heuristics(metrics(0.8, 0.8, 0.6), ["pearson_trim_stable"], 200).label
+        == "near_linear"
+    )
+
+
+def test_disagreement_score_reflects_sign_conflict():
+    """A sign conflict (e.g. +0.96 vs -0.94) must not score as agreement: the
+    disagreement uses the signed Pearson-Spearman difference, so the score is
+    large rather than ~0."""
+    import numpy as np
+    import pandas as pd
+
+    n = 200
+    x = np.linspace(0, 10, n)
+    y = -x.copy()
+    x[-2:] = [200, 210]
+    y[-2:] = [200, 210]  # leverage points flip Pearson positive
+    res = profile_pair(pd.DataFrame({"x": x, "y": y}), "x", "y", mode="deep")
+    metrics = {row["metric"]: row["value"] for _, row in res.metrics.iterrows()}
+
+    assert metrics["pearson"] > 0.5 and metrics["spearman"] < -0.5
+    assert res.pattern == "possible_outlier_or_leverage"
+    assert res.disagreement_score > 1.0
+
+
 def test_outlier_driven_uses_trim_sensitivity():
     df = make_relationship("outlier_driven", n=500, noise=0.1, random_state=42)
     res = profile_pair(df, "x", "y")
