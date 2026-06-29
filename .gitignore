@@ -22,9 +22,12 @@ dist/
 venv/
 env/
 
-# Internal code-review trackers (not shipped or published) — matched in any
-# directory (docs/, docs/archive/, etc.), not just the docs/ root.
+# Internal review/audit notes (not shipped or published) — matched in any
+# directory (docs/, docs/archive/, etc.), not just the docs/ root. Covers both
+# naming conventions used so far: `code-review-*.md` and `*-review-*.md`
+# (e.g. methodology-review-statistician.md, code-review-4-statistics-thorough.md).
 code-review-*.md
+*-review-*.md
 
 # Local editor and OS files
 .idea/

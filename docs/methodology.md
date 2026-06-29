@@ -64,7 +64,7 @@ a superset of the information in the lower ones.
 |---|---|---|---|
 | **Pearson *r*** | lite | Linear association | Assumes linearity; not robust to outliers/leverage |
 | **Spearman ρ** | lite | Monotone association (rank) | Monotone only; robust to monotone outliers; degraded by heavy ties |
-| **Kendall τ-b** | lite | Monotone association (rank, tie-corrected) | Monotone only; numerically smaller than ρ for the same signal |
+| **Kendall τ-b** | lite | Monotone association (rank, tie-corrected) | Monotone only; built from concordant−discordant *pair* counts (not rank variance like ρ), so it is numerically smaller than ρ for the same signal |
 | **Distance correlation** | standard | *Any* statistical dependence | Population dCor = 0 **iff** independent; range [0, 1]; needs `dcor` |
 | **Mutual information** | standard | *Any* statistical dependence | KSG estimator; **raw/unnormalized (nats, ≥ 0, unbounded)** — not a 0–1 scale; needs `scikit-learn` |
 | **Trimmed / winsorized / median-clipped Pearson, biweight midcorrelation** | deep | Whether Pearson is leverage-driven | Robust variants of Pearson; computed only when *n* ≥ 50 |
