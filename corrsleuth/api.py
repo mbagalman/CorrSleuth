@@ -117,9 +117,11 @@ def profile_pair(
         Cap above which distance-correlation input is downsampled. ``None``
         disables the cap.
     random_state : int, default 42
-        Seed used for distance-correlation downsampling and the
-        mutual-information estimator. Held fixed by default so repeated runs on
-        the same input return the same numbers.
+        Seed for every stochastic step so repeated runs on the same input return
+        the same numbers: distance-correlation downsampling, the
+        mutual-information estimator, bootstrap resampling, and the random
+        tie-break used by Chatterjee's xi when the sort variable has ties. Held
+        fixed by default.
     bootstrap : int or None, default None
         Number of bootstrap resamples to use for approximate metric intervals.
         Disabled by default. Intervals are only computed when the effective

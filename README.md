@@ -276,7 +276,7 @@ def profile_pair(
     missing: str = "pairwise",          # "pairwise", "listwise", or "raise"
     include_caveat: bool = True,        # Includes causal caveats in explanations
     max_n_for_dcor: int | None = 20000, # Downsampling cap for Distance Correlation
-    random_state: int = 42,             # Seed for downsampling and MI estimator
+    random_state: int = 42,             # Seed: dcor downsampling, MI, bootstrap resampling, xi tie-breaking
     bootstrap: int | None = None,       # Optional bootstrap interval count
     bootstrap_metrics: str | Sequence[str] = "lite",  # "lite", "standard", or metric names
     max_n_for_bootstrap: int | None = 5000,
@@ -293,14 +293,22 @@ bootstrap metrics require the `[standard]` extras even when the main
 metrics can take many seconds on larger datasets, especially with distance
 correlation.
 
+Two conservative guards mean these fields can be omitted (left `None`) on small
+or heavily capped samples: **intervals** are not reported when the effective
+per-replicate size is below 20 (too few rows for a reliable percentile
+bootstrap), and **pattern stability** is not reported when `max_n_for_bootstrap`
+caps replicates below 30 on a larger original sample (every replicate would be
+judged low-power, making stability meaningless against the full-sample label). A
+warning explains each case.
+
 ### `CorrSleuthResult`
 The object returned by `profile_pair()`.
 - `.pattern`: The assigned heuristic label (e.g., `"near_linear"`).
 - `.summary()`: Returns a string summary of the metrics, label, warnings, recommendations, and caveat.
 - `.explain()`: Returns a plain-English narrative interpreting the results.
 - `.plot(show=False)`: Generates a 1x3 Matplotlib diagnostic figure.
-- `.bootstrap_intervals`: Optional bootstrap interval table when requested.
-- `.pattern_stability`: Optional share of bootstrap samples with the same label.
+- `.bootstrap_intervals`: Optional bootstrap interval table when requested (`None` when intervals are suppressed for too-small effective replicates; see above).
+- `.pattern_stability`: Optional share of bootstrap samples with the same label (`None` when stability is suppressed for cap-induced low-power replicates; see above).
 - `.bootstrap_label_counts`: Optional diagnostic label counts from bootstrap samples.
 - `.stability_label`: Optional `"low"`, `"medium"`, or `"high"` stability label.
 - `.to_markdown(include_caveat=None)`: Exports a compact Markdown report with metrics, diagnostics, warnings, recommendations, optional bootstrap sections, and the non-causal caveat by default.

@@ -207,8 +207,15 @@ Conventions applied:
 - `pair.n_used < 20 → None` plus a single warning about the small-sample
   bias. Threshold is lower than the robust metrics' 50 because ξ
   converges faster.
-- Stable sort + ordinal Y-ranking for determinism. Heavy-tie datasets are
-  already flagged by the `high_tie_rate` warning from Ticket 2.3.
+- Sort-key ties are broken with a **seeded random permutation** (`random_state`),
+  not by `Y`; ties in `Y` are handled by the tie-corrected denominator. Ordering
+  sort-key ties by `Y` would leak the response and inflate ξ, so random
+  tie-breaking is required for calibration. The value is reproducible for a given
+  input and `random_state`, but — when the sort variable has ties — is not
+  invariant to input row order. Heavy-tie datasets are also flagged by the
+  `high_tie_rate` warning from Ticket 2.3. (Earlier drafts of this note used a
+  stable sort + ordinal Y-ranking; that was corrected in 0.2.0 — see the updated
+  "Tie-breaking" bullet above and the CHANGELOG.)
 
 ## Open questions for the reviewer
 
