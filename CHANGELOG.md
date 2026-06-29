@@ -50,11 +50,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   This changes the metric's numeric output for non-degenerate data.
 
 ### Changed
-- Bootstrap **intervals** are now computed only when `n_used >= 20`. Below that
-  a percentile bootstrap is too unreliable to report (false precision), so
-  `bootstrap_intervals` is `None` with a warning; pattern stability is still
-  reported. The previous behavior computed intervals at any n with only a
-  "may be unstable" warning at n < 30.
+- Bootstrap **intervals** are now computed only when the *effective
+  per-replicate size* is `>= 20` (i.e. `min(n_used, max_n_for_bootstrap)`), not
+  just when `n_used >= 20`. Below that a percentile bootstrap is too unreliable
+  to report (false precision), so `bootstrap_intervals` is `None` with a
+  warning. This closes a path where a small `max_n_for_bootstrap` (e.g. 10) on a
+  large sample bypassed the floor.
+- Bootstrap **pattern stability** is suppressed (`None`, with a warning) when
+  `max_n_for_bootstrap` caps replicates below the low-power threshold (30) while
+  the original sample is above it. Previously every capped replicate was judged
+  `low_power_or_uncertain`, collapsing stability to 0.0 against a clean
+  full-sample label (e.g. `n=100, max_n_for_bootstrap=25` on strong linear data
+  reported `pattern_stability=0.0`). Genuinely small samples (uncapped,
+  `n_used < 30`) are unaffected and keep their stability signal.
 - Documented that mutual information is reported as **raw, unnormalized** MI (in
   nats, `>= 0`, unbounded — not a 0–1 scale) in the `compute_mutual_information`
   docstring and the README, so its magnitude isn't misread as a correlation.

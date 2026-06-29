@@ -595,6 +595,53 @@ def test_bootstrap_intervals_present_at_floor():
     assert not any("bootstrap intervals are not computed" in w for w in res.warnings)
 
 
+def test_bootstrap_cap_below_interval_floor_suppresses_intervals():
+    """max_n_for_bootstrap must not bypass the interval floor: the floor keys off
+    the effective per-replicate size, not the original n_used."""
+    rng = np.random.default_rng(0)
+    n = 100
+    x = rng.normal(size=n)
+    y = 2 * x + rng.normal(0, 0.1, size=n)
+    res = profile_pair(
+        pd.DataFrame({"x": x, "y": y}),
+        "x",
+        "y",
+        bootstrap=50,
+        max_n_for_bootstrap=10,  # caps replicates to 10 rows (< 20)
+        random_state=1,
+    )
+
+    assert res.bootstrap_intervals is None
+    assert any("bootstrap intervals are not computed" in w for w in res.warnings)
+
+
+def test_bootstrap_cap_below_low_n_suppresses_meaningless_stability():
+    """When the cap pushes replicates below the low-power threshold while the
+    original sample is well above it, pattern stability would collapse to 0.0
+    (every replicate judged low_power_or_uncertain) against a clean near_linear
+    label. It is suppressed (None) with a warning instead."""
+    rng = np.random.default_rng(0)
+    n = 100
+    x = rng.normal(size=n)
+    y = 2 * x + rng.normal(0, 0.1, size=n)
+    res = profile_pair(
+        pd.DataFrame({"x": x, "y": y}),
+        "x",
+        "y",
+        bootstrap=50,
+        max_n_for_bootstrap=25,  # 20 <= 25 < 30: intervals OK, stability not
+        random_state=1,
+    )
+
+    assert res.pattern == "near_linear"
+    assert res.bootstrap_intervals is not None  # 25 >= interval floor
+    assert res.bootstrap_stability is None
+    assert res.pattern_stability is None
+    assert any(
+        "cannot meaningfully test the full-sample label" in w for w in res.warnings
+    )
+
+
 def test_bootstrap_stability_is_none_when_disabled():
     df = make_relationship("linear_positive", n=80, random_state=42)
     res = profile_pair(df, "x", "y")

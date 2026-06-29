@@ -122,10 +122,10 @@ def profile_pair(
         the same input return the same numbers.
     bootstrap : int or None, default None
         Number of bootstrap resamples to use for approximate metric intervals.
-        Disabled by default. Intervals are only computed when ``n_used >= 20``;
-        below that the percentile bootstrap is too unreliable to report, so
-        ``bootstrap_intervals`` is ``None`` (with a warning) while pattern
-        stability is still computed.
+        Disabled by default. Intervals are only computed when the effective
+        per-replicate size is ``>= 20`` (see ``max_n_for_bootstrap``); below that
+        the percentile bootstrap is too unreliable to report, so
+        ``bootstrap_intervals`` is ``None`` (with a warning).
     bootstrap_metrics : {"lite", "standard"} or sequence of str, default "lite"
         Metric set to bootstrap. ``"lite"`` bootstraps Pearson, Spearman, and
         Kendall tau-b even when the main profile uses ``mode="standard"``.
@@ -137,7 +137,11 @@ def profile_pair(
         bootstrap), which widens the intervals and makes them conservative
         relative to the full-sample sampling variability; a warning is emitted
         when this happens. ``None`` disables the cap so every replicate uses all
-        rows.
+        rows. The interval floor and pattern stability both key off this
+        effective per-replicate size: a cap below 20 suppresses intervals, and a
+        cap below 30 (when ``n_used`` is larger) suppresses pattern stability —
+        every replicate would otherwise be judged low-power, making stability
+        meaningless against the full-sample label.
 
     Returns
     -------
