@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - 2026-06-28
 
 ### Fixed
+- **Bootstrap stability no longer over-assigns leverage labels.** Trim
+  sensitivity is now recomputed per bootstrap replicate instead of assuming
+  `outlier_sensitivity_unavailable`. Previously, a trim-stable `near_linear`
+  relationship with a large Pearson–Kendall gap had every resample labeled
+  `possible_outlier_or_leverage` — a label the original profile explicitly
+  rejected — collapsing pattern stability to ~0.
 - **Chatterjee's ξ calibration under ties.** Ties in the sort variable are now
   broken with a seeded random permutation (Chatterjee's prescription) instead of
   by the response. The old Y-based tie-break leaked the response into the
