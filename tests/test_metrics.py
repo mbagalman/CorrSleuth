@@ -372,25 +372,51 @@ def test_chatterjee_xi_only_appears_in_deep_mode():
     assert "chatterjee_xi_reverse" in deep_metrics
 
 
-def test_chatterjee_xi_is_invariant_to_row_order_with_x_ties():
-    """Shuffling the input rows must not change ξ — the metric should be a
-    function of the (x, y) multiset, not the row order."""
+def test_chatterjee_xi_is_calibrated_when_sort_variable_has_heavy_ties():
+    """ξ must stay near 0 under independence even when the sort variable is
+    heavily tied. Breaking ties by Y (the old behavior) leaked the response and
+    drove ξ toward 1 for, e.g., independent binary X — a false dependence
+    signal. The seeded random tie-break keeps it calibrated."""
     rng = np.random.default_rng(0)
+    n = 1000
+    x = rng.integers(0, 2, size=n).astype(float)  # binary -> ~50% ties
+    y = rng.normal(size=n)  # independent of x
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    forward = compute_chatterjee_xi(pair).value  # sorts by the tied x
+    reverse = compute_chatterjee_xi_reverse(
+        validate_pair(pd.DataFrame({"x": y, "y": x}), "x", "y")
+    ).value  # sorts by the tied x in the reverse role
+
+    assert abs(forward) < 0.15, forward
+    assert abs(reverse) < 0.15, reverse
+
+
+def test_chatterjee_xi_still_detects_dependence_on_a_discrete_predictor():
+    """Calibration must not cost sensitivity: when Y is a clean function of a
+    discrete X, ξ should be clearly positive (well above the independence band
+    and the dependence-warning threshold)."""
+    rng = np.random.default_rng(1)
+    n = 1000
+    x = rng.integers(0, 2, size=n).astype(float)
+    y = 3.0 * x + rng.normal(0, 0.01, size=n)  # Y is essentially a function of X
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    assert compute_chatterjee_xi(pair).value > 0.35
+
+
+def test_chatterjee_xi_is_reproducible_for_a_fixed_seed():
+    """The seeded tie-break makes ξ reproducible for a given input + seed."""
+    rng = np.random.default_rng(2)
     n = 200
-    # Heavy ties on x via discretization; y stays continuous.
     x = rng.integers(0, 5, size=n).astype(float)
     y = rng.normal(size=n)
-    df = pd.DataFrame({"x": x, "y": y})
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
 
-    forward_xi = compute_chatterjee_xi(validate_pair(df, "x", "y"))
-    reverse_xi = compute_chatterjee_xi_reverse(validate_pair(df, "x", "y"))
-
-    df_shuffled = df.sample(frac=1, random_state=7).reset_index(drop=True)
-    fwd_shuf = compute_chatterjee_xi(validate_pair(df_shuffled, "x", "y"))
-    rev_shuf = compute_chatterjee_xi_reverse(validate_pair(df_shuffled, "x", "y"))
-
-    assert forward_xi.value == fwd_shuf.value
-    assert reverse_xi.value == rev_shuf.value
+    assert (
+        compute_chatterjee_xi(pair, random_state=7).value
+        == compute_chatterjee_xi(pair, random_state=7).value
+    )
 
 
 def test_chatterjee_xi_exposes_both_directions_in_a_single_deep_call():

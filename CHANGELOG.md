@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - 2026-06-28
 
 ### Fixed
+- **Chatterjee's ξ calibration under ties.** Ties in the sort variable are now
+  broken with a seeded random permutation (Chatterjee's prescription) instead of
+  by the response. The old Y-based tie-break leaked the response into the
+  ordering and inflated ξ — an independent binary `X` against normal `Y`
+  produced ξ ≈ 0.99 (a false functional-dependence signal); it is now ≈ 0.
+  `compute_chatterjee_xi[_reverse]` take a `random_state` (seeded from
+  `profile_pair`), so values are reproducible for a given input; under ties they
+  are no longer invariant to input row order (they were spuriously invariant
+  before). ξ remains usable for discrete/low-cardinality variables.
+- **Bootstrap pattern stability for custom metric sets.** Pattern stability now
+  always evaluates the label cascade on at least the lite triple
+  (Pearson/Spearman/Kendall) per replicate, decoupled from `bootstrap_metrics`
+  (which still controls only which *intervals* are reported). Previously a
+  custom subset like `bootstrap_metrics=["pearson"]` made every replicate label
+  `not_computable`, reporting 0.0 stability for an obviously stable
+  relationship.
 - `biweight_midcorrelation` now uses the raw median absolute deviation
   (`scale=1.0`) in its Tukey weights, matching the canonical biweight
   midcorrelation (Wilcox; Langfelder & Horvath 2012). It previously used the

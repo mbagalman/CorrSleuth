@@ -223,8 +223,12 @@ def profile_pair(
         # above are not computable. Both directions are computed because the
         # statistic is asymmetric — for target scans, callers usually want the
         # reverse direction (candidate -> target).
-        metrics_map["chatterjee_xi"] = compute_chatterjee_xi(pair)
-        metrics_map["chatterjee_xi_reverse"] = compute_chatterjee_xi_reverse(pair)
+        metrics_map["chatterjee_xi"] = compute_chatterjee_xi(
+            pair, random_state=random_state
+        )
+        metrics_map["chatterjee_xi_reverse"] = compute_chatterjee_xi_reverse(
+            pair, random_state=random_state
+        )
 
     # 4. Apply heuristics and metric-agreement warnings
     heuristic_result = apply_heuristics(metrics_map, pair.flags, pair.n_used)

@@ -28,10 +28,10 @@ _MIN_N_FOR_CHATTERJEE_XI = 20
 
 
 def _compute_xi_directional(
-    x_sort_key: np.ndarray, y_values: np.ndarray, name: str
+    x_sort_key: np.ndarray, y_values: np.ndarray, name: str, random_state: int
 ) -> MetricResult:
-    """Core ξ computation: sort by ``x_sort_key`` (with ``y_values`` as tie-break)
-    and accumulate Y-rank differences.
+    """Core ξ computation: sort by ``x_sort_key`` (ties broken randomly) and
+    accumulate Y-rank differences.
 
     Uses the tie-corrected estimator from Chatterjee (2020), eq. (2):
 
@@ -39,18 +39,26 @@ def _compute_xi_directional(
 
     where, in ``x_sort_key`` order, ``r_i = #{j : Y_j ≤ Y_i}`` and
     ``l_i = #{j : Y_j ≥ Y_i}``. When ``Y`` has no ties this reduces exactly to
-    the simplified ``1 − 3·Σ|Δr| / (n²−1)`` form, but with ties — e.g. a
-    discrete or low-cardinality response — the simplified form overstates
+    the simplified ``1 − 3·Σ|Δr| / (n²−1)`` form, but with ties in ``Y`` — e.g.
+    a discrete or low-cardinality response — the simplified form overstates
     dependence, so the correction matters most for the feature-engineering
     (reverse) direction against a low-cardinality target.
 
-    The lexicographic tie-break makes the result a pure function of the
-    multiset of ``(x, y)`` pairs — shuffling rows of the input DataFrame does
-    not change the value.
+    Ties in the *sort key* are broken with a seeded random permutation, not by
+    ``Y``. Ordering tied ``x_sort_key`` values by ``Y`` would leak the response
+    into the ordering and manufacture dependence — under independence with a
+    discrete sort key it drives ξ toward 1. Random tie-breaking is Chatterjee's
+    prescription and keeps ξ calibrated (→ 0 under independence). The value is
+    reproducible for a given input and ``random_state``; when the sort key has
+    ties it depends on the random tie-break, so — unlike the tie-free case — it
+    is not invariant to the input row order.
     """
     n = x_sort_key.shape[0]
     try:
-        order = np.lexsort((y_values, x_sort_key))
+        # Seeded random permutation as the tie-break on the primary (x_sort_key)
+        # sort; the Y-tie correction lives in the denominator below.
+        tie_breaker = np.random.default_rng(random_state).permutation(n)
+        order = np.lexsort((tie_breaker, x_sort_key))
         y_sorted = y_values[order]
         # r_i = #{j : Y_j <= Y_i} (max rank), l_i = #{j : Y_j >= Y_i}.
         r = stats.rankdata(y_sorted, method="max")
@@ -69,7 +77,7 @@ def _compute_xi_directional(
     return MetricResult(name=name, value=float(xi), available=True)
 
 
-def compute_chatterjee_xi(pair: CleanPair) -> MetricResult:
+def compute_chatterjee_xi(pair: CleanPair, random_state: int = 42) -> MetricResult:
     """Compute Chatterjee's coefficient of correlation ``xi(X -> Y)``.
 
     From Chatterjee (2020), "A new coefficient of correlation" (JASA). The
@@ -83,12 +91,13 @@ def compute_chatterjee_xi(pair: CleanPair) -> MetricResult:
     - ``X`` is ``pair.x`` and ``Y`` is ``pair.y`` (matches ``profile_pair``'s
       argument order). For the reverse direction call
       :func:`compute_chatterjee_xi_reverse`.
-    - Ties in ``X`` are broken lexicographically by ``Y``, and ties in ``Y``
-      are handled with Chatterjee's tie-corrected denominator (rather than an
-      arbitrary ordinal rank-break), so the value stays well-calibrated for
-      discrete or low-cardinality responses. This makes the value invariant to
-      the row order of the underlying DataFrame; the existing ``high_tie_rate``
-      warning still flags datasets where ties compress the rank space.
+    - Ties in ``X`` (the sort key) are broken with a seeded random permutation
+      — never by ``Y``, which would leak the response and inflate ξ — while ties
+      in ``Y`` are handled by Chatterjee's tie-corrected denominator, so the
+      value stays well-calibrated for discrete or low-cardinality responses.
+    - ``random_state`` seeds that tie-break, so the value is reproducible for a
+      given input. When ``X`` has ties the value depends on the random
+      tie-break and is therefore not invariant to the input row order.
 
     Returns ``None`` when either column is constant or when ``n_used`` is too
     small for a reliable estimate.
@@ -105,10 +114,14 @@ def compute_chatterjee_xi(pair: CleanPair) -> MetricResult:
         )
         return MetricResult.no_value(name)
 
-    return _compute_xi_directional(pair.x.to_numpy(), pair.y.to_numpy(), name)
+    return _compute_xi_directional(
+        pair.x.to_numpy(), pair.y.to_numpy(), name, random_state
+    )
 
 
-def compute_chatterjee_xi_reverse(pair: CleanPair) -> MetricResult:
+def compute_chatterjee_xi_reverse(
+    pair: CleanPair, random_state: int = 42
+) -> MetricResult:
     """Compute Chatterjee's coefficient in the reverse direction, ``xi(Y -> X)``.
 
     Mirrors :func:`compute_chatterjee_xi` with the roles of ``X`` and ``Y``
@@ -117,6 +130,10 @@ def compute_chatterjee_xi_reverse(pair: CleanPair) -> MetricResult:
     ``profile_pair(data, target, candidate)``) this is the candidate→target
     direction — the one feature-engineering users typically want when
     prioritizing predictors against a target.
+
+    ``Y`` is the sort key here, so its ties are broken with the seeded random
+    permutation (see :func:`compute_chatterjee_xi`); this is what keeps
+    ``xi(Y -> X)`` calibrated when the target is discrete or low-cardinality.
 
     Returns ``None`` for constant inputs or when ``n_used`` is below the
     small-sample guard. The small-sample warning is emitted by
@@ -131,4 +148,6 @@ def compute_chatterjee_xi_reverse(pair: CleanPair) -> MetricResult:
     if pair.n_used < _MIN_N_FOR_CHATTERJEE_XI:
         return MetricResult.no_value(name)
 
-    return _compute_xi_directional(pair.y.to_numpy(), pair.x.to_numpy(), name)
+    return _compute_xi_directional(
+        pair.y.to_numpy(), pair.x.to_numpy(), name, random_state
+    )

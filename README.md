@@ -254,10 +254,11 @@ target→candidate direction (`chatterjee_xi`) and the candidate→target
 direction (`chatterjee_xi_reverse`) without an extra call. The metric
 converges slowly on small samples and returns `None` with a warning when
 `n_used < 20`. It uses the tie-corrected estimator from Chatterjee (2020), so it
-stays well-calibrated when `Y` is discrete or low-cardinality. The value is
-invariant to the row order of the underlying DataFrame: ties on `X` are broken
-lexicographically by `Y` so the result depends only on the multiset of
-`(x, y)` pairs. See
+stays well-calibrated when `Y` is discrete or low-cardinality. Ties in the sort
+variable are broken with a seeded random permutation (Chatterjee's prescription;
+breaking them by `Y` would leak the response and inflate ξ), so values are
+reproducible for a given input and `random_state` but, when the sort variable
+has ties, depend on that tie-break rather than being invariant to row order. See
 [docs/phase4-nonlinear-metrics-design-note.md](https://github.com/mbagalman/CorrSleuth/blob/main/docs/phase4-nonlinear-metrics-design-note.md)
 for the rationale and the candidates that were considered and deferred.
 

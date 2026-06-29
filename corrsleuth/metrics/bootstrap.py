@@ -273,8 +273,18 @@ def compute_bootstrap(
             "Bootstrap intervals requested with n_used < 30; intervals may be unstable."
         )
 
+    # Decouple interval selection from the stability cascade: intervals are
+    # reported for the caller's requested metrics (``metric_names``), but the
+    # label cascade always needs at least the lite triple
+    # (Pearson/Spearman/Kendall) — otherwise apply_heuristics short-circuits to
+    # not_computable and stability is meaningless for a custom subset like
+    # ["pearson"]. So compute the union per replicate and feed the full set to
+    # the cascade, while collecting interval values only for the requested set.
+    cascade_metrics = tuple(dict.fromkeys((*_LITE_BOOTSTRAP_METRICS, *metric_names)))
+
     generator = np.random.default_rng(random_state)
     values: dict[str, list[float]] = {name: [] for name in metric_names}
+    interval_metrics = set(metric_names)
     label_counts: dict[str, int] = {}
     n_iterations = 0
 
@@ -282,10 +292,14 @@ def compute_bootstrap(
         idx = generator.choice(pair.n_used, size=sample_size, replace=True)
         sample_pair = _bootstrap_sample_pair(pair, idx)
         sample_metrics = {}
-        for name in metric_names:
+        for name in cascade_metrics:
             metric = _compute_bootstrap_metric(name, sample_pair, random_state + i + 1)
             sample_metrics[name] = metric
-            if metric.value is not None and pd.notna(metric.value):
+            if (
+                name in interval_metrics
+                and metric.value is not None
+                and pd.notna(metric.value)
+            ):
                 values[name].append(float(metric.value))
 
         heuristic = apply_heuristics(
@@ -349,7 +363,13 @@ def compute_bootstrap(
             n_iterations=n_iterations,
         )
 
-        if original_pattern in STANDARD_ONLY_LABELS and metric_set == "lite":
+        # A standard-only label (e.g. nonmonotonic_dependence) needs distance
+        # correlation to be tested; warn whenever the cascade did not see it,
+        # regardless of how the interval metric set was labeled.
+        if (
+            original_pattern in STANDARD_ONLY_LABELS
+            and "distance_correlation" not in cascade_metrics
+        ):
             pair.warnings.append(
                 f"Pattern stability used lite bootstrap metrics, so it may not "
                 f"fully test a standard-mode {original_pattern} label."

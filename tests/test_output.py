@@ -423,6 +423,29 @@ def test_bootstrap_sequence_metric_set_is_preserved():
     assert res.bootstrap_stability.metric_set == "pearson"
 
 
+def test_pattern_stability_is_meaningful_for_custom_bootstrap_metric_subset():
+    """A custom bootstrap_metrics subset must not break pattern stability.
+
+    The stability cascade always needs the lite triple; if only the requested
+    metric were computed per replicate (e.g. ["pearson"]), the cascade would
+    short-circuit to not_computable and report 0.0 stability for an obviously
+    stable relationship. Intervals still follow the requested subset."""
+    df = make_relationship("linear_positive", n=120, random_state=42)
+
+    res = profile_pair(
+        df, "x", "y", bootstrap=25, bootstrap_metrics=["pearson"], random_state=7
+    )
+
+    assert res.pattern == "near_linear"
+    # Intervals only for the requested metric...
+    assert list(res.bootstrap_intervals["metric"]) == ["pearson"]
+    # ...but stability is computed on the full cascade, so the strong linear
+    # relationship is recovered rather than collapsing to not_computable.
+    assert "not_computable" not in res.bootstrap_label_counts
+    assert res.bootstrap_label_counts.get("near_linear", 0) >= 1
+    assert res.pattern_stability > 0.5
+
+
 def test_bootstrap_cap_warning_reaches_result_and_records_sample_size():
     df = make_relationship("linear_positive", n=80, random_state=42)
 
