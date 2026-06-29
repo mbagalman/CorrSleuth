@@ -37,6 +37,8 @@ model specification certainty.
 
 For a guide to what each diagnostic label means, when it can mislead, and what to
 do next, see the [interpretation guide](https://github.com/mbagalman/CorrSleuth/blob/main/docs/interpretation-guide.md).
+For how it works under the hood — the measures, how they're compared, and the
+label logic — see the [methodology doc](https://github.com/mbagalman/CorrSleuth/blob/main/docs/methodology.md).
 
 ## Installation
 
@@ -357,6 +359,7 @@ The object returned by `scan_target()`.
 
 ## Documentation
 
+- [Methodology](https://github.com/mbagalman/CorrSleuth/blob/main/docs/methodology.md) — for statisticians and data scientists: the pipeline, what each association measure detects and assumes, how the measures are compared (the `disagreement_score`), the label cascade, the bootstrap-stability approach, reproducibility, and limitations.
 - [Interpretation Guide](https://github.com/mbagalman/CorrSleuth/blob/main/docs/interpretation-guide.md) — meaning, typical metric pattern, common examples, recommended next steps, and caveats for every diagnostic label, plus topic notes on Pearson misleads, monotonicity, leverage, ties, and performance modes.
 - [Thresholds and Rationale](https://github.com/mbagalman/CorrSleuth/blob/main/docs/thresholds-and-rationale.md) — every cut point that drives a label or warning, with its value, location, justification, and how to override the label-driving ones.
 - [Phase 4 Nonlinear Metrics Design Note](https://github.com/mbagalman/CorrSleuth/blob/main/docs/phase4-nonlinear-metrics-design-note.md) — why Chatterjee's ξ was chosen over HSIC, MGC, MIC, and Hoeffding's D for `mode="deep"`.
