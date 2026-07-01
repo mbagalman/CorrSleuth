@@ -106,7 +106,7 @@ Notes that matter for interpretation:
   permutation* (its theory requires random tie-breaking; ordering ties by the
   response would leak it and inflate ξ), so ξ is reproducible for a fixed
   `random_state` but noisier for low-cardinality sort variables. See the
-  [phase-4 design note](phase4-nonlinear-metrics-design-note.md) for why ξ was
+  [nonlinear-metrics design note](nonlinear-metrics-design.md) for why ξ was
   chosen over HSIC, MGC, MIC, and Hoeffding's D.
 
 ## 4. Comparing the measures
@@ -329,7 +329,7 @@ for a fixed `random_state` but not invariant to input row order.
   typical metric patterns, and how to act on each label.
 - [thresholds-and-rationale.md](thresholds-and-rationale.md) — every cut point,
   its value, and its justification.
-- [phase4-nonlinear-metrics-design-note.md](phase4-nonlinear-metrics-design-note.md)
+- [nonlinear-metrics-design.md](nonlinear-metrics-design.md)
   — why Chatterjee's ξ was selected for deep mode.
 - Test suite (§8): `tests/test_property.py` (property-based invariants),
   `tests/test_smoke.py` (end-to-end API/render), and

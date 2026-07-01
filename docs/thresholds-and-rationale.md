@@ -201,7 +201,7 @@ Notes and caveats:
 
 - [interpretation-guide.md](interpretation-guide.md) — what each label means and
   how to act on it.
-- [phase4-nonlinear-metrics-design-note.md](phase4-nonlinear-metrics-design-note.md)
+- [nonlinear-metrics-design.md](nonlinear-metrics-design.md)
   — why particular metrics were chosen.
 - [`corrsleuth/heuristics/classifier.py`](../corrsleuth/heuristics/classifier.py)
   — the constants and the cascade, with inline docstrings.

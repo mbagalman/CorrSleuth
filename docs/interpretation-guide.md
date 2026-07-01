@@ -8,7 +8,7 @@ field manual, not as theory.
 
 For the package's API surface, see the [README](../README.md). For the
 research that motivates particular metric choices, see
-[phase4-nonlinear-metrics-design-note.md](phase4-nonlinear-metrics-design-note.md).
+[nonlinear-metrics-design.md](nonlinear-metrics-design.md).
 
 ## Contents
 
@@ -549,7 +549,7 @@ dependence is the question, and you don't want to install extras.
   each measure's assumptions, the `disagreement_score`, the label cascade, and
   the bootstrap-stability approach. This guide is the field manual; that doc is
   the theory.
-- [Phase 4 design note](phase4-nonlinear-metrics-design-note.md) — why
+- [Nonlinear metrics design note](nonlinear-metrics-design.md) — why
   Chatterjee's ξ was chosen over HSIC, MGC, and MIC, and which other
   nonlinear measures were deferred.
 - [thresholds-and-rationale.md](thresholds-and-rationale.md) — every threshold
