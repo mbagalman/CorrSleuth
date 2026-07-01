@@ -261,7 +261,7 @@ variable are broken with a seeded random permutation (Chatterjee's prescription;
 breaking them by `Y` would leak the response and inflate ξ), so values are
 reproducible for a given input and `random_state` but, when the sort variable
 has ties, depend on that tie-break rather than being invariant to row order. See
-[docs/phase4-nonlinear-metrics-design-note.md](https://github.com/mbagalman/CorrSleuth/blob/main/docs/phase4-nonlinear-metrics-design-note.md)
+[docs/nonlinear-metrics-design.md](https://github.com/mbagalman/CorrSleuth/blob/main/docs/nonlinear-metrics-design.md)
 for the rationale and the candidates that were considered and deferred.
 
 ## API Reference
@@ -362,7 +362,7 @@ The object returned by `scan_target()`.
 - [Methodology](https://github.com/mbagalman/CorrSleuth/blob/main/docs/methodology.md) — for statisticians and data scientists: the pipeline, what each association measure detects and assumes, how the measures are compared (the `disagreement_score`), the label cascade, the bootstrap-stability approach, reproducibility, and limitations.
 - [Interpretation Guide](https://github.com/mbagalman/CorrSleuth/blob/main/docs/interpretation-guide.md) — meaning, typical metric pattern, common examples, recommended next steps, and caveats for every diagnostic label, plus topic notes on Pearson misleads, monotonicity, leverage, ties, and performance modes.
 - [Thresholds and Rationale](https://github.com/mbagalman/CorrSleuth/blob/main/docs/thresholds-and-rationale.md) — every cut point that drives a label or warning, with its value, location, justification, and how to override the label-driving ones.
-- [Phase 4 Nonlinear Metrics Design Note](https://github.com/mbagalman/CorrSleuth/blob/main/docs/phase4-nonlinear-metrics-design-note.md) — why Chatterjee's ξ was chosen over HSIC, MGC, MIC, and Hoeffding's D for `mode="deep"`.
+- [Nonlinear Metrics Design Note](https://github.com/mbagalman/CorrSleuth/blob/main/docs/nonlinear-metrics-design.md) — why Chatterjee's ξ was chosen over HSIC, MGC, MIC, and Hoeffding's D for `mode="deep"`.
 
 ## License
 

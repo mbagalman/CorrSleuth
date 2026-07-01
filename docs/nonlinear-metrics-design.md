@@ -1,8 +1,9 @@
-# Phase 4 Design Note — Additional Nonlinear Dependence Measures
+# Nonlinear Dependence Measures — Design Note
 
-> Ticket 4.2. This note evaluates the candidate nonlinear dependence measures
-> listed in the adoption pack, picks the ones worth implementing, and
-> documents why the rest are deferred or rejected.
+> This note evaluates candidate nonlinear dependence measures, picks the ones
+> worth implementing (Chatterjee's ξ for `mode="deep"`), and documents why the
+> rest are deferred or rejected. It is the "why these metrics" companion to the
+> [methodology doc](methodology.md).
 
 ## Context
 
@@ -15,8 +16,8 @@ CorrSleuth already exposes two nonlinear dependence measures, both behind the
 - **Mutual information** — symmetric, estimated with scikit-learn's
   KSG-style `mutual_info_regression`.
 
-Phase 4 / Ticket 4.2 asks whether additional nonlinear measures would
-meaningfully improve diagnosis. The criteria from the ticket are:
+This note asks whether additional nonlinear measures would meaningfully improve
+diagnosis. The evaluation criteria are:
 
 | Criterion | Treatment in this note |
 |---|---|

@@ -756,7 +756,7 @@ Completed in: `bfaa5c4 Add Chatterjee's xi to deep mode + Phase 4 design note (#
 
 Completion notes:
 
-- Added a design note at [docs/phase4-nonlinear-metrics-design-note.md](../phase4-nonlinear-metrics-design-note.md) comparing HSIC, Hoeffding's D, Chatterjee's ξ, MGC (via `hyppo`), and MIC (via `minepy`) against the ticket's six criteria.
+- Added a design note at [docs/nonlinear-metrics-design.md](../nonlinear-metrics-design.md) (originally `phase4-nonlinear-metrics-design-note.md`) comparing HSIC, Hoeffding's D, Chatterjee's ξ, MGC (via `hyppo`), and MIC (via `minepy`) against the ticket's six criteria.
 - Implemented Chatterjee's ξ as the recommended primary candidate. It has no new dependency, runs in O(n log n), and adds an *asymmetric* dependence measure that complements the existing symmetric `dcor` / mutual information.
 - New module `corrsleuth/metrics/nonlinear.py` exposes both `compute_chatterjee_xi` (`ξ(pair.x → pair.y)`) and `compute_chatterjee_xi_reverse` (`ξ(pair.y → pair.x)`), so target scans get both target→candidate and candidate→target evidence in a single call.
 - Wired into `mode="deep"` (alongside the robust correlations from Ticket 4.1) and both directions added to `_VALID_SORT_KEYS` in `corrsleuth/scan.py` so target reports can sort `plot_top()` by either direction.

@@ -18,7 +18,7 @@ User-facing documentation for the CorrSleuth package. Start with the
   that drives a label or warning, with its value, location, justification,
   and how to override the label-driving ones. Read this if any threshold
   looks arbitrary.
-- [Phase 4 Nonlinear Metrics Design Note](phase4-nonlinear-metrics-design-note.md)
+- [Nonlinear Metrics Design Note](nonlinear-metrics-design.md)
   — why Chatterjee's ξ was chosen for `mode="deep"` over HSIC, MGC, MIC,
   and Hoeffding's D. Useful if you want to know *why* a particular
   dependence measure was added to the package.
