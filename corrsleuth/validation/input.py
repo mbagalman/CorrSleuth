@@ -53,6 +53,20 @@ class CleanPair:
     warnings: list[str]  # raw validation warnings only
 
 
+def is_real_numeric_dtype(series: pd.Series) -> bool:
+    """Return True for real-valued numeric columns, False for complex ones.
+
+    ``pd.api.types.is_numeric_dtype`` treats complex dtypes as numeric, but every
+    metric CorrSleuth computes is defined for real-valued data. Casting a complex
+    column to ``float`` silently discards the imaginary part (pandas emits a
+    ``ComplexWarning``), so complex columns are rejected up front rather than
+    projected onto the real axis without the caller's knowledge.
+    """
+    return pd.api.types.is_numeric_dtype(series) and not pd.api.types.is_complex_dtype(
+        series
+    )
+
+
 def is_constant_series(series: pd.Series) -> bool:
     return series.nunique() <= 1 or series.std() == 0
 
@@ -138,10 +152,15 @@ def validate_pair(
                 f"column names must be unique."
             )
 
-    if not pd.api.types.is_numeric_dtype(s_x):
-        raise InputError(f"Column '{x}' is not numeric.")
-    if not pd.api.types.is_numeric_dtype(s_y):
-        raise InputError(f"Column '{y}' is not numeric.")
+    for name, selected in ((x, s_x), (y, s_y)):
+        if not pd.api.types.is_numeric_dtype(selected):
+            raise InputError(f"Column '{name}' is not numeric.")
+        if pd.api.types.is_complex_dtype(selected):
+            raise InputError(
+                f"Column '{name}' has a complex dtype; CorrSleuth only supports "
+                f"real-valued numeric data. Cast to a real dtype explicitly "
+                f"(e.g. take the real part or magnitude) before profiling."
+            )
 
     n_original = len(data)
 

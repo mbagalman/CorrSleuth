@@ -45,7 +45,9 @@ say so (`mixed_or_ambiguous`) rather than overclaim a pattern.
 `profile_pair(data, x, y, mode=...)` runs a fixed sequence:
 
 1. **Validate & clean** (`validation/input.py`). Apply the missing-data policy,
-   verify each column is a numeric dtype (non-numeric input raises) and cast it
+   verify each column is a real-valued numeric dtype (non-numeric input raises;
+   complex dtypes are rejected rather than silently projected onto the real axis)
+   and cast it
    to float, drop the unusable rows, and record data-quality flags
    (constant input, low *n*, high tie rate, low unique ratio, high
    missingness). The result is an internal `CleanPair` that downstream steps can

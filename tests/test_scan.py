@@ -226,6 +226,30 @@ def test_scan_target_rejects_non_numeric_target():
         scan_target(df, "label")
 
 
+def test_scan_target_rejects_complex_target():
+    df = _build_clean_df()
+    df["cplx"] = df["target"] + 1j
+    with pytest.raises(InputError, match="complex dtype"):
+        scan_target(df, "cplx")
+
+
+def test_scan_target_skips_complex_candidate_columns():
+    # A complex candidate is excluded from auto-selection (columns=None) rather
+    # than silently profiled after a lossy cast to the real axis.
+    df = _build_clean_df()
+    df["cplx"] = df["linear"] + 1j
+    report = scan_target(df, "target")
+    profiled = {e.column for e in report.successes}
+    assert "cplx" not in profiled
+
+    # Explicitly requesting it yields a NonNumeric skip that names the dtype.
+    report = scan_target(df, "target", columns=["linear", "cplx"])
+    entry = next(e for e in report.entries if e.column == "cplx")
+    assert entry.status == "skipped"
+    assert entry.error_type == "NonNumeric"
+    assert "complex" in entry.error_message.lower()
+
+
 def test_scan_target_forwards_profile_pair_kwargs():
     df = _build_clean_df()
     report = scan_target(df, "target", bootstrap=10, random_state=123)

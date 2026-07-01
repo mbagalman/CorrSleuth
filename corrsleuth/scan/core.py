@@ -18,6 +18,7 @@ import pandas as pd
 from corrsleuth.api import profile_pair
 from corrsleuth.exceptions import InputError
 from corrsleuth.result import CorrSleuthResult
+from corrsleuth.validation.input import is_real_numeric_dtype
 
 if TYPE_CHECKING:
     from corrsleuth.scan.report import CorrSleuthTargetReport
@@ -130,7 +131,7 @@ def _resolve_candidate_columns(
                     seen_duplicates.add(col)
                     skipped.append(_duplicate_skip(col))
                 continue
-            if pd.api.types.is_numeric_dtype(data[col]):
+            if is_real_numeric_dtype(data[col]):
                 candidates.append(col)
         return candidates, skipped
 
@@ -166,13 +167,19 @@ def _resolve_candidate_columns(
         if col in duplicated:
             skipped.append(_duplicate_skip(col))
             continue
-        if not pd.api.types.is_numeric_dtype(data[col]):
+        if not is_real_numeric_dtype(data[col]):
+            is_complex = pd.api.types.is_complex_dtype(data[col])
             skipped.append(
                 TargetScanEntry(
                     column=col,
                     status="skipped",
                     error_type="NonNumeric",
-                    error_message=f"Column '{col}' is not numeric.",
+                    error_message=(
+                        f"Column '{col}' has a complex dtype; CorrSleuth only "
+                        f"supports real-valued numeric data."
+                        if is_complex
+                        else f"Column '{col}' is not numeric."
+                    ),
                 )
             )
             continue
@@ -278,6 +285,12 @@ def scan_target(
         )
     if not pd.api.types.is_numeric_dtype(data[target]):
         raise InputError(f"Target column '{target}' is not numeric.")
+    if pd.api.types.is_complex_dtype(data[target]):
+        raise InputError(
+            f"Target column '{target}' has a complex dtype; CorrSleuth only "
+            f"supports real-valued numeric data. Cast to a real dtype explicitly "
+            f"(e.g. take the real part or magnitude) before scanning."
+        )
 
     if isinstance(columns, str):
         columns = [columns]

@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -69,6 +71,23 @@ def test_validation_non_numeric():
     df = pd.DataFrame({"x": [1, 2], "y": ["a", "b"]})
     with pytest.raises(InputError, match="is not numeric"):
         validate_pair(df, "x", "y")
+
+
+def test_validation_rejects_complex_dtype():
+    # Complex columns pass ``is_numeric_dtype`` but casting to float silently
+    # discards the imaginary part; they must be rejected, not projected.
+    df = pd.DataFrame({"x": [1.0, 2.0, 3.0], "y": [1 + 2j, 3 + 4j, 5 + 6j]})
+    assert df["y"].dtype == np.complex128
+    # Rejection happens at the numeric gate, before any float cast, so no
+    # ComplexWarning is emitted; turn warnings into errors to prove it.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(InputError, match="complex dtype"):
+            validate_pair(df, "x", "y")
+    # Rejection also applies when the complex column is x.
+    df_x = pd.DataFrame({"x": [1 + 2j, 3 + 4j, 5 + 6j], "y": [1.0, 2.0, 3.0]})
+    with pytest.raises(InputError, match="complex dtype"):
+        validate_pair(df_x, "x", "y")
 
 
 def test_validation_rejects_infinite_values_in_used_rows():

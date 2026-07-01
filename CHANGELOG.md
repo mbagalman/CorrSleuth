@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - 2026-06-28
 
 ### Fixed
+- **Complex-valued columns are now rejected instead of silently truncated.**
+  `pandas.api.types.is_numeric_dtype` treats complex dtypes as numeric, so a
+  complex column passed the validation gate and was then cast to `float`,
+  discarding the imaginary part (with a `ComplexWarning`) and profiling only the
+  real axis. `profile_pair` and `scan_target` now raise `InputError` for a
+  complex `x`/`y`/target, and complex candidates are excluded from auto-selection
+  (or skipped with a dtype-specific `NonNumeric` message when named explicitly).
+  Cast to a real dtype yourself (real part or magnitude) if that projection is
+  what you intend.
 - **Directional sign conflicts are no longer mislabeled as agreement.** When
   Pearson and Spearman point in opposite directions with comparable magnitude
   (e.g. +0.8 vs −0.8, a leverage signature), the cascade compared *absolute*
