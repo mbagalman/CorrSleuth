@@ -242,12 +242,14 @@ def test_scan_target_skips_complex_candidate_columns():
     profiled = {e.column for e in report.successes}
     assert "cplx" not in profiled
 
-    # Explicitly requesting it yields a NonNumeric skip that names the dtype.
+    # Explicitly requesting it yields a ComplexDtype skip that names the dtype
+    # and tells the caller how to cast, distinguishable from NonNumeric.
     report = scan_target(df, "target", columns=["linear", "cplx"])
     entry = next(e for e in report.entries if e.column == "cplx")
     assert entry.status == "skipped"
-    assert entry.error_type == "NonNumeric"
+    assert entry.error_type == "ComplexDtype"
     assert "complex" in entry.error_message.lower()
+    assert "real part or magnitude" in entry.error_message
 
 
 def test_scan_target_forwards_profile_pair_kwargs():

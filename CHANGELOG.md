@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   discarding the imaginary part (with a `ComplexWarning`) and profiling only the
   real axis. `profile_pair` and `scan_target` now raise `InputError` for a
   complex `x`/`y`/target, and complex candidates are excluded from auto-selection
-  (or skipped with a dtype-specific `NonNumeric` message when named explicitly).
+  (or skipped with a dedicated `ComplexDtype` error type when named explicitly,
+  so report consumers can tell complex rejection apart from `NonNumeric`).
   Cast to a real dtype yourself (real part or magnitude) if that projection is
   what you intend.
 - **Directional sign conflicts are no longer mislabeled as agreement.** When

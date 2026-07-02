@@ -18,7 +18,7 @@ import pandas as pd
 from corrsleuth.api import profile_pair
 from corrsleuth.exceptions import InputError
 from corrsleuth.result import CorrSleuthResult
-from corrsleuth.validation.input import is_real_numeric_dtype
+from corrsleuth.validation.input import is_real_numeric_dtype, real_numeric_problem
 
 if TYPE_CHECKING:
     from corrsleuth.scan.report import CorrSleuthTargetReport
@@ -95,9 +95,11 @@ def _resolve_candidate_columns(
 ) -> tuple[list[str], list[TargetScanEntry]]:
     """Return (numeric candidates, pre-skipped entries) honoring ``columns=``.
 
-    If ``columns`` is None, every numeric column except the target is a
-    candidate. When the caller passes an explicit list, we preserve their order
-    and emit ``status="skipped"`` entries for missing or non-numeric names so
+    If ``columns`` is None, every real-valued numeric column except the target
+    is a candidate; complex columns are excluded (pandas classifies them as
+    numeric, but CorrSleuth's metrics are defined for real-valued data). When
+    the caller passes an explicit list, we preserve their order and emit
+    ``status="skipped"`` entries for missing, non-numeric, or complex names so
     the report still reflects the request.
 
     Duplicate column names are surfaced as ``DuplicateColumn`` skips in either
@@ -167,19 +169,14 @@ def _resolve_candidate_columns(
         if col in duplicated:
             skipped.append(_duplicate_skip(col))
             continue
-        if not is_real_numeric_dtype(data[col]):
-            is_complex = pd.api.types.is_complex_dtype(data[col])
+        problem = real_numeric_problem(data[col], f"Column '{col}'", context="scanning")
+        if problem is not None:
             skipped.append(
                 TargetScanEntry(
                     column=col,
                     status="skipped",
-                    error_type="NonNumeric",
-                    error_message=(
-                        f"Column '{col}' has a complex dtype; CorrSleuth only "
-                        f"supports real-valued numeric data."
-                        if is_complex
-                        else f"Column '{col}' is not numeric."
-                    ),
+                    error_type=problem.error_type,
+                    error_message=problem.message,
                 )
             )
             continue
@@ -201,18 +198,21 @@ def scan_target(
     random_state: int = 42,
     **profile_pair_kwargs: Any,
 ) -> CorrSleuthTargetReport:
-    """Profile every eligible numeric predictor against ``target``.
+    """Profile every eligible real-valued numeric predictor against ``target``.
 
     Parameters
     ----------
     data : pd.DataFrame
         Source data. Must contain ``target``.
     target : str
-        Numeric target column. Profiled against every other numeric column.
+        Real-valued numeric target column, profiled against every other
+        real-valued numeric column. A complex-dtype target raises
+        :class:`InputError` (cast to the real part or magnitude first).
     columns : sequence of str, optional
-        Restrict the scan to these columns. Non-numeric or missing names are
-        recorded as ``skipped`` entries rather than raising. When ``None``
-        (default), all numeric columns except the target are scanned.
+        Restrict the scan to these columns. Non-numeric, complex, or missing
+        names are recorded as ``skipped`` entries rather than raising. When
+        ``None`` (default), all real-valued numeric columns except the target
+        are scanned; complex columns are excluded.
     mode : {"lite", "standard", "deep"}, default "lite"
         Forwarded to :func:`profile_pair`.
     missing : {"pairwise", "listwise", "raise"}, default "pairwise"
@@ -283,14 +283,11 @@ def scan_target(
             f"Target column '{target}' matches multiple columns in data; "
             f"column names must be unique."
         )
-    if not pd.api.types.is_numeric_dtype(data[target]):
-        raise InputError(f"Target column '{target}' is not numeric.")
-    if pd.api.types.is_complex_dtype(data[target]):
-        raise InputError(
-            f"Target column '{target}' has a complex dtype; CorrSleuth only "
-            f"supports real-valued numeric data. Cast to a real dtype explicitly "
-            f"(e.g. take the real part or magnitude) before scanning."
-        )
+    target_problem = real_numeric_problem(
+        data[target], f"Target column '{target}'", context="scanning"
+    )
+    if target_problem is not None:
+        raise InputError(target_problem.message)
 
     if isinstance(columns, str):
         columns = [columns]

@@ -267,7 +267,9 @@ for the rationale and the candidates that were considered and deferred.
 ## API Reference
 
 ### `profile_pair()`
-The main entry point for profiling a numeric pair.
+The main entry point for profiling a real-valued numeric pair. Complex-valued
+columns raise `InputError` rather than being silently projected onto the real
+axis — cast to the real part or magnitude first if that is what you intend.
 
 ```python
 def profile_pair(
@@ -317,7 +319,8 @@ The object returned by `profile_pair()`.
 - `.to_dict()` / `.to_frame()`: Serializes the output for downstream pipelines.
 
 ### `scan_target()`
-Profile every eligible numeric predictor against a single numeric target column.
+Profile every eligible real-valued numeric predictor against a single
+real-valued numeric target column.
 
 ```python
 def scan_target(
@@ -344,7 +347,7 @@ print(report.summary())
 report.to_frame()  # one row per profiled or skipped column
 ```
 
-Non-numeric or missing columns listed in `columns=` are recorded as `skipped` entries with `error_type` and `error_message` rather than aborting the scan. With `errors="warn"` (default), exceptions raised by `profile_pair()` are captured as `error` entries. Use `errors="raise"` to fail fast.
+Non-numeric, complex, or missing columns listed in `columns=` are recorded as `skipped` entries with `error_type` (`NonNumeric`, `ComplexDtype`, `ColumnNotFound`, `TargetExcluded`, or `DuplicateColumn`) and `error_message` rather than aborting the scan. A complex-dtype target raises `InputError`, and complex columns are excluded from auto-selection when `columns=None`. With `errors="warn"` (default), exceptions raised by `profile_pair()` are captured as `error` entries. Use `errors="raise"` to fail fast.
 
 ### `CorrSleuthTargetReport`
 The object returned by `scan_target()`.
