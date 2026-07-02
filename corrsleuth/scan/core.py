@@ -169,9 +169,7 @@ def _resolve_candidate_columns(
         if col in duplicated:
             skipped.append(_duplicate_skip(col))
             continue
-        problem = real_numeric_problem(
-            data[col], f"Column '{col}'", context="scanning"
-        )
+        problem = real_numeric_problem(data[col], f"Column '{col}'", context="scanning")
         if problem is not None:
             skipped.append(
                 TargetScanEntry(
