@@ -79,9 +79,12 @@ def test_validation_rejects_complex_dtype():
     df = pd.DataFrame({"x": [1.0, 2.0, 3.0], "y": [1 + 2j, 3 + 4j, 5 + 6j]})
     assert df["y"].dtype == np.complex128
     # Rejection happens at the numeric gate, before any float cast, so no
-    # ComplexWarning is emitted; turn warnings into errors to prove it.
+    # ComplexWarning is emitted; turn only that warning into an error to prove
+    # it without escalating unrelated warnings from future pandas versions.
+    # ComplexWarning moved from the numpy top level to np.exceptions in 1.25.
+    complex_warning = getattr(np, "exceptions", np).ComplexWarning
     with warnings.catch_warnings():
-        warnings.simplefilter("error")
+        warnings.simplefilter("error", category=complex_warning)
         with pytest.raises(InputError, match="complex dtype"):
             validate_pair(df, "x", "y")
     # Rejection also applies when the complex column is x.

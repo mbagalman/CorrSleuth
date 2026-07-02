@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -53,18 +54,47 @@ class CleanPair:
     warnings: list[str]  # raw validation warnings only
 
 
-def is_real_numeric_dtype(series: pd.Series) -> bool:
-    """Return True for real-valued numeric columns, False for complex ones.
+class DtypeProblem(NamedTuple):
+    """Why a column fails the real-numeric gate."""
+
+    error_type: str  # "NonNumeric" or "ComplexDtype"
+    message: str
+
+
+def real_numeric_problem(
+    series: pd.Series, label: str, context: str = "profiling"
+) -> DtypeProblem | None:
+    """Return why ``series`` fails the real-numeric gate, or None if it passes.
+
+    Every gate that decides whether a column is profilable routes through this
+    classifier so the acceptance policy, the ``error_type`` code, and the
+    user-facing wording live in one place.
 
     ``pd.api.types.is_numeric_dtype`` treats complex dtypes as numeric, but every
     metric CorrSleuth computes is defined for real-valued data. Casting a complex
     column to ``float`` silently discards the imaginary part (pandas emits a
     ``ComplexWarning``), so complex columns are rejected up front rather than
     projected onto the real axis without the caller's knowledge.
+
+    ``label`` is the display name used in the message (e.g. ``"Column 'x'"`` or
+    ``"Target column 'y'"``); ``context`` is the operation the caller was asked
+    to perform (``"profiling"`` or ``"scanning"``).
     """
-    return pd.api.types.is_numeric_dtype(series) and not pd.api.types.is_complex_dtype(
-        series
-    )
+    if not pd.api.types.is_numeric_dtype(series):
+        return DtypeProblem("NonNumeric", f"{label} is not numeric.")
+    if pd.api.types.is_complex_dtype(series):
+        return DtypeProblem(
+            "ComplexDtype",
+            f"{label} has a complex dtype; CorrSleuth only supports real-valued "
+            f"numeric data. Cast to a real dtype explicitly (e.g. take the real "
+            f"part or magnitude) before {context}.",
+        )
+    return None
+
+
+def is_real_numeric_dtype(series: pd.Series) -> bool:
+    """Return True for real-valued numeric columns (see ``real_numeric_problem``)."""
+    return real_numeric_problem(series, "") is None
 
 
 def is_constant_series(series: pd.Series) -> bool:
@@ -113,7 +143,7 @@ def validate_pair(
     data : pd.DataFrame
         Source data containing both columns.
     x, y : str
-        Names of the two numeric columns to validate.
+        Names of the two real-valued numeric columns to validate.
     missing : {"pairwise", "listwise", "raise"}, default "pairwise"
         Missing-value policy. ``"pairwise"`` drops rows missing in ``x`` or
         ``y`` only. ``"listwise"`` drops rows missing in *any* column of
@@ -130,7 +160,8 @@ def validate_pair(
     Raises
     ------
     InputError
-        If ``x == y``, a column is missing or non-numeric, a name matches
+        If ``x == y``, a column is missing, non-numeric, or complex-valued
+        (only real-valued numeric data is supported), a name matches
         multiple columns, ``missing`` is not a supported mode, missing values
         are present when ``missing="raise"``, the rows used contain infinite
         values, or fewer than two valid observations remain.
@@ -146,21 +177,17 @@ def validate_pair(
     s_y = data[y]
 
     for name, selected in ((x, s_x), (y, s_y)):
+        # The DataFrame check must precede the dtype check: data[name] returns
+        # a DataFrame for a duplicated name, which the dtype predicates cannot
+        # classify.
         if isinstance(selected, pd.DataFrame):
             raise InputError(
                 f"Column '{name}' matches multiple columns in data; "
                 f"column names must be unique."
             )
-
-    for name, selected in ((x, s_x), (y, s_y)):
-        if not pd.api.types.is_numeric_dtype(selected):
-            raise InputError(f"Column '{name}' is not numeric.")
-        if pd.api.types.is_complex_dtype(selected):
-            raise InputError(
-                f"Column '{name}' has a complex dtype; CorrSleuth only supports "
-                f"real-valued numeric data. Cast to a real dtype explicitly "
-                f"(e.g. take the real part or magnitude) before profiling."
-            )
+        problem = real_numeric_problem(selected, f"Column '{name}'")
+        if problem is not None:
+            raise InputError(problem.message)
 
     n_original = len(data)
 

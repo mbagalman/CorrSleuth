@@ -96,7 +96,8 @@ def profile_pair(
     data : pd.DataFrame
         Source data containing both columns.
     x, y : str
-        Column names of the numeric variables to profile.
+        Column names of the real-valued numeric variables to profile. Complex
+        dtypes are rejected (cast to the real part or magnitude first).
     mode : {"lite", "standard", "deep"}, default "lite"
         ``"lite"`` computes Pearson, Spearman, and Kendall tau-b.
         ``"standard"`` additionally computes distance correlation and mutual
@@ -158,10 +159,10 @@ def profile_pair(
     ------
     InputError
         If ``mode`` is not one of ``"lite"``, ``"standard"``, or ``"deep"``, or
-        if the input fails validation (``x`` or ``y`` missing or non-numeric,
-        ``x == y``, duplicate column names, infinite values in the rows used,
-        missing values when ``missing="raise"``, or fewer than two valid
-        observations after applying the missing-value policy).
+        if the input fails validation (``x`` or ``y`` missing, non-numeric, or
+        complex-valued, ``x == y``, duplicate column names, infinite values in
+        the rows used, missing values when ``missing="raise"``, or fewer than
+        two valid observations after applying the missing-value policy).
     OptionalDependencyError
         If ``mode="standard"`` and the ``corrsleuth[standard]`` extras
         (``dcor``, ``scikit-learn``) are not installed.
