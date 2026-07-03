@@ -43,8 +43,8 @@ test.** Treat every threshold as a documented convention you are free to adjust.
 Two kinds of reasoning sit behind the numbers:
 
 1. **Effect-size convention.** Magnitude bands follow the widely used guidance
-   for interpreting a correlation coefficient (Cohen, *Statistical Power
-   Analysis for the Behavioral Sciences*, 1988): `|r| ≈ 0.1` is a "small"
+   for interpreting a correlation coefficient (Cohen, [*Statistical Power
+   Analysis for the Behavioral Sciences*](https://utstat.toronto.edu/~brunner/oldclass/378f16/readings/CohenPower.pdf), 1988): `|r| ≈ 0.1` is a "small"
    effect, `≈ 0.3` "medium", `≈ 0.5` "large". CorrSleuth's "strong" floor sits
    on the large boundary (0.50) and its "weak" ceiling sits below the medium
    boundary (0.20).

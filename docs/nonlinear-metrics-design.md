@@ -90,7 +90,7 @@ needs a no-new-dep symmetric alternative when `[standard]` isn't installed.
 
 ### 3. Chatterjee's ξ — *primary candidate*
 
-From Chatterjee (2020), *A new coefficient of correlation* (JASA). Defined as
+From Chatterjee (2020), [*A new coefficient of correlation*](https://par.nsf.gov/servlets/purl/10339804) (JASA). Defined as
 
 ```
 ξ_n(X → Y) = 1 - (3 · Σ |r_{i+1} - r_i|) / (n² - 1)

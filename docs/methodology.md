@@ -337,10 +337,10 @@ for a fixed `random_state` but not invariant to input row order.
   `tests/test_smoke.py` (end-to-end API/render), and
   `corrsleuth/datasets/simulations.py` (`make_relationship` synthetic
   generators) — the executable evidence behind the claims above.
-- Chatterjee, S. (2020). *A new coefficient of correlation.* JASA.
-- Székely, G., Rizzo, M., & Bakirov, N. (2007). *Measuring and testing
-  dependence by correlation of distances.* Annals of Statistics.
-- Kraskov, A., Stögbauer, H., & Grassberger, P. (2004). *Estimating mutual
-  information.* Physical Review E. (The KSG estimator used by scikit-learn.)
-- Cohen, J. (1988). *Statistical Power Analysis for the Behavioral Sciences.*
+- Chatterjee, S. (2020). [*A new coefficient of correlation.*](https://par.nsf.gov/servlets/purl/10339804) JASA.
+- Székely, G., Rizzo, M., & Bakirov, N. (2007). [*Measuring and testing
+  dependence by correlation of distances.*](https://www.jstor.org/stable/25464608) Annals of Statistics.
+- Kraskov, A., Stögbauer, H., & Grassberger, P. (2004). [*Estimating mutual
+  information.*](https://journals.aps.org/pre/pdf/10.1103/PhysRevE.69.066138) Physical Review E. (The KSG estimator used by scikit-learn.)
+- Cohen, J. (1988). [*Statistical Power Analysis for the Behavioral Sciences.*](https://utstat.toronto.edu/~brunner/oldclass/378f16/readings/CohenPower.pdf)
   (Source of the effect-size magnitude bands.)
