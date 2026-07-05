@@ -118,6 +118,14 @@ HETEROSCEDASTICITY_PVALUE_THRESHOLD = 0.05
 #: change (clean linear data measured a ratio ~0.8-1.2 across seeds).
 HETEROSCEDASTICITY_RATIO_FLOOR = 1.5
 
+#: Segment "stepness" (see metrics/shape.py) above which a curved monotone mean
+#: is read as a step/threshold jump rather than a smooth bend — the fraction of
+#: a single breakpoint's fit improvement that a flat-segment (two-level) model
+#: already captures. A clean step measures ~1.0 (its segments are flat, so
+#: slopes add nothing); smooth and piecewise bends measure <= 0 (sloping the
+#: segments is essential). The 0.5 cut sits in the wide empty gap between them.
+SEGMENT_STEPNESS_THRESHOLD = 0.5
+
 #: Magnitude above which Pearson and Spearman having *opposite signs* is worth
 #: a directionality warning. Below this both coefficients are near zero and a
 #: sign disagreement is just noise, so the warning would be spurious.
@@ -397,9 +405,13 @@ def detect_metric_warnings(
 
 
 def _mean_shape_axis(
-    p: float | None, s: float | None, bin_lof: float | None
+    p: float | None,
+    s: float | None,
+    bin_lof: float | None,
+    segment_stepness: float | None,
 ) -> str | None:
-    """Is E[Y|X] a straight line, or curved? (``None`` when not assessable.)"""
+    """Is E[Y|X] a straight line, a smooth curve, or a step? (``None`` when not
+    assessable.)"""
     if p is None or s is None:
         return None
     # Curvature via either route the cascade uses for monotonic_nonlinear: a
@@ -409,6 +421,17 @@ def _mean_shape_axis(
         s > STRONG_MAGNITUDE_THRESHOLD and s - p > RANK_LINEAR_GAP_THRESHOLD
     )
     if curved:
+        # Refine a *monotone* curve (strong Spearman) into a step/threshold jump
+        # vs a smooth (or piecewise) bend, from the single-breakpoint stepness.
+        # A non-monotone curve (weak Spearman, e.g. a U-shape) stays the generic
+        # "curved" — smooth-vs-step does not apply, and dependence_type carries
+        # its shape instead.
+        if s >= STRONG_MAGNITUDE_THRESHOLD and segment_stepness is not None:
+            return (
+                "step_or_threshold"
+                if segment_stepness > SEGMENT_STEPNESS_THRESHOLD
+                else "smooth_curve"
+            )
         return "curved"
     # Assert "linear" only when we actually checked for curvature (the
     # lack-of-fit test ran) and there is a real trend, or when both coefficients
@@ -551,9 +574,10 @@ def derive_diagnostic_axes(
     xi_rev = _finite_metric_value(metrics.get("chatterjee_xi_reverse"))
     bp_pvalue = _finite_metric_value(metrics.get("bp_pvalue"))
     gq_ratio = _finite_metric_value(metrics.get("gq_ratio"))
+    segment_stepness = _finite_metric_value(metrics.get("segment_stepness"))
 
     return {
-        "mean_shape": _mean_shape_axis(p, s, bin_lof),
+        "mean_shape": _mean_shape_axis(p, s, bin_lof, segment_stepness),
         "variance_shape": _variance_shape_axis(bp_pvalue, gq_ratio, bin_lof),
         "dependence_type": _dependence_type_axis(p, s, dc, sq_corr, xi_fwd, xi_rev),
         "outlier_sensitivity": _outlier_sensitivity_axis(outlier_status),

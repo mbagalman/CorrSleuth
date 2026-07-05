@@ -3,6 +3,7 @@ import pytest
 from corrsleuth.api import profile_pair
 from corrsleuth.datasets import make_relationship
 from corrsleuth.heuristics.classifier import (
+    _mean_shape_axis,
     _variance_shape_axis,
     apply_heuristics,
     derive_diagnostic_axes,
@@ -493,3 +494,75 @@ def test_curved_relationship_does_not_report_variance_shape():
     assert res.pattern == "monotonic_nonlinear"
     assert res.diagnostics.variance_shape is None
     assert not any("residual spread" in w for w in res.warnings)
+
+
+# --- mean_shape refinement / segmentation (ticket 1.2) ---
+
+
+def test_mean_shape_axis_refines_curved_monotone_by_stepness():
+    strong_s = 0.9  # monotone
+    curved_bin_lof = 0.2
+    # High stepness -> step/threshold.
+    assert _mean_shape_axis(0.7, strong_s, curved_bin_lof, 1.0) == "step_or_threshold"
+    # Low/negative stepness -> smooth curve.
+    assert _mean_shape_axis(0.7, strong_s, curved_bin_lof, -0.6) == "smooth_curve"
+
+
+def test_mean_shape_axis_non_monotone_curve_stays_generic_curved():
+    # Weak Spearman (a U-shape): smooth-vs-step does not apply, even if the
+    # stepness value happens to be high.
+    assert _mean_shape_axis(0.05, 0.05, 0.9, 1.0) == "curved"
+
+
+def test_mean_shape_axis_curved_without_segmentation_is_generic_curved():
+    # n below the segmentation floor: we know it is a monotone curve but cannot
+    # say step vs smooth, so it stays the generic "curved".
+    assert _mean_shape_axis(0.7, 0.9, 0.2, None) == "curved"
+
+
+def test_threshold_step_reports_step_or_threshold_with_breakpoint():
+    df = make_relationship("threshold_step", n=500, noise=0.1, random_state=42)
+    res = profile_pair(df, "x", "y", mode="lite")
+
+    # Label unchanged; the break story lives in the axis + breakpoint_x.
+    assert res.pattern == "monotonic_nonlinear"
+    assert res.diagnostics.mean_shape == "step_or_threshold"
+    # The step is generated at x == 0; the located breakpoint is near it.
+    assert res.diagnostics.breakpoint_x is not None
+    assert abs(res.diagnostics.breakpoint_x) < 0.5
+
+
+@pytest.mark.parametrize("shape", ["exponential_monotonic", "logarithmic_monotonic"])
+def test_smooth_curves_report_smooth_curve_without_breakpoint(shape):
+    df = make_relationship(shape, n=500, noise=0.1, random_state=42)
+    res = profile_pair(df, "x", "y", mode="lite")
+
+    assert res.pattern == "monotonic_nonlinear"
+    assert res.diagnostics.mean_shape == "smooth_curve"
+    # No spurious breakpoint reported for a smooth curve.
+    assert res.diagnostics.breakpoint_x is None
+
+
+def test_monotone_piecewise_linear_folds_into_smooth_curve():
+    # A monotone two-slope kink is not reliably separable from a smooth bend
+    # over a finite range, so it is (honestly) reported as smooth_curve, not a
+    # distinct piecewise label. Its breakpoint is treated as an artifact.
+    import numpy as np
+    import pandas as pd
+
+    rng = np.random.default_rng(0)
+    n = 500
+    x = rng.uniform(-3, 3, n)
+    y = np.where(x < 0, 0.5 * x, 3.0 * x) + rng.normal(0, 0.1, n)
+    res = profile_pair(pd.DataFrame({"x": x, "y": y}), "x", "y", mode="lite")
+
+    assert res.diagnostics.mean_shape == "smooth_curve"
+    assert res.diagnostics.breakpoint_x is None
+
+
+def test_u_shape_mean_stays_generic_curved_not_step():
+    df = make_relationship("u_shape", n=500, noise=0.1, random_state=42)
+    res = profile_pair(df, "x", "y", mode="lite")
+
+    assert res.pattern == "nonmonotonic_dependence"
+    assert res.diagnostics.mean_shape == "curved"

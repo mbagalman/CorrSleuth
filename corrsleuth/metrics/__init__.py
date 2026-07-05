@@ -11,7 +11,11 @@ from .robust import (
     compute_trimmed_pearson,
     compute_winsorized_pearson,
 )
-from .shape import compute_bin_lof_r2_gain, compute_squared_correlation
+from .shape import (
+    compute_bin_lof_r2_gain,
+    compute_segmentation,
+    compute_squared_correlation,
+)
 from .variance import compute_heteroscedasticity
 
 __all__ = [
@@ -30,6 +34,7 @@ __all__ = [
     "compute_chatterjee_xi_reverse",
     "compute_bin_lof_r2_gain",
     "compute_squared_correlation",
+    "compute_segmentation",
     "compute_heteroscedasticity",
     "ROBUST_METRIC_MIN_N",
     "compute_bootstrap",

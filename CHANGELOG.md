@@ -130,6 +130,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enrichment of the internal `CleanPair` in `profile_pair`.
 
 ### Added
+- **Breakpoint localization** (`compute_segmentation` in
+  `corrsleuth/metrics/shape.py`, no new dependency): a single-breakpoint search
+  refines a curved *monotone* `mean_shape` into `smooth_curve` versus
+  `step_or_threshold`, and reports `breakpoint_x` (where a step sits) on
+  `result.diagnostics`. The two are told apart by whether a two-*level*
+  (flat-segment) model fits as well as a two-*line* model — a step's segments
+  are flat, a smooth curve's are sloped — computed with an O(n) prefix-sum scan.
+  A `threshold_step` pair keeps its `monotonic_nonlinear` label but now reports
+  `mean_shape=step_or_threshold` with the jump location; exponential/logarithmic
+  curves report `smooth_curve` with no spurious breakpoint. Monotone
+  piecewise-linear kinks fold into `smooth_curve` (not reliably separable from a
+  smooth bend over a finite range); non-monotone curves (U-shapes) stay the
+  generic `curved`.
 - **Heteroscedasticity diagnostics** (`corrsleuth/metrics/variance.py`,
   no new dependency): `compute_heteroscedasticity` runs a Koenker-studentized
   Breusch-Pagan test and a Goldfeld-Quandt residual-variance ratio on the

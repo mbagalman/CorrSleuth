@@ -19,6 +19,11 @@ metrics leave open (see docs/shape-diagnostics-design.md):
   signed values (e.g. points scattered around a circle, where X and Y are
   strongly dependent but Pearson/Spearman/distance correlation on the raw
   values are all near zero).
+- :func:`compute_segmentation` — a single-breakpoint search that refines a
+  *curved monotone* mean into a smooth bend versus a step/threshold jump, and
+  reports roughly where a step is located. Distinguishes the two by whether a
+  two-*level* (flat-segment) model fits as well as a two-*line* model: a step's
+  segments are flat, a smooth curve's are sloped.
 """
 
 from __future__ import annotations
@@ -134,3 +139,149 @@ def compute_squared_correlation(pair: CleanPair) -> MetricResult:
         ) from e
 
     return MetricResult(name=name, value=float(r), available=True)
+
+
+#: Minimum rows before the single-breakpoint search runs. Mirrors the bin
+#: lack-of-fit floor: each of the two segments needs enough points to fit a
+#: stable line and mean.
+_MIN_N_FOR_SEGMENTATION = 50
+
+#: Smallest fraction of the rows a segment may hold, so a candidate split never
+#: leaves a segment too short to estimate a slope. The search only considers
+#: splits leaving at least this fraction on each side.
+_SEGMENT_MIN_FRACTION = 0.1
+
+_SEGMENT_NAMES = ("segment_gain", "breakpoint_x", "segment_stepness")
+
+
+def _segmentation_no_value() -> dict[str, MetricResult]:
+    return {name: MetricResult.no_value(name) for name in _SEGMENT_NAMES}
+
+
+def _segment_residual_ss(
+    m: np.ndarray,
+    sx: np.ndarray,
+    sy: np.ndarray,
+    sxx: np.ndarray,
+    sxy: np.ndarray,
+    syy: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Residual sum of squares after fitting a mean, and after fitting a line,
+    to a segment described by its running sums — all vectorized over candidate
+    splits. Uses the closed-form simple-regression identities so every split is
+    O(1), giving an O(n) scan overall (no per-split ``polyfit``)."""
+    ss_mean = syy - sy**2 / m
+    ss_xx = sxx - sx**2 / m
+    ss_xy = sxy - sx * sy / m
+    # Slope only reduces the residual where the segment's x has spread; a
+    # constant-x segment (ss_xx == 0) keeps the mean-only residual.
+    safe_ss_xx = np.where(ss_xx > 0.0, ss_xx, 1.0)
+    slope_reduction = np.where(ss_xx > 0.0, ss_xy**2 / safe_ss_xx, 0.0)
+    ss_line = ss_mean - slope_reduction
+    return np.maximum(ss_mean, 0.0), np.maximum(ss_line, 0.0)
+
+
+def compute_segmentation(pair: CleanPair) -> dict[str, MetricResult]:
+    """Single-breakpoint search that characterizes a curved monotone mean.
+
+    Sorts by X and, over every candidate split, fits (a) two independent lines
+    and (b) two independent levels (means), returning three
+    :class:`MetricResult` entries:
+
+    - ``segment_gain`` — R² of the best two-*line* fit minus the single-line R²
+      (how much a single breakpoint improves on a straight line).
+    - ``segment_stepness`` — the fraction of that improvement a two-*level*
+      (flat-segment) model already captures: ``≈ 1`` when the segments are flat
+      (a step/threshold jump), ``≤ 0`` when sloping the segments is essential (a
+      smooth or piecewise bend). This is what separates a step from a smooth
+      curve (see ``heuristics/classifier.py``).
+    - ``breakpoint_x`` — the x-location of the best two-*level* split (where the
+      jump sits). The classifier only reports it when the pair reads as a
+      step/threshold, since for a smooth curve the split is an artifact of
+      forcing a break onto a gradual bend.
+
+    Returns all three as ``None`` (``MetricResult.no_value``) for constant
+    inputs, ``n_used`` below :data:`_MIN_N_FOR_SEGMENTATION`, or a degenerate
+    (zero-variance) response.
+    """
+    if pair.x_is_constant or pair.y_is_constant:
+        return _segmentation_no_value()
+    if pair.n_used < _MIN_N_FOR_SEGMENTATION:
+        return _segmentation_no_value()
+
+    x = pair.x.to_numpy()
+    y = pair.y.to_numpy()
+    n = x.shape[0]
+
+    try:
+        order = np.argsort(x, kind="mergesort")
+        xs = x[order].astype(float)
+        ys = y[order].astype(float)
+
+        # Running sums (index i holds the sum over the first i rows).
+        cx = np.concatenate([[0.0], np.cumsum(xs)])
+        cy = np.concatenate([[0.0], np.cumsum(ys)])
+        cxx = np.concatenate([[0.0], np.cumsum(xs * xs)])
+        cxy = np.concatenate([[0.0], np.cumsum(xs * ys)])
+        cyy = np.concatenate([[0.0], np.cumsum(ys * ys)])
+
+        ss_tot = float(cyy[n] - cy[n] ** 2 / n)
+        if ss_tot <= 0.0:
+            return _segmentation_no_value()
+
+        # Single-line residual over the whole range, from the same identities.
+        _, ss_line_full = _segment_residual_ss(
+            np.array([float(n)]),
+            np.array([cx[n]]),
+            np.array([cy[n]]),
+            np.array([cxx[n]]),
+            np.array([cxy[n]]),
+            np.array([cyy[n]]),
+        )
+        r2_line = 1.0 - float(ss_line_full[0]) / ss_tot
+
+        min_seg = max(5, int(_SEGMENT_MIN_FRACTION * n))
+        ks = np.arange(min_seg, n - min_seg + 1)
+        if ks.size == 0:
+            return _segmentation_no_value()
+
+        m_lo = ks.astype(float)
+        m_hi = (n - ks).astype(float)
+        mean_lo, line_lo = _segment_residual_ss(
+            m_lo, cx[ks], cy[ks], cxx[ks], cxy[ks], cyy[ks]
+        )
+        mean_hi, line_hi = _segment_residual_ss(
+            m_hi,
+            cx[n] - cx[ks],
+            cy[n] - cy[ks],
+            cxx[n] - cxx[ks],
+            cxy[n] - cxy[ks],
+            cyy[n] - cyy[ks],
+        )
+        two_line = line_lo + line_hi
+        two_mean = mean_lo + mean_hi
+
+        r2_two_line = 1.0 - float(np.min(two_line)) / ss_tot
+        best_mean_k = int(ks[int(np.argmin(two_mean))])
+        r2_two_mean = 1.0 - float(np.min(two_mean)) / ss_tot
+
+        segment_gain = r2_two_line - r2_line
+        step_gain = r2_two_mean - r2_line
+        stepness = step_gain / segment_gain if segment_gain > 1e-6 else 0.0
+        breakpoint_x = 0.5 * (xs[best_mean_k - 1] + xs[best_mean_k])
+    except (ValueError, RuntimeError, FloatingPointError) as e:
+        raise MetricComputationError(
+            f"Failed to compute segmentation: {type(e).__name__}: {e}"
+        ) from e
+
+    return {
+        "segment_gain": MetricResult(
+            name="segment_gain", value=float(segment_gain), available=True
+        ),
+        "breakpoint_x": MetricResult(
+            name="breakpoint_x", value=float(breakpoint_x), available=True
+        ),
+        "segment_stepness": MetricResult(
+            name="segment_stepness", value=float(stepness), available=True
+        ),
+    }

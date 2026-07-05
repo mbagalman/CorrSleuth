@@ -22,6 +22,7 @@ from corrsleuth.metrics import (
     compute_median_clipped_pearson,
     compute_mutual_information,
     compute_pearson,
+    compute_segmentation,
     compute_spearman,
     compute_squared_correlation,
     compute_winsorized_pearson,
@@ -50,6 +51,7 @@ def _build_diagnostics(
     bin_lof_r2_gain=None,
     sq_corr=None,
     heteroscedasticity=None,
+    segmentation=None,
     axes: dict[str, str | None] | None = None,
 ) -> MetricDiagnostics:
     pearson = _metric_value(metrics_map, "pearson")
@@ -80,6 +82,13 @@ def _build_diagnostics(
     heteroscedasticity = heteroscedasticity or {}
     bp_result = heteroscedasticity.get("bp_pvalue")
     gq_result = heteroscedasticity.get("gq_ratio")
+    segmentation = segmentation or {}
+    segment_gain_result = segmentation.get("segment_gain")
+    breakpoint_result = segmentation.get("breakpoint_x")
+    # The breakpoint location is only meaningful — and only reported — when the
+    # mean reads as a step/threshold; for a smooth curve the "break" is an
+    # artifact of forcing a single split onto a gradual bend.
+    report_breakpoint = axes.get("mean_shape") == "step_or_threshold"
     return MetricDiagnostics(
         rank_linear_gap=rank_linear_gap,
         pearson_spearman_signed_gap=pearson_spearman_signed_gap,
@@ -94,6 +103,10 @@ def _build_diagnostics(
         sq_corr=sq_corr.value if sq_corr else None,
         bp_pvalue=bp_result.value if bp_result else None,
         gq_ratio=gq_result.value if gq_result else None,
+        segment_gain=segment_gain_result.value if segment_gain_result else None,
+        breakpoint_x=breakpoint_result.value
+        if (report_breakpoint and breakpoint_result)
+        else None,
         mean_shape=axes.get("mean_shape"),
         variance_shape=axes.get("variance_shape"),
         dependence_type=axes.get("dependence_type"),
@@ -228,6 +241,7 @@ def profile_pair(
     bin_lof_r2_gain = compute_bin_lof_r2_gain(pair)
     sq_corr = compute_squared_correlation(pair)
     heteroscedasticity = compute_heteroscedasticity(pair)
+    segmentation = compute_segmentation(pair)
 
     # 3. Outlier sensitivity check (informs the leverage label)
     #
@@ -287,6 +301,7 @@ def profile_pair(
         "bin_lof_r2_gain": bin_lof_r2_gain,
         "sq_corr": sq_corr,
         **heteroscedasticity,
+        **segmentation,
     }
     heuristic_result = apply_heuristics(cascade_metrics, pair.flags, pair.n_used)
     pair.warnings.extend(
@@ -343,6 +358,7 @@ def profile_pair(
         bin_lof_r2_gain=bin_lof_r2_gain,
         sq_corr=sq_corr,
         heteroscedasticity=heteroscedasticity,
+        segmentation=segmentation,
         axes=axes,
     )
     bootstrap_result = compute_bootstrap(

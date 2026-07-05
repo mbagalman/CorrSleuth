@@ -61,8 +61,12 @@ class MetricDiagnostics:
     between X² and Y²) — see ``corrsleuth/metrics/shape.py`` — and the
     heteroscedasticity diagnostics (``bp_pvalue``, the Breusch-Pagan p-value;
     ``gq_ratio``, the Goldfeld-Quandt high-vs-low-x residual variance ratio) —
-    see ``corrsleuth/metrics/variance.py``. Gap, shape, and variance fields are
-    ``None`` when the metrics they depend on are unavailable.
+    see ``corrsleuth/metrics/variance.py`` — and the segmentation diagnostics
+    (``segment_gain``, the R² gain of the best single-breakpoint two-line fit
+    over one line; ``breakpoint_x``, the x-location of a detected step, reported
+    only when ``mean_shape`` reads as a step/threshold). Gap, shape, variance,
+    and segmentation fields are ``None`` when the metrics they depend on are
+    unavailable.
 
     The final five fields are the **secondary diagnostic axes** — coarse
     categorical summaries describing orthogonal properties of the relationship
@@ -87,6 +91,8 @@ class MetricDiagnostics:
     sq_corr: float | None = None
     bp_pvalue: float | None = None
     gq_ratio: float | None = None
+    segment_gain: float | None = None
+    breakpoint_x: float | None = None
     mean_shape: str | None = None
     variance_shape: str | None = None
     dependence_type: str | None = None
@@ -137,6 +143,8 @@ class CorrSleuthResult:
             sq_corr=None,
             bp_pvalue=None,
             gq_ratio=None,
+            segment_gain=None,
+            breakpoint_x=None,
             mean_shape=None,
             variance_shape=None,
             dependence_type=None,
@@ -198,6 +206,8 @@ class CorrSleuthResult:
                 f"  sq_corr                  : {self._format_value(self.diagnostics.sq_corr)}",
                 f"  bp_pvalue                : {self._format_value(self.diagnostics.bp_pvalue)}",
                 f"  gq_ratio                 : {self._format_value(self.diagnostics.gq_ratio)}",
+                f"  segment_gain             : {self._format_value(self.diagnostics.segment_gain)}",
+                f"  breakpoint_x             : {self._format_value(self.diagnostics.breakpoint_x)}",
                 "",
                 "Relationship axes:",
                 f"  mean_shape           : {self._format_axis(self.diagnostics.mean_shape)}",
@@ -373,6 +383,14 @@ class CorrSleuthResult:
                     [
                         "gq_ratio",
                         format_markdown_value(self.diagnostics.gq_ratio),
+                    ],
+                    [
+                        "segment_gain",
+                        format_markdown_value(self.diagnostics.segment_gain),
+                    ],
+                    [
+                        "breakpoint_x",
+                        format_markdown_value(self.diagnostics.breakpoint_x),
                     ],
                 ],
             ),

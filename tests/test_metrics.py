@@ -17,6 +17,7 @@ from corrsleuth.metrics import (
     compute_median_clipped_pearson,
     compute_mutual_information,
     compute_pearson,
+    compute_segmentation,
     compute_spearman,
     compute_squared_correlation,
     compute_trimmed_pearson,
@@ -673,3 +674,108 @@ def test_heteroscedasticity_returns_none_for_perfect_linear_fit():
     result = compute_heteroscedasticity(pair)
     assert result["bp_pvalue"].value is None
     assert result["gq_ratio"].value is None
+
+
+# --- Segmentation (single-breakpoint, mean-shape refinement) ---
+
+
+def _reference_segmentation(x, y, min_frac=0.1):
+    """Independent brute-force single-breakpoint search using per-segment
+    np.polyfit / np.var, a different path than the prefix-sum identities in
+    metrics/shape.py. Returns (segment_gain, stepness, breakpoint_x)."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    n = len(x)
+    order = np.argsort(x, kind="mergesort")
+    xs, ys = x[order], y[order]
+
+    def line_ssr(xx, yy):
+        slope, intercept = np.polyfit(xx, yy, 1)
+        return float(np.sum((yy - (slope * xx + intercept)) ** 2))
+
+    def mean_ssr(a, b):
+        return float(np.sum((a - a.mean()) ** 2) + np.sum((b - b.mean()) ** 2))
+
+    sst = float(np.sum((ys - ys.mean()) ** 2))
+    r2_line = 1.0 - line_ssr(xs, ys) / sst
+    min_seg = max(5, int(min_frac * n))
+    best_line = best_mean = None
+    for k in range(min_seg, n - min_seg + 1):
+        tl = line_ssr(xs[:k], ys[:k]) + line_ssr(xs[k:], ys[k:])
+        tm = mean_ssr(ys[:k], ys[k:])
+        if best_line is None or tl < best_line[0]:
+            best_line = (tl, k)
+        if best_mean is None or tm < best_mean[0]:
+            best_mean = (tm, k)
+    seg_gain = (1.0 - best_line[0] / sst) - r2_line
+    step_gain = (1.0 - best_mean[0] / sst) - r2_line
+    stepness = step_gain / seg_gain if seg_gain > 1e-6 else 0.0
+    bp_x = 0.5 * (xs[best_mean[1] - 1] + xs[best_mean[1]])
+    return seg_gain, stepness, bp_x
+
+
+def test_segmentation_matches_reference_on_step_and_smooth():
+    rng = np.random.default_rng(0)
+    n = 407  # not a round number, to exercise the split arithmetic
+
+    x_step = rng.uniform(-3, 3, size=n)
+    y_step = np.where(x_step > 0, 1.0, -1.0) + rng.normal(0, 0.1, size=n)
+    step_pair = validate_pair(pd.DataFrame({"x": x_step, "y": y_step}), "x", "y")
+
+    x_smooth = rng.uniform(0, 3, size=n)
+    y_smooth = np.exp(x_smooth) + rng.normal(0, 0.1, size=n)
+    smooth_pair = validate_pair(pd.DataFrame({"x": x_smooth, "y": y_smooth}), "x", "y")
+
+    for pair, (x, y) in (
+        (step_pair, (x_step, y_step)),
+        (smooth_pair, (x_smooth, y_smooth)),
+    ):
+        result = compute_segmentation(pair)
+        exp_gain, exp_step, exp_bp = _reference_segmentation(x, y)
+        assert result["segment_gain"].value == pytest.approx(exp_gain, abs=1e-9)
+        assert result["segment_stepness"].value == pytest.approx(exp_step, abs=1e-9)
+        assert result["breakpoint_x"].value == pytest.approx(exp_bp, abs=1e-9)
+
+
+def test_segmentation_stepness_separates_step_from_smooth():
+    rng = np.random.default_rng(0)
+    n = 400
+
+    x = rng.uniform(-3, 3, size=n)
+    y_step = np.where(x > 0, 1.0, -1.0) + rng.normal(0, 0.1, size=n)
+    step = compute_segmentation(
+        validate_pair(pd.DataFrame({"x": x, "y": y_step}), "x", "y")
+    )
+    # Flat segments: the two-level model captures ~all the two-line improvement.
+    assert step["segment_stepness"].value > 0.8
+    # The breakpoint sits at the true cut.
+    assert abs(step["breakpoint_x"].value) < 0.3
+
+    xs = rng.uniform(0, 3, size=n)
+    y_smooth = np.exp(xs) + rng.normal(0, 0.1, size=n)
+    smooth = compute_segmentation(
+        validate_pair(pd.DataFrame({"x": xs, "y": y_smooth}), "x", "y")
+    )
+    # Sloped segments: flattening them is strictly worse, so stepness <= 0.
+    assert smooth["segment_stepness"].value < 0.5
+
+
+def test_segmentation_returns_none_below_min_n():
+    rng = np.random.default_rng(0)
+    n = 40  # below _MIN_N_FOR_SEGMENTATION (50)
+    df = pd.DataFrame({"x": rng.uniform(0, 3, n), "y": rng.uniform(0, 3, n)})
+    pair = validate_pair(df, "x", "y")
+
+    result = compute_segmentation(pair)
+    assert result["segment_gain"].value is None
+    assert result["breakpoint_x"].value is None
+    assert result["segment_stepness"].value is None
+
+
+def test_segmentation_returns_none_for_constant_input():
+    df = pd.DataFrame({"x": [1.0] * 80, "y": list(range(80))})
+    pair = validate_pair(df, "x", "y")
+
+    result = compute_segmentation(pair)
+    assert result["segment_gain"].value is None
+    assert result["breakpoint_x"].available is True

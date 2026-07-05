@@ -167,9 +167,13 @@ applies in `lite` mode too. Kendall tau-b usually agrees with Spearman.
 **Recommended next steps.**
 
 - Inspect the scatter plot for curvature.
-- Consider monotonic transformations (log, sqrt, rank) before linear
-  modeling, or use models that fit nonlinearity directly (splines,
-  isotonic regression, gradient-boosted trees).
+- Check the `mean_shape` axis: `smooth_curve` suggests a monotone transform
+  (log, sqrt, rank) or a spline; `step_or_threshold` (with `breakpoint_x`
+  locating the jump) suggests a threshold/indicator feature or a segmented
+  model instead.
+- Consider monotonic transformations before linear modeling, or use models
+  that fit nonlinearity directly (splines, isotonic regression,
+  gradient-boosted trees).
 - For feature engineering, this is one of the patterns where Pearson
   underrates the variable; see `report.pearson_underrated()`.
 
@@ -437,7 +441,7 @@ available metrics it is `None` (rendered `NA`).
 
 | Axis | Question | Values |
 |---|---|---|
-| `mean_shape` | Is E[Y\|X] a straight line? | `linear`, `curved`, `None` |
+| `mean_shape` | Is E[Y\|X] a straight line, a smooth curve, or a step? | `linear`, `smooth_curve`, `step_or_threshold`, `curved`, `None` |
 | `variance_shape` | Does the spread of Y change with X? | `constant`, `increasing_spread`, `decreasing_spread`, `None` |
 | `dependence_type` | What kind of dependence is it? | `monotone`, `magnitude_linked`, `nonmonotone`, `closed_loop_or_multivalued`, `None` |
 | `outlier_sensitivity` | Do a few rows drive the summary? | `low`, `high`, `unavailable` |
@@ -445,6 +449,18 @@ available metrics it is `None` (rendered `NA`).
 
 Notes on the less-obvious values:
 
+- **`mean_shape`** refines a curved *monotone* mean into `smooth_curve`
+  (a gradual bend — exponential, logarithmic, power) versus `step_or_threshold`
+  (a jump between two near-flat levels). The two are told apart by a
+  single-breakpoint search: a step's segments are flat, so a two-*level* model
+  fits as well as a two-*line* one; a smooth curve's segments are sloped. For a
+  `step_or_threshold`, `breakpoint_x` (on `result.diagnostics`) reports roughly
+  where the jump sits; for a smooth curve no breakpoint is reported (the split
+  would be an artifact). A monotone *piecewise-linear* kink is not reliably
+  separable from a smooth bend over a finite range, so it currently reads as
+  `smooth_curve`. A *non-monotone* curve (a U-shape) stays the generic `curved`
+  — smooth-vs-step does not apply to it, and `dependence_type` carries its
+  shape.
 - **`variance_shape`** measures *heteroscedasticity* — whether the residual
   spread around the mean trend changes with X (a Breusch-Pagan test, with a
   Goldfeld-Quandt effect-size floor and direction). `increasing_spread` is the
@@ -478,6 +494,10 @@ Primary pattern: possible_outlier_or_leverage
 Primary pattern: near_linear
   mean_shape          : linear          # a clean straight-line trend ...
   variance_shape      : increasing_spread   # ... but the spread fans out with x
+
+Primary pattern: monotonic_nonlinear
+  mean_shape          : step_or_threshold   # a jump, not a smooth curve ...
+  breakpoint_x        : 0.02                 # ... located near x = 0
 
 Primary pattern: nonmonotonic_dependence
   mean_shape          : NA              # no y = f(x) mean trend
@@ -623,12 +643,13 @@ Notes:
   correlation and mutual information (slower).
 - Distance correlation downsamples to 20 000 rows by default
   (`max_n_for_dcor=20000`). The downsample is seeded for reproducibility.
-- Two shape diagnostics (`bin_lof_r2_gain`, `sq_corr` — see
-  [shape-diagnostics-design.md](shape-diagnostics-design.md)) and two
-  heteroscedasticity diagnostics (`bp_pvalue`, `gq_ratio`) run in every mode,
-  including `lite`. They feed the `monotonic_nonlinear` /
-  `nonmonotonic_dependence` labels and the secondary axes but never appear in
-  the metrics table; they show up under `result.diagnostics`.
+- The shape diagnostics (`bin_lof_r2_gain`, `sq_corr` — see
+  [shape-diagnostics-design.md](shape-diagnostics-design.md); `segment_gain`,
+  `breakpoint_x`) and the heteroscedasticity diagnostics (`bp_pvalue`,
+  `gq_ratio`) run in every mode, including `lite`. They feed the
+  `monotonic_nonlinear` / `nonmonotonic_dependence` labels and the secondary
+  axes but never appear in the metrics table; they show up under
+  `result.diagnostics`.
 - `scan_target()` profiles columns **sequentially** — one `profile_pair`
   call at a time, with no parallelism. For typical EDA this is fine, but a
   very wide DataFrame (hundreds to thousands of columns) combined with
