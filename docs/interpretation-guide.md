@@ -472,6 +472,16 @@ Notes on the less-obvious values:
   point estimate is fine but homoscedastic inference (standard errors,
   prediction intervals) may be unreliable. The underlying numbers are
   `bp_pvalue` and `gq_ratio` on `result.diagnostics`.
+  **Caveat:** `variance_shape` is gated against *curvature* artifacts (a curved
+  mean suppresses it) but **not** against *leverage* artifacts. A high-leverage
+  cluster can genuinely produce a large Goldfeld-Quandt ratio — the residual
+  spread really is larger in the region containing the cluster — so a pair
+  already flagged `outlier_sensitivity = single_point_driven` or
+  `high_leverage_cluster` can also report `increasing_spread` (with its own
+  warning) even though both stem from the same handful of rows, not two
+  independent problems. The numbers aren't wrong, but treat a concurrent
+  variance warning as corroborating evidence of the same leverage issue, not
+  necessarily a separate one, when `outlier_sensitivity` is already elevated.
 - **`dependence_type = magnitude_linked`** — Pearson and Spearman are weak, but
   |X| and |Y| move together (from `sq_corr`). A U-shape is the canonical case.
 - **`dependence_type = closed_loop_or_multivalued`** — dependence exists, but

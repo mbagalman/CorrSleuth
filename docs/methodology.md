@@ -373,6 +373,15 @@ for a fixed `random_state` but not invariant to input row order.
   deliberately deferred. `BIN_LOF_R2_GAIN_THRESHOLD`'s margin (0.05) is
   thinner than most cascade thresholds, so it leans more on the
   `simulations.py` regression coverage than on a single hand-picked value.
+- **`variance_shape` can echo a leverage cluster rather than report an
+  independent phenomenon.** It is gated against curvature artifacts (a curved
+  mean suppresses it) but not against leverage artifacts: a high-leverage
+  cluster can genuinely widen the Goldfeld-Quandt ratio in the region it
+  occupies, so `increasing_spread`/`decreasing_spread` can co-occur with
+  `outlier_sensitivity = single_point_driven`/`high_leverage_cluster` from the
+  same rows. Both readings are individually correct; a concurrent variance
+  warning in that situation is corroborating, not necessarily a second,
+  unrelated issue.
 - **Always inspect the scatter.** Every label is a pointer to look, not a verdict.
 
 ## 11. References and further reading
