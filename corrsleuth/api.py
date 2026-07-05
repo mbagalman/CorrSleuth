@@ -18,6 +18,7 @@ from corrsleuth.metrics import (
     compute_chatterjee_xi_reverse,
     compute_distance_correlation,
     compute_heteroscedasticity,
+    compute_influence,
     compute_kendall,
     compute_median_clipped_pearson,
     compute_mutual_information,
@@ -52,6 +53,7 @@ def _build_diagnostics(
     sq_corr=None,
     heteroscedasticity=None,
     segmentation=None,
+    influence=None,
     axes: dict[str, str | None] | None = None,
 ) -> MetricDiagnostics:
     pearson = _metric_value(metrics_map, "pearson")
@@ -89,6 +91,9 @@ def _build_diagnostics(
     # mean reads as a step/threshold; for a smooth curve the "break" is an
     # artifact of forcing a single split onto a gradual bend.
     report_breakpoint = axes.get("mean_shape") == "step_or_threshold"
+    influence = influence or {}
+    max_cook_result = influence.get("max_cook_distance")
+    n_influential_result = influence.get("n_influential_points")
     return MetricDiagnostics(
         rank_linear_gap=rank_linear_gap,
         pearson_spearman_signed_gap=pearson_spearman_signed_gap,
@@ -106,6 +111,10 @@ def _build_diagnostics(
         segment_gain=segment_gain_result.value if segment_gain_result else None,
         breakpoint_x=breakpoint_result.value
         if (report_breakpoint and breakpoint_result)
+        else None,
+        max_cook_distance=max_cook_result.value if max_cook_result else None,
+        n_influential_points=int(n_influential_result.value)
+        if (n_influential_result and n_influential_result.value is not None)
         else None,
         mean_shape=axes.get("mean_shape"),
         variance_shape=axes.get("variance_shape"),
@@ -242,6 +251,7 @@ def profile_pair(
     sq_corr = compute_squared_correlation(pair)
     heteroscedasticity = compute_heteroscedasticity(pair)
     segmentation = compute_segmentation(pair)
+    influence = compute_influence(pair)
 
     # 3. Outlier sensitivity check (informs the leverage label)
     #
@@ -302,6 +312,7 @@ def profile_pair(
         "sq_corr": sq_corr,
         **heteroscedasticity,
         **segmentation,
+        **influence,
     }
     heuristic_result = apply_heuristics(cascade_metrics, pair.flags, pair.n_used)
     pair.warnings.extend(
@@ -359,6 +370,7 @@ def profile_pair(
         sq_corr=sq_corr,
         heteroscedasticity=heteroscedasticity,
         segmentation=segmentation,
+        influence=influence,
         axes=axes,
     )
     bootstrap_result = compute_bootstrap(

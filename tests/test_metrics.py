@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from corrsleuth.api import profile_pair
+from corrsleuth.datasets import make_relationship
 from corrsleuth.exceptions import MetricComputationError, OptionalDependencyError
 from corrsleuth.metrics import (
     compute_bin_lof_r2_gain,
@@ -13,6 +14,7 @@ from corrsleuth.metrics import (
     compute_chatterjee_xi_reverse,
     compute_distance_correlation,
     compute_heteroscedasticity,
+    compute_influence,
     compute_kendall,
     compute_median_clipped_pearson,
     compute_mutual_information,
@@ -779,3 +781,96 @@ def test_segmentation_returns_none_for_constant_input():
     result = compute_segmentation(pair)
     assert result["segment_gain"].value is None
     assert result["breakpoint_x"].available is True
+
+
+# --- Regression influence (Cook's distance) ---
+
+
+def _reference_cooks_distance(x, y):
+    """Independent Cook's distance via an explicit hat matrix on the [1, x]
+    design, a different path than the elementary one-predictor identities in
+    metrics/influence.py."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    n = len(x)
+    design = np.column_stack([np.ones(n), x])
+    hat = design @ np.linalg.inv(design.T @ design) @ design.T
+    h = np.diag(hat)
+    beta, *_ = np.linalg.lstsq(design, y, rcond=None)
+    resid = y - design @ beta
+    s2 = np.sum(resid**2) / (n - 2)
+    return resid**2 * h / (2 * s2 * (1 - h) ** 2)
+
+
+def test_influence_max_cook_matches_hat_matrix_reference():
+    rng = np.random.default_rng(0)
+    n = 200
+    x = rng.uniform(-3, 3, size=n)
+    y = x + rng.normal(0, 0.3, size=n)
+    x[-1], y[-1] = 20.0, -20.0  # one strongly influential row
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_influence(pair)
+    expected = _reference_cooks_distance(x, y)
+
+    assert result["max_cook_distance"].value == pytest.approx(
+        float(expected.max()), rel=1e-9
+    )
+
+
+def test_influence_single_dominant_point_counts_one():
+    rng = np.random.default_rng(0)
+    n = 300
+    x = rng.uniform(-3, 3, size=n)
+    y = x + rng.normal(0, 0.3, size=n)
+    x[-1], y[-1] = 20.0, -20.0  # high leverage, large residual
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_influence(pair)
+    assert result["max_cook_distance"].value > 1.0
+    assert result["n_influential_points"].value == 1.0
+
+
+def test_influence_detects_masked_leverage_cluster():
+    # The outlier_driven scenario is a ~2% cluster of high-leverage points. They
+    # mask each other, deflating each point's Cook's distance below the classical
+    # D > 1 cutoff -- the softer 0.5 cutoff still counts them as a cluster.
+    df = make_relationship("outlier_driven", n=500, noise=0.1, random_state=0)
+    pair = validate_pair(df, "x", "y")
+
+    result = compute_influence(pair)
+    assert result["max_cook_distance"].value < 1.0  # masked below the strict cutoff
+    assert result["n_influential_points"].value >= 2.0
+
+
+def test_influence_clean_data_has_no_influential_points():
+    rng = np.random.default_rng(0)
+    n = 500
+    x = rng.uniform(-3, 3, size=n)
+    y = x + rng.normal(0, 0.3, size=n)
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_influence(pair)
+    assert result["n_influential_points"].value == 0.0
+    assert result["max_cook_distance"].value < 0.5
+
+
+def test_influence_returns_none_below_min_n():
+    rng = np.random.default_rng(0)
+    n = 40  # below _MIN_N_FOR_INFLUENCE (50)
+    df = pd.DataFrame({"x": rng.uniform(-3, 3, n), "y": rng.uniform(-3, 3, n)})
+    pair = validate_pair(df, "x", "y")
+
+    result = compute_influence(pair)
+    assert result["max_cook_distance"].value is None
+    assert result["n_influential_points"].value is None
+
+
+def test_influence_perfect_fit_reports_no_influence():
+    x = np.arange(80, dtype=float)
+    y = 2.0 * x + 1.0  # exactly linear, no residual structure
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_influence(pair)
+    assert result["max_cook_distance"].value == 0.0
+    assert result["n_influential_points"].value == 0.0

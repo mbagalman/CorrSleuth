@@ -61,11 +61,14 @@ class MetricDiagnostics:
     between X² and Y²) — see ``corrsleuth/metrics/shape.py`` — and the
     heteroscedasticity diagnostics (``bp_pvalue``, the Breusch-Pagan p-value;
     ``gq_ratio``, the Goldfeld-Quandt high-vs-low-x residual variance ratio) —
-    see ``corrsleuth/metrics/variance.py`` — and the segmentation diagnostics
+    see ``corrsleuth/metrics/variance.py`` — the segmentation diagnostics
     (``segment_gain``, the R² gain of the best single-breakpoint two-line fit
     over one line; ``breakpoint_x``, the x-location of a detected step, reported
-    only when ``mean_shape`` reads as a step/threshold). Gap, shape, variance,
-    and segmentation fields are ``None`` when the metrics they depend on are
+    only when ``mean_shape`` reads as a step/threshold) — and the influence
+    diagnostics (``max_cook_distance``, the largest Cook's distance;
+    ``n_influential_points``, how many rows exceed the influence cutoff) — see
+    ``corrsleuth/metrics/influence.py``. Gap, shape, variance, segmentation, and
+    influence fields are ``None`` when the metrics they depend on are
     unavailable.
 
     The final five fields are the **secondary diagnostic axes** — coarse
@@ -93,6 +96,8 @@ class MetricDiagnostics:
     gq_ratio: float | None = None
     segment_gain: float | None = None
     breakpoint_x: float | None = None
+    max_cook_distance: float | None = None
+    n_influential_points: int | None = None
     mean_shape: str | None = None
     variance_shape: str | None = None
     dependence_type: str | None = None
@@ -145,6 +150,8 @@ class CorrSleuthResult:
             gq_ratio=None,
             segment_gain=None,
             breakpoint_x=None,
+            max_cook_distance=None,
+            n_influential_points=None,
             mean_shape=None,
             variance_shape=None,
             dependence_type=None,
@@ -174,6 +181,11 @@ class CorrSleuthResult:
     def _format_axis(value: str | None) -> str:
         """Render a categorical secondary-axis value, ``NA`` when not assessable."""
         return value if value else "NA"
+
+    @staticmethod
+    def _format_count(value: int | None) -> str:
+        """Render an integer count diagnostic, ``NA`` when not assessable."""
+        return str(value) if value is not None else "NA"
 
     def summary(self, include_caveat: bool | None = None) -> str:
         """
@@ -208,6 +220,8 @@ class CorrSleuthResult:
                 f"  gq_ratio                 : {self._format_value(self.diagnostics.gq_ratio)}",
                 f"  segment_gain             : {self._format_value(self.diagnostics.segment_gain)}",
                 f"  breakpoint_x             : {self._format_value(self.diagnostics.breakpoint_x)}",
+                f"  max_cook_distance        : {self._format_value(self.diagnostics.max_cook_distance)}",
+                f"  n_influential_points     : {self._format_count(self.diagnostics.n_influential_points)}",
                 "",
                 "Relationship axes:",
                 f"  mean_shape           : {self._format_axis(self.diagnostics.mean_shape)}",
@@ -391,6 +405,14 @@ class CorrSleuthResult:
                     [
                         "breakpoint_x",
                         format_markdown_value(self.diagnostics.breakpoint_x),
+                    ],
+                    [
+                        "max_cook_distance",
+                        format_markdown_value(self.diagnostics.max_cook_distance),
+                    ],
+                    [
+                        "n_influential_points",
+                        self._format_count(self.diagnostics.n_influential_points),
                     ],
                 ],
             ),

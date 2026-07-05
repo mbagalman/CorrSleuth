@@ -231,7 +231,11 @@ not mistaken for changing noise variance. `mean_shape` refines a curved
 *monotone* mean into `smooth_curve` versus `step_or_threshold` (with a
 `breakpoint_x`) using a single-breakpoint search (`metrics/shape.py`): a step's
 segments are flat, so a two-level model fits as well as a two-line one, while a
-smooth curve's segments are sloped. See the [interpretation
+smooth curve's segments are sloped. `outlier_sensitivity` refines the
+trim-sensitivity verdict with row-level Cook's distance (`metrics/influence.py`)
+into `single_point_driven` versus `high_leverage_cluster`; because Cook's
+distance has no 1%-trim blind spot, it can flag a leverage cluster the primary
+label missed. See the [interpretation
 guide](interpretation-guide.md#secondary-diagnostic-fields) for the full value
 list.
 

@@ -130,6 +130,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enrichment of the internal `CleanPair` in `profile_pair`.
 
 ### Added
+- **Regression-influence diagnostics** (`compute_influence` in
+  `corrsleuth/metrics/influence.py`, no new dependency): row-level Cook's
+  distance on the `y ~ x` fit, exposed as `max_cook_distance` and
+  `n_influential_points` on `result.diagnostics`, refining the
+  `outlier_sensitivity` axis into `single_point_driven` (one dominant row) vs
+  `high_leverage_cluster` (several) vs `low`. Because Cook's distance has no
+  blind spot for a mid-range leverage cluster larger than the 1% trim fraction,
+  this axis can flag `high_leverage_cluster` even when the trim check called
+  Pearson stable. Uses the softer Cook & Weisberg `D > 0.5` cutoff (a masked
+  outlier cluster deflates each point's Cook's distance below the classical
+  `D > 1`).
 - **Breakpoint localization** (`compute_segmentation` in
   `corrsleuth/metrics/shape.py`, no new dependency): a single-breakpoint search
   refines a curved *monotone* `mean_shape` into `smooth_curve` versus

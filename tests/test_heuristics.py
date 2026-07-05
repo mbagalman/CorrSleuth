@@ -4,6 +4,7 @@ from corrsleuth.api import profile_pair
 from corrsleuth.datasets import make_relationship
 from corrsleuth.heuristics.classifier import (
     _mean_shape_axis,
+    _outlier_sensitivity_axis,
     _variance_shape_axis,
     apply_heuristics,
     derive_diagnostic_axes,
@@ -427,11 +428,12 @@ def test_axes_none_when_core_metrics_missing():
 def test_axes_are_orthogonal_to_label_outlier_driven_but_linear_mean():
     # A leverage-driven pair can still have a linear conditional mean: the label
     # is possible_outlier_or_leverage, but mean_shape is linear and
-    # outlier_sensitivity is high — the axes carry what the label cannot.
+    # outlier_sensitivity localizes the leverage — the axes carry what the label
+    # cannot. The outlier_driven cluster reads as high_leverage_cluster.
     df = make_relationship("outlier_driven", n=500, noise=0.1, random_state=42)
     res = profile_pair(df, "x", "y", mode="deep")
     assert res.pattern == "possible_outlier_or_leverage"
-    assert res.diagnostics.outlier_sensitivity == "high"
+    assert res.diagnostics.outlier_sensitivity == "high_leverage_cluster"
 
 
 # --- variance_shape axis / heteroscedasticity (ticket 1.1) ---
@@ -566,3 +568,56 @@ def test_u_shape_mean_stays_generic_curved_not_step():
 
     assert res.pattern == "nonmonotonic_dependence"
     assert res.diagnostics.mean_shape == "curved"
+
+
+# --- outlier_sensitivity refinement / Cook's distance (ticket 1.3) ---
+
+
+def test_outlier_sensitivity_axis_refined_by_influence_count():
+    # Cook's-distance count takes precedence and localizes the influence.
+    assert _outlier_sensitivity_axis("sensitive", 1) == "single_point_driven"
+    assert _outlier_sensitivity_axis("sensitive", 5) == "high_leverage_cluster"
+    # No influential rows -> fall back to the trim-sensitivity verdict.
+    assert _outlier_sensitivity_axis("sensitive", 0) == "high"
+    assert _outlier_sensitivity_axis("stable", 0) == "low"
+    assert _outlier_sensitivity_axis("unavailable", None) == "unavailable"
+
+
+def test_outlier_sensitivity_axis_fires_even_when_trim_says_stable():
+    # Cook's distance has no 1%-trim blind spot: a leverage cluster the trim
+    # check missed still surfaces on the axis.
+    assert _outlier_sensitivity_axis("stable", 4) == "high_leverage_cluster"
+
+
+def test_outlier_driven_reports_high_leverage_cluster():
+    df = make_relationship("outlier_driven", n=500, noise=0.1, random_state=42)
+    res = profile_pair(df, "x", "y", mode="lite")
+
+    assert res.pattern == "possible_outlier_or_leverage"
+    assert res.diagnostics.outlier_sensitivity == "high_leverage_cluster"
+    assert res.diagnostics.n_influential_points >= 2
+    assert res.diagnostics.max_cook_distance is not None
+
+
+def test_single_dominant_point_reports_single_point_driven():
+    import numpy as np
+    import pandas as pd
+
+    rng = np.random.default_rng(0)
+    n = 500
+    x = rng.uniform(-3, 3, n)
+    y = x + rng.normal(0, 0.3, n)
+    x[-1], y[-1] = 20.0, -20.0  # one high-leverage, high-residual row
+    res = profile_pair(pd.DataFrame({"x": x, "y": y}), "x", "y", mode="lite")
+
+    assert res.diagnostics.outlier_sensitivity == "single_point_driven"
+    assert res.diagnostics.n_influential_points == 1
+    assert res.diagnostics.max_cook_distance > 1.0
+
+
+def test_clean_linear_reports_low_outlier_sensitivity():
+    df = make_relationship("linear_positive", n=500, noise=0.1, random_state=42)
+    res = profile_pair(df, "x", "y", mode="lite")
+
+    assert res.diagnostics.outlier_sensitivity == "low"
+    assert res.diagnostics.n_influential_points == 0

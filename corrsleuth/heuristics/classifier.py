@@ -515,9 +515,19 @@ def _dependence_type_axis(
     return None
 
 
-def _outlier_sensitivity_axis(outlier_status: str | None) -> str | None:
-    """Is the summary driven by a few rows? Reuses the trim-sensitivity verdict
-    computed for the leverage rule."""
+def _outlier_sensitivity_axis(
+    outlier_status: str | None, n_influential: float | None
+) -> str | None:
+    """Is the summary driven by a few rows, and how many?
+
+    Cook's-distance influence (``n_influential``) refines the answer first: it
+    localizes the influence *and*, unlike the 1%-trim check, has no blind spot
+    for a mid-range leverage cluster larger than the trimmed fraction, so it can
+    fire even when the trim check called the pair stable. Falls back to the
+    trim-sensitivity verdict (the leverage rule's own signal) when Cook's
+    distance is unavailable or finds no influential row."""
+    if n_influential is not None and n_influential >= 1:
+        return "single_point_driven" if n_influential == 1 else "high_leverage_cluster"
     if outlier_status == "sensitive":
         return "high"
     if outlier_status == "stable":
@@ -575,11 +585,12 @@ def derive_diagnostic_axes(
     bp_pvalue = _finite_metric_value(metrics.get("bp_pvalue"))
     gq_ratio = _finite_metric_value(metrics.get("gq_ratio"))
     segment_stepness = _finite_metric_value(metrics.get("segment_stepness"))
+    n_influential = _finite_metric_value(metrics.get("n_influential_points"))
 
     return {
         "mean_shape": _mean_shape_axis(p, s, bin_lof, segment_stepness),
         "variance_shape": _variance_shape_axis(bp_pvalue, gq_ratio, bin_lof),
         "dependence_type": _dependence_type_axis(p, s, dc, sq_corr, xi_fwd, xi_rev),
-        "outlier_sensitivity": _outlier_sensitivity_axis(outlier_status),
+        "outlier_sensitivity": _outlier_sensitivity_axis(outlier_status, n_influential),
         "functional_direction": _functional_direction_axis(xi_fwd, xi_rev),
     }

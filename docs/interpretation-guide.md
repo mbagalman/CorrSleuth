@@ -444,7 +444,7 @@ available metrics it is `None` (rendered `NA`).
 | `mean_shape` | Is E[Y\|X] a straight line, a smooth curve, or a step? | `linear`, `smooth_curve`, `step_or_threshold`, `curved`, `None` |
 | `variance_shape` | Does the spread of Y change with X? | `constant`, `increasing_spread`, `decreasing_spread`, `None` |
 | `dependence_type` | What kind of dependence is it? | `monotone`, `magnitude_linked`, `nonmonotone`, `closed_loop_or_multivalued`, `None` |
-| `outlier_sensitivity` | Do a few rows drive the summary? | `low`, `high`, `unavailable` |
+| `outlier_sensitivity` | Do a few rows drive the summary? | `low`, `single_point_driven`, `high_leverage_cluster`, `high`, `unavailable` |
 | `functional_direction` | Which variable is a function of the other? | `y_of_x`, `x_of_y`, `both_directions`, `neither_direction`, `None` |
 
 Notes on the less-obvious values:
@@ -481,6 +481,18 @@ Notes on the less-obvious values:
 - **`functional_direction`** comes from Chatterjee's ξ, so it is populated only
   in `mode="deep"` (`None` otherwise). `y_of_x` means Y is a (noisy) function
   of X but not the reverse — the signature of a one-way mapping like Y = X².
+- **`outlier_sensitivity`** refines the trim-sensitivity verdict with row-level
+  Cook's distance (`metrics/influence.py`): `single_point_driven` when one row
+  dominates the fit, `high_leverage_cluster` when several do, `low` when none.
+  The numbers behind it are `max_cook_distance` and `n_influential_points` on
+  `result.diagnostics`. Because Cook's distance has no blind spot for a
+  mid-range leverage cluster larger than the 1% trim fraction (see
+  [Outlier-Sensitive Correlations](#outlier-sensitive-correlations)), this axis
+  can flag `high_leverage_cluster` even when the trim check called Pearson
+  stable — a case the primary label would miss. It uses the softer Cook &
+  Weisberg `D > 0.5` cutoff rather than `D > 1`, because a tight cluster of
+  outliers masks itself (each point's individual Cook's distance is deflated by
+  the others).
 
 Because the axes are derived from evidence rather than read off the label, they
 are **orthogonal** to it. For example:
@@ -498,6 +510,11 @@ Primary pattern: near_linear
 Primary pattern: monotonic_nonlinear
   mean_shape          : step_or_threshold   # a jump, not a smooth curve ...
   breakpoint_x        : 0.02                 # ... located near x = 0
+
+Primary pattern: possible_outlier_or_leverage
+  outlier_sensitivity : single_point_driven   # one row moves the fit ...
+  max_cook_distance   : 64.1                   # ... a lot
+  n_influential_points: 1
 
 Primary pattern: nonmonotonic_dependence
   mean_shape          : NA              # no y = f(x) mean trend
@@ -578,6 +595,14 @@ below (especially `biweight_midcorrelation` and `pearson_median_clipped_20pct`,
 which down-weight far more than 1%); if they collapse toward zero while Pearson
 stays high, leverage is doing the work regardless of the label.
 
+The **`outlier_sensitivity` axis** partially covers this blind spot from the
+other direction: it is driven by row-level Cook's distance
+(`max_cook_distance`, `n_influential_points` on `result.diagnostics`), which
+does not have the 1%-trim limitation. A mid-range leverage cluster that the
+trim gate misses still shows up as `outlier_sensitivity = high_leverage_cluster`
+with `n_influential_points` counting the rows — even when the primary label
+stayed `near_linear`. A lone dominant row reads as `single_point_driven`.
+
 `mode="deep"` adds four robust correlation diagnostics that you can
 inspect alongside Pearson:
 
@@ -645,8 +670,9 @@ Notes:
   (`max_n_for_dcor=20000`). The downsample is seeded for reproducibility.
 - The shape diagnostics (`bin_lof_r2_gain`, `sq_corr` — see
   [shape-diagnostics-design.md](shape-diagnostics-design.md); `segment_gain`,
-  `breakpoint_x`) and the heteroscedasticity diagnostics (`bp_pvalue`,
-  `gq_ratio`) run in every mode, including `lite`. They feed the
+  `breakpoint_x`), the heteroscedasticity diagnostics (`bp_pvalue`,
+  `gq_ratio`), and the influence diagnostics (`max_cook_distance`,
+  `n_influential_points`) run in every mode, including `lite`. They feed the
   `monotonic_nonlinear` / `nonmonotonic_dependence` labels and the secondary
   axes but never appear in the metrics table; they show up under
   `result.diagnostics`.
