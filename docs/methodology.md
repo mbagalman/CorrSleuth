@@ -222,7 +222,12 @@ label CorrSleuth derives a small set of **secondary diagnostic axes** —
 diagnostics already computed (`derive_diagnostic_axes` in
 `heuristics/classifier.py`). They are derived from the evidence, not read off
 the label, so they stay orthogonal to it; each keeps its underlying number on
-`result.diagnostics`. See the [interpretation
+`result.diagnostics`. `variance_shape` in particular tests for
+**heteroscedasticity** — a Koenker-studentized Breusch-Pagan test on the
+linear-fit residuals for significance, with a Goldfeld-Quandt residual-variance
+ratio for effect size and direction (`metrics/variance.py`), assessed only when
+the mean is adequately linear so a curved mean's misspecification residuals are
+not mistaken for changing noise variance. See the [interpretation
 guide](interpretation-guide.md#secondary-diagnostic-fields) for the full value
 list.
 

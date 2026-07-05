@@ -98,6 +98,7 @@ The plain-language version of each rule and its failure modes is in
 | `_LOW_UNIQUE_RATIO_THRESHOLD` | 0.05 | `validation/input.py` | low-unique-ratio warning | < 5% distinct values means each value is shared by ~20 rows on average — effectively discrete, so rank metrics are tie-unstable. |
 | `_MIN_N_FOR_CHATTERJEE_XI` | 20 | `metrics/nonlinear.py` | minimum n before ξ is computed | ξ converges slowly and is biased on tiny samples; 20 is a conservative floor below the labeling cutoff, since ξ is only ever a supplementary diagnostic. |
 | `_MIN_N_FOR_BIN_LOF` | 50 | `metrics/shape.py` | minimum n before `bin_lof_r2_gain` is computed (5 bins × 10 points/bin) | Below this, equal-frequency bins would have too few points each for a stable bin mean. No mode gate — this and `sq_corr` are pure numpy/scipy, so they run in every mode including `lite`. |
+| `_MIN_N_FOR_HETEROSCEDASTICITY` | 50 | `metrics/variance.py` | minimum n before the Breusch-Pagan / Goldfeld-Quandt variance tests run (the `variance_shape` axis) | The Goldfeld-Quandt split needs enough points per group to estimate a residual variance. No mode gate — pure numpy/scipy, runs in every mode. |
 | `_MIN_N_FOR_ROBUST` / `ROBUST_METRIC_MIN_N` | 50 | `metrics/robust.py` | minimum n before robust deep-mode metrics run | A 1% trim removes too few rows to mean anything below ~50; 50 keeps ≥ 1 row in each trimmed tail. |
 | `_MIN_N_AFTER_TRIM` | 30 | `metrics/robust.py` | minimum n that must survive trimming | Mirrors `LOW_N_THRESHOLD` so a trimmed correlation is never reported on a sample CorrSleuth would otherwise call low-power. |
 
@@ -136,6 +137,8 @@ These add cautionary text but never change the primary label
 |---|---|---|---|
 | `CONFLICTING_SIGN_THRESHOLD` | 0.30 | both `|pearson|` and `|spearman|` must exceed this before an opposite-sign disagreement is worth a warning | Below this both coefficients are near zero and a sign flip is just noise. |
 | `XI_DEPENDENCE_WARN_THRESHOLD` | 0.35 | Chatterjee's ξ — or mutual information, converted to a comparable scale via `sqrt(1 − exp(−2·MI))` — above which a weak/ambiguous label gets a "may understate dependence" warning | Matches `NONMONOTONIC_DC_THRESHOLD` so the dependence signals share one cut point. Mutual information is included so this warning can fire in `mode="standard"` too, not only deep mode. |
+| `HETEROSCEDASTICITY_PVALUE_THRESHOLD` | 0.05 | Breusch-Pagan p-value below which residual variance is treated as non-constant — sets `variance_shape` and its warning | A real hypothesis-test p-value (unlike the effect-size bands), so at large n it rejects for trivially small heteroscedasticity — which is why it is **paired** with the ratio floor below, never used alone. Only applied when the mean is adequately linear (see `metrics/variance.py`). |
+| `HETEROSCEDASTICITY_RATIO_FLOOR` | 1.5 | Goldfeld-Quandt high-vs-low-x residual-variance ratio that must be cleared (above it, or below its reciprocal) before a Breusch-Pagan rejection is reported as heteroscedastic; also sets the direction | Effect-size guard so the large-n Breusch-Pagan test does not flag negligible variance change. 1.5× = spread on one side at least half again the other's; clean linear data measured ~0.8–1.2 across seeds. |
 
 ## Scan-level thresholds
 

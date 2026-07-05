@@ -17,6 +17,7 @@ from corrsleuth.metrics import (
     compute_chatterjee_xi,
     compute_chatterjee_xi_reverse,
     compute_distance_correlation,
+    compute_heteroscedasticity,
     compute_kendall,
     compute_median_clipped_pearson,
     compute_mutual_information,
@@ -48,6 +49,7 @@ def _build_diagnostics(
     outlier_sensitivity=None,
     bin_lof_r2_gain=None,
     sq_corr=None,
+    heteroscedasticity=None,
     axes: dict[str, str | None] | None = None,
 ) -> MetricDiagnostics:
     pearson = _metric_value(metrics_map, "pearson")
@@ -75,6 +77,9 @@ def _build_diagnostics(
     )
 
     axes = axes or {}
+    heteroscedasticity = heteroscedasticity or {}
+    bp_result = heteroscedasticity.get("bp_pvalue")
+    gq_result = heteroscedasticity.get("gq_ratio")
     return MetricDiagnostics(
         rank_linear_gap=rank_linear_gap,
         pearson_spearman_signed_gap=pearson_spearman_signed_gap,
@@ -87,6 +92,8 @@ def _build_diagnostics(
         pearson_trim_delta=outlier_sensitivity.delta if outlier_sensitivity else None,
         bin_lof_r2_gain=bin_lof_r2_gain.value if bin_lof_r2_gain else None,
         sq_corr=sq_corr.value if sq_corr else None,
+        bp_pvalue=bp_result.value if bp_result else None,
+        gq_ratio=gq_result.value if gq_result else None,
         mean_shape=axes.get("mean_shape"),
         variance_shape=axes.get("variance_shape"),
         dependence_type=axes.get("dependence_type"),
@@ -212,12 +219,15 @@ def profile_pair(
             pair, mode=mode, random_state=random_state
         )
 
-    # Shape diagnostics: pure numpy/scipy, no mode gate, cheap enough for
-    # every mode. Feed the label cascade and MetricDiagnostics only — kept out
-    # of metrics_map so they never appear in the public metrics table
-    # alongside primary association coefficients like pearson/dcor/MI.
+    # Shape and variance diagnostics: pure numpy/scipy, no mode gate, cheap
+    # enough for every mode. Feed the label cascade / secondary axes /
+    # MetricDiagnostics only — kept out of metrics_map so they never appear in
+    # the public metrics table alongside primary association coefficients like
+    # pearson/dcor/MI. compute_heteroscedasticity returns a {name: MetricResult}
+    # dict (bp_pvalue, gq_ratio).
     bin_lof_r2_gain = compute_bin_lof_r2_gain(pair)
     sq_corr = compute_squared_correlation(pair)
+    heteroscedasticity = compute_heteroscedasticity(pair)
 
     # 3. Outlier sensitivity check (informs the leverage label)
     #
@@ -268,12 +278,15 @@ def profile_pair(
 
     # 4. Apply heuristics and metric-agreement warnings
     #
-    # The shape diagnostics are merged in only for the cascade/warning calls,
-    # never into metrics_map itself, so they stay out of metrics_df.
+    # The shape/variance diagnostics are merged in only for the
+    # cascade/warning/axis calls, never into metrics_map itself, so they stay
+    # out of metrics_df. (apply_heuristics ignores the extra keys — variance is
+    # a modifier, not a label input.)
     cascade_metrics = {
         **metrics_map,
         "bin_lof_r2_gain": bin_lof_r2_gain,
         "sq_corr": sq_corr,
+        **heteroscedasticity,
     }
     heuristic_result = apply_heuristics(cascade_metrics, pair.flags, pair.n_used)
     pair.warnings.extend(
@@ -329,6 +342,7 @@ def profile_pair(
         outlier_sensitivity,
         bin_lof_r2_gain=bin_lof_r2_gain,
         sq_corr=sq_corr,
+        heteroscedasticity=heteroscedasticity,
         axes=axes,
     )
     bootstrap_result = compute_bootstrap(

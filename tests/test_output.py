@@ -328,7 +328,12 @@ def test_secondary_axes_surfaced_in_every_output_form():
     d = res.diagnostics
     assert d.dependence_type == "closed_loop_or_multivalued"
     assert d.functional_direction == "neither_direction"
-    assert d.variance_shape is None  # populated by a later ticket
+    assert d.variance_shape in (
+        None,
+        "constant",
+        "increasing_spread",
+        "decreasing_spread",
+    )
 
     nested = res.to_dict()["diagnostics"]
     assert nested["dependence_type"] == "closed_loop_or_multivalued"

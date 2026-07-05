@@ -22,6 +22,7 @@ def make_relationship(
     - threshold_step
     - u_shape
     - circular
+    - heteroscedastic
     - outlier_driven
     - independent
 
@@ -94,6 +95,15 @@ def make_relationship(
         radius = 5.0 * (1 + rng.normal(0, noise, size=n))
         x = radius * np.cos(theta)
         y = radius * np.sin(theta)
+    elif shape_type == "heteroscedastic":
+        # A linear *mean* (so the pair stays near_linear) with residual spread
+        # that grows with x — the classic funnel. The mean model is fine, but
+        # homoscedastic inference on top of it is not: this is what the
+        # variance_shape="increasing_spread" axis and its warning exist to
+        # catch. x is drawn positive so the spread scaling is monotone.
+        x = rng.uniform(0, 4, size=n)
+        spread = noise * (0.5 + x)
+        y = x + rng.normal(0, 1, size=n) * spread
     elif shape_type == "outlier_driven":
         y = rng.normal(0, noise, size=n)
         # Add a few extreme outliers that drive correlation

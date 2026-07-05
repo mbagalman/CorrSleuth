@@ -56,10 +56,13 @@ class MetricDiagnostics:
     sign disagreement the absolute gap hides), the nonmonotonic and
     Pearson-Kendall gaps, the overall ``disagreement_score``, the
     outlier-sensitivity fields (``pearson_trimmed``, ``pearson_trim_delta``),
-    and the shape diagnostics (``bin_lof_r2_gain``, the equal-frequency-bin
+    the shape diagnostics (``bin_lof_r2_gain``, the equal-frequency-bin
     lack-of-fit test's R² gain over a linear fit; ``sq_corr``, the correlation
-    between X² and Y²) — see ``corrsleuth/metrics/shape.py``. Gap and shape
-    fields are ``None`` when the metrics they depend on are unavailable.
+    between X² and Y²) — see ``corrsleuth/metrics/shape.py`` — and the
+    heteroscedasticity diagnostics (``bp_pvalue``, the Breusch-Pagan p-value;
+    ``gq_ratio``, the Goldfeld-Quandt high-vs-low-x residual variance ratio) —
+    see ``corrsleuth/metrics/variance.py``. Gap, shape, and variance fields are
+    ``None`` when the metrics they depend on are unavailable.
 
     The final five fields are the **secondary diagnostic axes** — coarse
     categorical summaries describing orthogonal properties of the relationship
@@ -82,6 +85,8 @@ class MetricDiagnostics:
     pearson_trim_delta: float | None = None
     bin_lof_r2_gain: float | None = None
     sq_corr: float | None = None
+    bp_pvalue: float | None = None
+    gq_ratio: float | None = None
     mean_shape: str | None = None
     variance_shape: str | None = None
     dependence_type: str | None = None
@@ -130,6 +135,8 @@ class CorrSleuthResult:
             pearson_trim_delta=None,
             bin_lof_r2_gain=None,
             sq_corr=None,
+            bp_pvalue=None,
+            gq_ratio=None,
             mean_shape=None,
             variance_shape=None,
             dependence_type=None,
@@ -189,6 +196,8 @@ class CorrSleuthResult:
                 f"  pearson_trim_delta       : {self._format_value(self.diagnostics.pearson_trim_delta)}",
                 f"  bin_lof_r2_gain          : {self._format_value(self.diagnostics.bin_lof_r2_gain)}",
                 f"  sq_corr                  : {self._format_value(self.diagnostics.sq_corr)}",
+                f"  bp_pvalue                : {self._format_value(self.diagnostics.bp_pvalue)}",
+                f"  gq_ratio                 : {self._format_value(self.diagnostics.gq_ratio)}",
                 "",
                 "Relationship axes:",
                 f"  mean_shape           : {self._format_axis(self.diagnostics.mean_shape)}",
@@ -356,6 +365,14 @@ class CorrSleuthResult:
                     [
                         "sq_corr",
                         format_markdown_value(self.diagnostics.sq_corr),
+                    ],
+                    [
+                        "bp_pvalue",
+                        format_markdown_value(self.diagnostics.bp_pvalue),
+                    ],
+                    [
+                        "gq_ratio",
+                        format_markdown_value(self.diagnostics.gq_ratio),
                     ],
                 ],
             ),

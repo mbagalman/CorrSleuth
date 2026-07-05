@@ -12,6 +12,7 @@ from corrsleuth.metrics import (
     compute_chatterjee_xi,
     compute_chatterjee_xi_reverse,
     compute_distance_correlation,
+    compute_heteroscedasticity,
     compute_kendall,
     compute_median_clipped_pearson,
     compute_mutual_information,
@@ -578,3 +579,97 @@ def test_squared_correlation_returns_none_when_squared_x_is_constant():
     result = compute_squared_correlation(pair)
     assert result.value is None
     assert result.available is True
+
+
+# --- Heteroscedasticity (variance-shape diagnostics) ---
+
+
+def _reference_breusch_pagan_pvalue(x, y):
+    """Independent Koenker Breusch-Pagan p-value via the single-regressor
+    identity R²(e² ~ x) = corr(e², x)², a different arithmetic path than the
+    polyfit-residual R² used in metrics/variance.py."""
+    from scipy.stats import chi2, pearsonr
+
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    n = len(x)
+    slope, intercept = np.polyfit(x, y, 1)
+    e2 = (y - (slope * x + intercept)) ** 2
+    r = pearsonr(x, e2)[0]
+    lm = n * r**2
+    return float(chi2.sf(lm, 1))
+
+
+def test_heteroscedasticity_bp_matches_reference_on_funnel_data():
+    rng = np.random.default_rng(0)
+    n = 400
+    x = rng.uniform(0, 4, size=n)
+    y = x + rng.normal(0, 1, size=n) * (0.5 + x)  # spread grows with x
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_heteroscedasticity(pair)
+    expected = _reference_breusch_pagan_pvalue(x, y)
+
+    assert result["bp_pvalue"].value == pytest.approx(expected, abs=1e-9)
+
+
+def test_heteroscedasticity_detects_increasing_and_constant_spread():
+    rng = np.random.default_rng(0)
+    n = 400
+    x = rng.uniform(0, 4, size=n)
+
+    funnel_y = x + rng.normal(0, 1, size=n) * (0.5 + x)
+    funnel = validate_pair(pd.DataFrame({"x": x, "y": funnel_y}), "x", "y")
+    het = compute_heteroscedasticity(funnel)
+    assert het["bp_pvalue"].value < 0.01  # clearly heteroscedastic
+    assert het["gq_ratio"].value > 1.5  # more spread on the high-x side
+
+    homo_y = x + rng.normal(0, 0.3, size=n)  # constant spread
+    homo = validate_pair(pd.DataFrame({"x": x, "y": homo_y}), "x", "y")
+    het_homo = compute_heteroscedasticity(homo)
+    # Constant spread: Goldfeld-Quandt ratio near 1 in either direction.
+    assert 1.0 / 1.5 < het_homo["gq_ratio"].value < 1.5
+
+
+def test_heteroscedasticity_gq_ratio_below_one_for_decreasing_spread():
+    rng = np.random.default_rng(1)
+    n = 400
+    x = rng.uniform(0, 4, size=n)
+    y = x + rng.normal(0, 1, size=n) * (0.5 + (4 - x))  # spread shrinks with x
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_heteroscedasticity(pair)
+    assert result["gq_ratio"].value < 1.0 / 1.5
+
+
+def test_heteroscedasticity_returns_none_for_constant_input():
+    df = pd.DataFrame({"x": [1.0] * 80, "y": list(range(80))})
+    pair = validate_pair(df, "x", "y")
+
+    result = compute_heteroscedasticity(pair)
+    assert result["bp_pvalue"].value is None
+    assert result["gq_ratio"].value is None
+    assert result["bp_pvalue"].available is True
+
+
+def test_heteroscedasticity_returns_none_below_min_n():
+    rng = np.random.default_rng(0)
+    n = 40  # below _MIN_N_FOR_HETEROSCEDASTICITY (50)
+    df = pd.DataFrame({"x": rng.uniform(0, 4, n), "y": rng.uniform(0, 4, n)})
+    pair = validate_pair(df, "x", "y")
+
+    result = compute_heteroscedasticity(pair)
+    assert result["bp_pvalue"].value is None
+    assert result["gq_ratio"].value is None
+
+
+def test_heteroscedasticity_returns_none_for_perfect_linear_fit():
+    """A perfect linear fit leaves no residual variance to test; the shared fit
+    would otherwise divide by zero."""
+    x = np.arange(80, dtype=float)
+    y = 2.0 * x + 1.0  # exactly linear, zero residuals
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_heteroscedasticity(pair)
+    assert result["bp_pvalue"].value is None
+    assert result["gq_ratio"].value is None

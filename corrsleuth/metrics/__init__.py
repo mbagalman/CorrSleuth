@@ -12,6 +12,7 @@ from .robust import (
     compute_winsorized_pearson,
 )
 from .shape import compute_bin_lof_r2_gain, compute_squared_correlation
+from .variance import compute_heteroscedasticity
 
 __all__ = [
     "compute_pearson",
@@ -29,6 +30,7 @@ __all__ = [
     "compute_chatterjee_xi_reverse",
     "compute_bin_lof_r2_gain",
     "compute_squared_correlation",
+    "compute_heteroscedasticity",
     "ROBUST_METRIC_MIN_N",
     "compute_bootstrap",
     "compute_bootstrap_intervals",

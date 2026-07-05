@@ -3,6 +3,7 @@ import pytest
 from corrsleuth.api import profile_pair
 from corrsleuth.datasets import make_relationship
 from corrsleuth.heuristics.classifier import (
+    _variance_shape_axis,
     apply_heuristics,
     derive_diagnostic_axes,
     detect_metric_warnings,
@@ -430,3 +431,65 @@ def test_axes_are_orthogonal_to_label_outlier_driven_but_linear_mean():
     res = profile_pair(df, "x", "y", mode="deep")
     assert res.pattern == "possible_outlier_or_leverage"
     assert res.diagnostics.outlier_sensitivity == "high"
+
+
+# --- variance_shape axis / heteroscedasticity (ticket 1.1) ---
+
+
+def test_variance_shape_axis_direction_and_effect_floor():
+    linear_bin_lof = 0.0  # adequately linear mean, so variance is assessable
+    # Clear funnel: BP rejects, ratio well above the floor.
+    assert _variance_shape_axis(1e-10, 7.0, linear_bin_lof) == "increasing_spread"
+    # Reversed funnel.
+    assert _variance_shape_axis(1e-10, 0.2, linear_bin_lof) == "decreasing_spread"
+    # BP rejects but the effect is negligible (ratio ~1) -> constant. This is the
+    # large-n guard: BP alone would over-flag.
+    assert _variance_shape_axis(1e-10, 1.1, linear_bin_lof) == "constant"
+    # BP does not reject -> constant.
+    assert _variance_shape_axis(0.4, 7.0, linear_bin_lof) == "constant"
+
+
+def test_variance_shape_axis_gated_off_by_curved_mean():
+    # A curved mean makes linear-fit residuals heteroscedastic as an artifact,
+    # so variance_shape must be None regardless of the BP/GQ values.
+    curved_bin_lof = 0.5
+    assert _variance_shape_axis(1e-10, 7.0, curved_bin_lof) is None
+
+
+def test_variance_shape_axis_none_when_not_computed():
+    assert _variance_shape_axis(None, None, 0.0) is None
+    assert _variance_shape_axis(1e-10, 7.0, None) is None
+
+
+def test_heteroscedastic_shape_is_near_linear_with_increasing_spread_and_warning():
+    df = make_relationship("heteroscedastic", n=500, noise=0.1, random_state=42)
+    res = profile_pair(df, "x", "y", mode="lite")
+
+    # The mean trend is linear (label unchanged) but the variance is flagged.
+    assert res.pattern == "near_linear"
+    assert res.diagnostics.variance_shape == "increasing_spread"
+    assert res.diagnostics.mean_shape == "linear"
+    assert any("residual spread" in w for w in res.warnings)
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_homoscedastic_linear_stays_constant_without_warning(seed):
+    # Guards against false positives: a clean homoscedastic linear pair must
+    # report constant variance and emit no heteroscedasticity warning, even
+    # though the large-n Breusch-Pagan test occasionally rejects.
+    df = make_relationship("linear_positive", n=500, noise=0.1, random_state=seed)
+    res = profile_pair(df, "x", "y", mode="lite")
+
+    assert res.diagnostics.variance_shape == "constant"
+    assert not any("residual spread" in w for w in res.warnings)
+
+
+def test_curved_relationship_does_not_report_variance_shape():
+    # An exponential curve: the linear-fit residuals look heteroscedastic, but
+    # that is a curvature artifact, so variance_shape must be None.
+    df = make_relationship("exponential_monotonic", n=500, noise=0.1, random_state=42)
+    res = profile_pair(df, "x", "y", mode="lite")
+
+    assert res.pattern == "monotonic_nonlinear"
+    assert res.diagnostics.variance_shape is None
+    assert not any("residual spread" in w for w in res.warnings)

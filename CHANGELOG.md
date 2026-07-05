@@ -130,6 +130,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enrichment of the internal `CleanPair` in `profile_pair`.
 
 ### Added
+- **Heteroscedasticity diagnostics** (`corrsleuth/metrics/variance.py`,
+  no new dependency): `compute_heteroscedasticity` runs a Koenker-studentized
+  Breusch-Pagan test and a Goldfeld-Quandt residual-variance ratio on the
+  linear-fit residuals, exposed as `bp_pvalue` and `gq_ratio` on
+  `result.diagnostics` and populating the `variance_shape` axis
+  (`constant` / `increasing_spread` / `decreasing_spread`). A `near_linear`
+  pair with a growing funnel now keeps its label but reports
+  `variance_shape=increasing_spread` and a warning that homoscedastic inference
+  may be unreliable. Only assessed when the mean is adequately linear (a curved
+  mean's misspecification residuals are not mistaken for changing variance).
+  Adds a `heteroscedastic` shape to `make_relationship()`.
 - **Secondary diagnostic axes** on `result.diagnostics`: five coarse
   categorical summaries — `mean_shape`, `variance_shape`, `dependence_type`,
   `outlier_sensitivity`, and `functional_direction` — describing orthogonal
@@ -139,9 +150,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pair can simultaneously report high `outlier_sensitivity`, and a circular
   pair reports `dependence_type=closed_loop_or_multivalued` with
   `functional_direction=neither_direction` in deep mode. Surfaced in
-  `summary()`, `to_markdown()`, `to_dict()`, and `to_frame()`;
-  `variance_shape` is reserved (always `None`) pending a heteroscedasticity
-  diagnostic. Each axis keeps its underlying number alongside it.
+  `summary()`, `to_markdown()`, `to_dict()`, and `to_frame()`. Each axis keeps
+  its underlying number alongside it.
 - `corrsleuth/metrics/shape.py`: two no-new-dependency shape diagnostics,
   `bin_lof_r2_gain` (bin-mean-model R² minus linear-fit R², a classical
   lack-of-fit test) and `sq_corr` (`corr(X², Y²)`), wired into the

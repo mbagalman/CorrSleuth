@@ -438,13 +438,24 @@ available metrics it is `None` (rendered `NA`).
 | Axis | Question | Values |
 |---|---|---|
 | `mean_shape` | Is E[Y\|X] a straight line? | `linear`, `curved`, `None` |
-| `variance_shape` | Does the spread of Y change with X? | *(reserved — always `None` today; a forthcoming heteroscedasticity diagnostic will populate it)* |
+| `variance_shape` | Does the spread of Y change with X? | `constant`, `increasing_spread`, `decreasing_spread`, `None` |
 | `dependence_type` | What kind of dependence is it? | `monotone`, `magnitude_linked`, `nonmonotone`, `closed_loop_or_multivalued`, `None` |
 | `outlier_sensitivity` | Do a few rows drive the summary? | `low`, `high`, `unavailable` |
 | `functional_direction` | Which variable is a function of the other? | `y_of_x`, `x_of_y`, `both_directions`, `neither_direction`, `None` |
 
 Notes on the less-obvious values:
 
+- **`variance_shape`** measures *heteroscedasticity* — whether the residual
+  spread around the mean trend changes with X (a Breusch-Pagan test, with a
+  Goldfeld-Quandt effect-size floor and direction). `increasing_spread` is the
+  classic funnel. It is only assessed when the **mean is adequately linear**: a
+  curved mean makes the linear-fit residuals look heteroscedastic as an
+  *artifact* of misspecification, so a curved `mean_shape` yields
+  `variance_shape = None` rather than a spurious verdict. When
+  `increasing_spread`/`decreasing_spread` fires, a warning notes that Pearson's
+  point estimate is fine but homoscedastic inference (standard errors,
+  prediction intervals) may be unreliable. The underlying numbers are
+  `bp_pvalue` and `gq_ratio` on `result.diagnostics`.
 - **`dependence_type = magnitude_linked`** — Pearson and Spearman are weak, but
   |X| and |Y| move together (from `sq_corr`). A U-shape is the canonical case.
 - **`dependence_type = closed_loop_or_multivalued`** — dependence exists, but
@@ -463,6 +474,10 @@ Primary pattern: possible_outlier_or_leverage
   mean_shape          : linear          # the bulk trend is a straight line ...
   outlier_sensitivity : high            # ... but a few rows drive it
   dependence_type     : monotone
+
+Primary pattern: near_linear
+  mean_shape          : linear          # a clean straight-line trend ...
+  variance_shape      : increasing_spread   # ... but the spread fans out with x
 
 Primary pattern: nonmonotonic_dependence
   mean_shape          : NA              # no y = f(x) mean trend
@@ -609,10 +624,11 @@ Notes:
 - Distance correlation downsamples to 20 000 rows by default
   (`max_n_for_dcor=20000`). The downsample is seeded for reproducibility.
 - Two shape diagnostics (`bin_lof_r2_gain`, `sq_corr` — see
-  [shape-diagnostics-design.md](shape-diagnostics-design.md)) run in every
-  mode, including `lite`. They feed `monotonic_nonlinear` and
-  `nonmonotonic_dependence` but never appear in the metrics table; they show
-  up under `result.diagnostics`.
+  [shape-diagnostics-design.md](shape-diagnostics-design.md)) and two
+  heteroscedasticity diagnostics (`bp_pvalue`, `gq_ratio`) run in every mode,
+  including `lite`. They feed the `monotonic_nonlinear` /
+  `nonmonotonic_dependence` labels and the secondary axes but never appear in
+  the metrics table; they show up under `result.diagnostics`.
 - `scan_target()` profiles columns **sequentially** — one `profile_pair`
   call at a time, with no parallelism. For typical EDA this is fine, but a
   very wide DataFrame (hundreds to thousands of columns) combined with

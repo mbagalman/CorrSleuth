@@ -16,6 +16,7 @@ def test_make_relationship_shapes():
         "threshold_step",
         "u_shape",
         "circular",
+        "heteroscedastic",
         "outlier_driven",
         "independent",
     ]

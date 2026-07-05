@@ -102,6 +102,22 @@ BIN_LOF_R2_GAIN_THRESHOLD = 0.05
 #: scenarios measured <=0.11, real magnitude-linked dependence measured >=0.30.
 SQ_CORR_THRESHOLD = 0.35
 
+#: Breusch-Pagan p-value below which the residual variance is treated as
+#: non-constant, for the ``variance_shape`` secondary axis (not the primary
+#: cascade). Unlike the effect-size-band thresholds, this is a real hypothesis
+#: test, so at large n it rejects for trivially small heteroscedasticity — which
+#: is why it is paired with :data:`HETEROSCEDASTICITY_RATIO_FLOOR` below rather
+#: than used alone. See metrics/variance.py.
+HETEROSCEDASTICITY_PVALUE_THRESHOLD = 0.05
+
+#: Goldfeld-Quandt residual-variance ratio (high-x group vs low-x group) that
+#: must be cleared — above it, or below its reciprocal — before a
+#: Breusch-Pagan rejection is reported as heteroscedastic. A ratio of 1.5 means
+#: the spread on one side is at least half again the other's; this effect-size
+#: floor keeps the large-n Breusch-Pagan test from flagging negligible variance
+#: change (clean linear data measured a ratio ~0.8-1.2 across seeds).
+HETEROSCEDASTICITY_RATIO_FLOOR = 1.5
+
 #: Magnitude above which Pearson and Spearman having *opposite signs* is worth
 #: a directionality warning. Below this both coefficients are near zero and a
 #: sign disagreement is just noise, so the warning would be spurious.
@@ -295,12 +311,13 @@ def detect_metric_warnings(
 
     These warnings supplement validation warnings; they do not override the
     primary label. Flags conflicting Pearson/Spearman directionality when both
-    magnitudes exceed :data:`CONFLICTING_SIGN_THRESHOLD`, and — when ``label``
-    is provided — high Chatterjee's xi or high mutual information alongside a
-    weak or ambiguous label, since the cascade does not consult either when
-    assigning labels. Mutual information (nats) is converted to a bounded,
-    correlation-like scale via the Gaussian-equivalent-correlation transform
-    ``sqrt(1 - exp(-2*MI))`` before comparing against
+    magnitudes exceed :data:`CONFLICTING_SIGN_THRESHOLD`; non-constant residual
+    variance around an adequately linear mean (the ``variance_shape`` axis); and
+    — when ``label`` is provided — high Chatterjee's xi or high mutual
+    information alongside a weak or ambiguous label, since the cascade does not
+    consult either when assigning labels. Mutual information (nats) is converted
+    to a bounded, correlation-like scale via the Gaussian-equivalent-correlation
+    transform ``sqrt(1 - exp(-2*MI))`` before comparing against
     :data:`XI_DEPENDENCE_WARN_THRESHOLD`, so both signals share one cut point.
     """
     warnings: list[str] = []
@@ -318,6 +335,25 @@ def detect_metric_warnings(
         warnings.append(
             "Pearson and Spearman have conflicting directions; inspect the scatter "
             "plot and check for nonlinearity, segments, or leverage points."
+        )
+
+    # Heteroscedasticity: the mean trend can be fine while the residual spread
+    # changes with x, which quietly breaks homoscedastic inference. Reuse the
+    # variance_shape axis logic so the warning and the axis never disagree.
+    bp_pvalue = _finite_metric_value(metrics.get("bp_pvalue"))
+    gq_ratio = _finite_metric_value(metrics.get("gq_ratio"))
+    bin_lof = _finite_metric_value(metrics.get("bin_lof_r2_gain"))
+    variance_shape = _variance_shape_axis(bp_pvalue, gq_ratio, bin_lof)
+    if variance_shape in ("increasing_spread", "decreasing_spread") and (
+        bp_pvalue is not None and gq_ratio is not None
+    ):
+        direction = "grows" if variance_shape == "increasing_spread" else "shrinks"
+        warnings.append(
+            f"The mean relationship is approximately linear, but the residual "
+            f"spread {direction} across x (Breusch-Pagan p={bp_pvalue:.3g}; "
+            f"variance {gq_ratio:.1f}x between the high- and low-x thirds). Pearson "
+            f"describes the center trend, but homoscedastic inference (standard "
+            f"errors, prediction intervals) may be unreliable."
         )
 
     if label in _DEPENDENCE_WARNING_LABELS:
@@ -357,9 +393,6 @@ def detect_metric_warnings(
 # *summary* derived from the numeric diagnostics already computed; the raw
 # numbers stay the source of truth on ``MetricDiagnostics`` beside these labels.
 # See docs/interpretation-guide.md ("Secondary diagnostic fields").
-#
-# ``variance_shape`` is intentionally always ``None`` here — it is populated by
-# the heteroscedasticity work (see docs/development ticket 1.1) once that lands.
 # ---------------------------------------------------------------------------
 
 
@@ -393,6 +426,34 @@ def _mean_shape_axis(
     if linear:
         return "linear"
     return None
+
+
+def _variance_shape_axis(
+    bp_pvalue: float | None, gq_ratio: float | None, bin_lof: float | None
+) -> str | None:
+    """Does the spread of Y change with X? (``None`` when not assessable.)
+
+    Only assessed when the conditional mean is adequately linear: a *curved*
+    mean makes the linear-fit residuals heteroscedastic as an artifact of
+    misspecification (a line fit to an exponential has small residuals where the
+    curve is flat and large ones where it steepens), which is not a statement
+    about the noise variance. So a curved mean (``bin_lof`` above the lack-of-fit
+    threshold) yields ``None`` rather than a spurious spread verdict.
+    """
+    if bp_pvalue is None or gq_ratio is None:
+        return None
+    if bin_lof is None or bin_lof > BIN_LOF_R2_GAIN_THRESHOLD:
+        return None
+    if bp_pvalue >= HETEROSCEDASTICITY_PVALUE_THRESHOLD:
+        return "constant"
+    # Breusch-Pagan rejects; require a meaningful effect (guards against the
+    # large-n test flagging negligible heteroscedasticity), and take the
+    # direction from which side of the x-range carries the larger spread.
+    if gq_ratio > HETEROSCEDASTICITY_RATIO_FLOOR:
+        return "increasing_spread"
+    if gq_ratio < 1.0 / HETEROSCEDASTICITY_RATIO_FLOOR:
+        return "decreasing_spread"
+    return "constant"
 
 
 def _dependence_type_axis(
@@ -475,8 +536,7 @@ def derive_diagnostic_axes(
     These axes are orthogonal to the primary ``label`` — a pair can be, e.g.,
     ``near_linear`` in mean shape while still being magnitude-linked or
     outlier-driven — so they are derived from the numeric evidence rather than
-    read off the label. ``variance_shape`` is always ``None`` until the
-    heteroscedasticity diagnostics land.
+    read off the label.
     """
     p_val = _finite_metric_value(metrics.get("pearson"))
     s_val = _finite_metric_value(metrics.get("spearman"))
@@ -489,10 +549,12 @@ def derive_diagnostic_axes(
     sq_corr = _finite_metric_value(metrics.get("sq_corr"))
     xi_fwd = _finite_metric_value(metrics.get("chatterjee_xi"))
     xi_rev = _finite_metric_value(metrics.get("chatterjee_xi_reverse"))
+    bp_pvalue = _finite_metric_value(metrics.get("bp_pvalue"))
+    gq_ratio = _finite_metric_value(metrics.get("gq_ratio"))
 
     return {
         "mean_shape": _mean_shape_axis(p, s, bin_lof),
-        "variance_shape": None,
+        "variance_shape": _variance_shape_axis(bp_pvalue, gq_ratio, bin_lof),
         "dependence_type": _dependence_type_axis(p, s, dc, sq_corr, xi_fwd, xi_rev),
         "outlier_sensitivity": _outlier_sensitivity_axis(outlier_status),
         "functional_direction": _functional_direction_axis(xi_fwd, xi_rev),
