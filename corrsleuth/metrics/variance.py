@@ -142,9 +142,20 @@ def _group_variance_ratio(
     its own line fit. ``None`` when the low group has no residual spread."""
 
     def residual_mean_square(xg: np.ndarray, yg: np.ndarray) -> float:
-        slope, intercept = np.polyfit(xg, yg, 1)
-        resid = yg - (slope * xg + intercept)
-        return float(np.sum(resid**2)) / (len(xg) - 2)
+        # A low-cardinality/binary x (e.g. a 0/1 flag) can leave an entire
+        # x-sorted group with zero x-variance -- np.polyfit's design matrix is
+        # then singular (SVD failure). Mirror metrics/shape.py's segmentation
+        # fallback: fit an intercept-only (mean) model instead of a line, since
+        # there is no slope to estimate without x variation in the group.
+        ss_xx = float(np.sum((xg - xg.mean()) ** 2))
+        if ss_xx > 0.0:
+            slope, intercept = np.polyfit(xg, yg, 1)
+            resid = yg - (slope * xg + intercept)
+            dof = len(xg) - 2
+        else:
+            resid = yg - yg.mean()
+            dof = len(xg) - 1
+        return float(np.sum(resid**2)) / dof
 
     low_ms = residual_mean_square(x_low, y_low)
     high_ms = residual_mean_square(x_high, y_high)

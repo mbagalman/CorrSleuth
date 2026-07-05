@@ -678,6 +678,21 @@ def test_heteroscedasticity_returns_none_for_perfect_linear_fit():
     assert result["gq_ratio"].value is None
 
 
+def test_heteroscedasticity_handles_binary_x_without_raising():
+    """A low-cardinality/binary x (e.g. a 0/1 flag) can leave an entire
+    x-sorted Goldfeld-Quandt group with zero x-variance -- np.polyfit's design
+    matrix is singular there. This must fall back gracefully, not raise."""
+    rng = np.random.default_rng(0)
+    n = 1000
+    x = (rng.uniform(size=n) < 0.95).astype(float)  # heavily skewed 0/1 flag
+    y = rng.normal(size=n)
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_heteroscedasticity(pair)
+    assert result["bp_pvalue"].value is not None
+    assert result["gq_ratio"].value is not None
+
+
 # --- Segmentation (single-breakpoint, mean-shape refinement) ---
 
 
