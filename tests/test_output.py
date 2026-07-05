@@ -317,6 +317,55 @@ def test_serialization_includes_nested_and_flattened_diagnostics():
     assert frame["diagnostic_rank_linear_gap"].iloc[0] == pytest.approx(0.0)
 
 
+def test_secondary_axes_surfaced_in_every_output_form():
+    """The five secondary diagnostic axes appear on result.diagnostics and in
+    every rendered/serialized surface (summary, markdown, to_dict, to_frame)."""
+    df = make_relationship("circular", n=500, noise=0.1, random_state=42)
+    res = profile_pair(df, "x", "y", mode="deep")
+
+    # The circle is the showcase: closed loop, neither variable a function of
+    # the other -- a story the single primary label cannot carry.
+    d = res.diagnostics
+    assert d.dependence_type == "closed_loop_or_multivalued"
+    assert d.functional_direction == "neither_direction"
+    assert d.variance_shape is None  # populated by a later ticket
+
+    nested = res.to_dict()["diagnostics"]
+    assert nested["dependence_type"] == "closed_loop_or_multivalued"
+    assert nested["mean_shape"] == d.mean_shape
+
+    frame = res.to_frame()
+    for col in (
+        "diagnostic_mean_shape",
+        "diagnostic_variance_shape",
+        "diagnostic_dependence_type",
+        "diagnostic_outlier_sensitivity",
+        "diagnostic_functional_direction",
+    ):
+        assert col in frame.columns
+    assert frame["diagnostic_dependence_type"].iloc[0] == "closed_loop_or_multivalued"
+
+    summary = res.summary()
+    assert "Relationship axes:" in summary
+    assert "closed_loop_or_multivalued" in summary
+
+    md = res.to_markdown()
+    assert "## Relationship Axes" in md
+    # Markdown escapes underscores in table cells (so they don't render italic).
+    assert escape_markdown_cell("closed_loop_or_multivalued") in md
+
+
+def test_secondary_axes_default_to_na_when_not_assessable():
+    """A constant input can populate no axes; they render as NA rather than
+    raising, and serialize as None."""
+    df = pd.DataFrame({"x": [3.0] * 50, "y": list(range(50))})
+    res = profile_pair(df, "x", "y")
+
+    assert res.diagnostics.mean_shape is None
+    assert res.to_dict()["diagnostics"]["dependence_type"] is None
+    assert "mean_shape           : NA" in res.summary()
+
+
 def test_bootstrap_intervals_are_deterministic_and_serialized():
     df = make_relationship("linear_positive", n=80, random_state=42)
 

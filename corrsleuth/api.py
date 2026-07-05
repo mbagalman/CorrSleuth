@@ -3,7 +3,11 @@ from collections.abc import Sequence
 import pandas as pd
 
 from corrsleuth.exceptions import InputError
-from corrsleuth.heuristics import apply_heuristics, detect_metric_warnings
+from corrsleuth.heuristics import (
+    apply_heuristics,
+    derive_diagnostic_axes,
+    detect_metric_warnings,
+)
 from corrsleuth.metrics import (
     ROBUST_METRIC_MIN_N,
     assess_outlier_sensitivity,
@@ -44,6 +48,7 @@ def _build_diagnostics(
     outlier_sensitivity=None,
     bin_lof_r2_gain=None,
     sq_corr=None,
+    axes: dict[str, str | None] | None = None,
 ) -> MetricDiagnostics:
     pearson = _metric_value(metrics_map, "pearson")
     spearman = _metric_value(metrics_map, "spearman")
@@ -69,6 +74,7 @@ def _build_diagnostics(
         else None
     )
 
+    axes = axes or {}
     return MetricDiagnostics(
         rank_linear_gap=rank_linear_gap,
         pearson_spearman_signed_gap=pearson_spearman_signed_gap,
@@ -81,6 +87,11 @@ def _build_diagnostics(
         pearson_trim_delta=outlier_sensitivity.delta if outlier_sensitivity else None,
         bin_lof_r2_gain=bin_lof_r2_gain.value if bin_lof_r2_gain else None,
         sq_corr=sq_corr.value if sq_corr else None,
+        mean_shape=axes.get("mean_shape"),
+        variance_shape=axes.get("variance_shape"),
+        dependence_type=axes.get("dependence_type"),
+        outlier_sensitivity=axes.get("outlier_sensitivity"),
+        functional_direction=axes.get("functional_direction"),
     )
 
 
@@ -305,12 +316,20 @@ def profile_pair(
     nonmonotonic = max(0.0, dcor - linear_signal) if dcor is not None else 0.0
 
     disagreement_score = rank_gap + nonmonotonic
+    # Secondary diagnostic axes: coarse categorical summaries derived from the
+    # metrics already computed (using cascade_metrics so the shape diagnostics
+    # and, in deep mode, Chatterjee's xi are visible). Orthogonal to the primary
+    # label — see heuristics.derive_diagnostic_axes.
+    axes = derive_diagnostic_axes(
+        cascade_metrics, heuristic_result.label, outlier_sensitivity.status
+    )
     diagnostics = _build_diagnostics(
         metrics_map,
         disagreement_score,
         outlier_sensitivity,
         bin_lof_r2_gain=bin_lof_r2_gain,
         sq_corr=sq_corr,
+        axes=axes,
     )
     bootstrap_result = compute_bootstrap(
         pair,

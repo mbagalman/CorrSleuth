@@ -23,6 +23,7 @@ research that motivates particular metric choices, see
   - [`low_power_or_uncertain`](#low_power_or_uncertain)
   - [`not_computable`](#not_computable)
   - [`mixed_or_ambiguous`](#mixed_or_ambiguous)
+- [Secondary Diagnostic Fields](#secondary-diagnostic-fields)
 - [Topics](#topics)
   - [When Pearson Can Be Misleading](#when-pearson-can-be-misleading)
   - [Monotonic vs Nonmonotonic Relationships](#monotonic-vs-nonmonotonic-relationships)
@@ -414,6 +415,60 @@ fires.
 - This label is the residual of the cascade. Future rule additions may
   pull some of these cases into more specific labels — don't read it as
   a permanent classification.
+
+## Secondary Diagnostic Fields
+
+The primary `pattern` label answers one question — *what is the dominant
+shape of this relationship?* — and the cascade is deliberately conservative
+about it. But a relationship has several **independent** properties a single
+label cannot carry at once: a pair can be linear in its mean **and** have
+growing variance **and** be driven by two rows, all simultaneously. Rather
+than mint a combinatorial explosion of compound labels
+(`near_linear_with_nonconstant_variance_and_leverage`), CorrSleuth exposes
+these as separate **secondary axes** on `result.diagnostics`.
+
+Each axis is a **coarse categorical summary** derived from the numeric
+diagnostics and metrics already computed. The underlying numbers stay right
+beside it on `result.diagnostics`, so — exactly like the primary label — the
+category is a convenience to point you at the scatter plot, not a verdict, and
+it has the same hard-edge-boundary caveat (a value one hair either side of a
+threshold flips the category). When an axis can't be assessed from the
+available metrics it is `None` (rendered `NA`).
+
+| Axis | Question | Values |
+|---|---|---|
+| `mean_shape` | Is E[Y\|X] a straight line? | `linear`, `curved`, `None` |
+| `variance_shape` | Does the spread of Y change with X? | *(reserved — always `None` today; a forthcoming heteroscedasticity diagnostic will populate it)* |
+| `dependence_type` | What kind of dependence is it? | `monotone`, `magnitude_linked`, `nonmonotone`, `closed_loop_or_multivalued`, `None` |
+| `outlier_sensitivity` | Do a few rows drive the summary? | `low`, `high`, `unavailable` |
+| `functional_direction` | Which variable is a function of the other? | `y_of_x`, `x_of_y`, `both_directions`, `neither_direction`, `None` |
+
+Notes on the less-obvious values:
+
+- **`dependence_type = magnitude_linked`** — Pearson and Spearman are weak, but
+  |X| and |Y| move together (from `sq_corr`). A U-shape is the canonical case.
+- **`dependence_type = closed_loop_or_multivalued`** — dependence exists, but
+  *neither variable is a function of the other* (points on a circle or ring).
+  Requires `mode="deep"` (it is confirmed with Chatterjee's ξ in both
+  directions); in lighter modes such a pair reads as `magnitude_linked`.
+- **`functional_direction`** comes from Chatterjee's ξ, so it is populated only
+  in `mode="deep"` (`None` otherwise). `y_of_x` means Y is a (noisy) function
+  of X but not the reverse — the signature of a one-way mapping like Y = X².
+
+Because the axes are derived from evidence rather than read off the label, they
+are **orthogonal** to it. For example:
+
+```text
+Primary pattern: possible_outlier_or_leverage
+  mean_shape          : linear          # the bulk trend is a straight line ...
+  outlier_sensitivity : high            # ... but a few rows drive it
+  dependence_type     : monotone
+
+Primary pattern: nonmonotonic_dependence
+  mean_shape          : NA              # no y = f(x) mean trend
+  dependence_type     : closed_loop_or_multivalued   # a ring ...
+  functional_direction: neither_direction            # ... neither is a function
+```
 
 ## Topics
 

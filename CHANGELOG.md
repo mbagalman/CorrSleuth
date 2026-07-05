@@ -130,6 +130,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enrichment of the internal `CleanPair` in `profile_pair`.
 
 ### Added
+- **Secondary diagnostic axes** on `result.diagnostics`: five coarse
+  categorical summaries — `mean_shape`, `variance_shape`, `dependence_type`,
+  `outlier_sensitivity`, and `functional_direction` — describing orthogonal
+  properties of a relationship that the single primary `pattern` label cannot
+  carry at once. Derived from the numeric diagnostics/metrics already computed
+  (`derive_diagnostic_axes` in `heuristics/classifier.py`), so a `near_linear`
+  pair can simultaneously report high `outlier_sensitivity`, and a circular
+  pair reports `dependence_type=closed_loop_or_multivalued` with
+  `functional_direction=neither_direction` in deep mode. Surfaced in
+  `summary()`, `to_markdown()`, `to_dict()`, and `to_frame()`;
+  `variance_shape` is reserved (always `None`) pending a heteroscedasticity
+  diagnostic. Each axis keeps its underlying number alongside it.
 - `corrsleuth/metrics/shape.py`: two no-new-dependency shape diagnostics,
   `bin_lof_r2_gain` (bin-mean-model R² minus linear-fit R², a classical
   lack-of-fit test) and `sq_corr` (`corr(X², Y²)`), wired into the

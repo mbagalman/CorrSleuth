@@ -2,7 +2,11 @@ import pytest
 
 from corrsleuth.api import profile_pair
 from corrsleuth.datasets import make_relationship
-from corrsleuth.heuristics.classifier import apply_heuristics, detect_metric_warnings
+from corrsleuth.heuristics.classifier import (
+    apply_heuristics,
+    derive_diagnostic_axes,
+    detect_metric_warnings,
+)
 from corrsleuth.result import MetricResult
 
 
@@ -318,3 +322,111 @@ def test_stable_trim_sensitivity_avoids_outlier_label():
     result = apply_heuristics(metrics, ["pearson_trim_stable"], n_used=100)
 
     assert result.label != "possible_outlier_or_leverage"
+
+
+# --- Secondary diagnostic axes (derive_diagnostic_axes) ---
+
+
+def _axis_metrics(**values):
+    """Build a metrics dict of MetricResults from name=value kwargs."""
+    return {name: MetricResult(name, value, True) for name, value in values.items()}
+
+
+def test_axes_linear_pair_is_linear_monotone_low():
+    metrics = _axis_metrics(
+        pearson=0.95, spearman=0.95, bin_lof_r2_gain=0.0, sq_corr=0.9
+    )
+    axes = derive_diagnostic_axes(metrics, "near_linear", "stable")
+    assert axes["mean_shape"] == "linear"
+    # Strong monotone signal: not read as magnitude-linked despite a high sq_corr.
+    assert axes["dependence_type"] == "monotone"
+    assert axes["outlier_sensitivity"] == "low"
+    assert axes["variance_shape"] is None
+    assert axes["functional_direction"] is None  # no xi outside deep mode
+
+
+def test_axes_curved_mean_via_bin_lof():
+    metrics = _axis_metrics(
+        pearson=0.90, spearman=0.95, bin_lof_r2_gain=0.12, sq_corr=0.9
+    )
+    axes = derive_diagnostic_axes(metrics, "monotonic_nonlinear", "stable")
+    assert axes["mean_shape"] == "curved"
+
+
+def test_axes_circle_is_closed_loop_and_neither_direction_in_deep_mode():
+    metrics = _axis_metrics(
+        pearson=0.0,
+        spearman=0.0,
+        bin_lof_r2_gain=0.02,
+        sq_corr=-0.9,
+        chatterjee_xi=0.10,
+        chatterjee_xi_reverse=0.05,
+    )
+    axes = derive_diagnostic_axes(metrics, "nonmonotonic_dependence", "stable")
+    assert axes["dependence_type"] == "closed_loop_or_multivalued"
+    assert axes["functional_direction"] == "neither_direction"
+    assert axes["mean_shape"] is None  # no functional mean trend for a ring
+
+
+def test_axes_u_shape_is_magnitude_linked_and_y_of_x():
+    # Y is a function of X (xi forward high) but X is not a function of Y
+    # (xi reverse low) — so NOT a closed loop, and the direction is y_of_x.
+    metrics = _axis_metrics(
+        pearson=0.05,
+        spearman=0.05,
+        bin_lof_r2_gain=0.9,
+        sq_corr=0.95,
+        chatterjee_xi=0.90,
+        chatterjee_xi_reverse=0.30,
+    )
+    axes = derive_diagnostic_axes(metrics, "nonmonotonic_dependence", "stable")
+    assert axes["dependence_type"] == "magnitude_linked"
+    assert axes["functional_direction"] == "y_of_x"
+
+
+def test_axes_magnitude_link_without_xi_is_not_closed_loop():
+    # Same magnitude signature but no xi (lite/standard mode): we cannot tell
+    # closed-loop from a one-way function, so it stays magnitude_linked.
+    metrics = _axis_metrics(pearson=0.0, spearman=0.0, sq_corr=-0.9)
+    axes = derive_diagnostic_axes(metrics, "nonmonotonic_dependence", "stable")
+    assert axes["dependence_type"] == "magnitude_linked"
+    assert axes["functional_direction"] is None
+
+
+def test_axes_outlier_sensitivity_from_trim_status():
+    metrics = _axis_metrics(pearson=0.9, spearman=0.5, bin_lof_r2_gain=0.0)
+    assert (
+        derive_diagnostic_axes(metrics, "possible_outlier_or_leverage", "sensitive")[
+            "outlier_sensitivity"
+        ]
+        == "high"
+    )
+    assert (
+        derive_diagnostic_axes(metrics, "near_linear", "stable")["outlier_sensitivity"]
+        == "low"
+    )
+    assert (
+        derive_diagnostic_axes(metrics, "near_linear", "unavailable")[
+            "outlier_sensitivity"
+        ]
+        == "unavailable"
+    )
+
+
+def test_axes_none_when_core_metrics_missing():
+    metrics = _axis_metrics(pearson=None, spearman=None)
+    axes = derive_diagnostic_axes(metrics, "not_computable", "unavailable")
+    assert axes["mean_shape"] is None
+    assert axes["dependence_type"] is None
+    assert axes["functional_direction"] is None
+    assert axes["outlier_sensitivity"] == "unavailable"
+
+
+def test_axes_are_orthogonal_to_label_outlier_driven_but_linear_mean():
+    # A leverage-driven pair can still have a linear conditional mean: the label
+    # is possible_outlier_or_leverage, but mean_shape is linear and
+    # outlier_sensitivity is high — the axes carry what the label cannot.
+    df = make_relationship("outlier_driven", n=500, noise=0.1, random_state=42)
+    res = profile_pair(df, "x", "y", mode="deep")
+    assert res.pattern == "possible_outlier_or_leverage"
+    assert res.diagnostics.outlier_sensitivity == "high"

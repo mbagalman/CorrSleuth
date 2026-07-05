@@ -213,6 +213,19 @@ Two design choices a reviewer should know:
   as hypothesis-generating: a pattern worth acting on should be confirmed on held-out
   data or with a proper model, not taken as a tested finding because it topped a scan.
 
+The single primary label is intentionally one-dimensional. A relationship has
+several **orthogonal** properties one label cannot carry at once (its mean can
+be linear while its variance grows and a few rows drive it), so alongside the
+label CorrSleuth derives a small set of **secondary diagnostic axes** —
+`mean_shape`, `variance_shape`, `dependence_type`, `outlier_sensitivity`,
+`functional_direction` — as coarse categorical summaries of the numeric
+diagnostics already computed (`derive_diagnostic_axes` in
+`heuristics/classifier.py`). They are derived from the evidence, not read off
+the label, so they stay orthogonal to it; each keeps its underlying number on
+`result.diagnostics`. See the [interpretation
+guide](interpretation-guide.md#secondary-diagnostic-fields) for the full value
+list.
+
 ## 6. Leverage / outlier sensitivity
 
 The `possible_outlier_or_leverage` label is gated on direct evidence, not just a

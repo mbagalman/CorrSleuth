@@ -60,6 +60,17 @@ class MetricDiagnostics:
     lack-of-fit test's R² gain over a linear fit; ``sq_corr``, the correlation
     between X² and Y²) — see ``corrsleuth/metrics/shape.py``. Gap and shape
     fields are ``None`` when the metrics they depend on are unavailable.
+
+    The final five fields are the **secondary diagnostic axes** — coarse
+    categorical summaries describing orthogonal properties of the relationship
+    that the single primary ``pattern`` label cannot carry at once: the shape of
+    the conditional mean (``mean_shape``), the shape of the conditional variance
+    (``variance_shape``), the kind of dependence (``dependence_type``), whether a
+    few rows drive the summary (``outlier_sensitivity``), and which variable is a
+    function of the other (``functional_direction``, deep mode only). Each is
+    derived from the numeric diagnostics/metrics above and is ``None`` when the
+    axis is not assessable. See ``corrsleuth/heuristics/classifier.py``
+    (``derive_diagnostic_axes``) and docs/interpretation-guide.md.
     """
 
     rank_linear_gap: float | None
@@ -71,6 +82,11 @@ class MetricDiagnostics:
     pearson_trim_delta: float | None = None
     bin_lof_r2_gain: float | None = None
     sq_corr: float | None = None
+    mean_shape: str | None = None
+    variance_shape: str | None = None
+    dependence_type: str | None = None
+    outlier_sensitivity: str | None = None
+    functional_direction: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -114,6 +130,11 @@ class CorrSleuthResult:
             pearson_trim_delta=None,
             bin_lof_r2_gain=None,
             sq_corr=None,
+            mean_shape=None,
+            variance_shape=None,
+            dependence_type=None,
+            outlier_sensitivity=None,
+            functional_direction=None,
         )
         self.bootstrap_intervals = bootstrap_intervals
         self.bootstrap_stability = bootstrap_stability
@@ -133,6 +154,11 @@ class CorrSleuthResult:
     @staticmethod
     def _format_value(value: float | None) -> str:
         return f"{value:.3f}" if value is not None and pd.notna(value) else "NA"
+
+    @staticmethod
+    def _format_axis(value: str | None) -> str:
+        """Render a categorical secondary-axis value, ``NA`` when not assessable."""
+        return value if value else "NA"
 
     def summary(self, include_caveat: bool | None = None) -> str:
         """
@@ -163,6 +189,13 @@ class CorrSleuthResult:
                 f"  pearson_trim_delta       : {self._format_value(self.diagnostics.pearson_trim_delta)}",
                 f"  bin_lof_r2_gain          : {self._format_value(self.diagnostics.bin_lof_r2_gain)}",
                 f"  sq_corr                  : {self._format_value(self.diagnostics.sq_corr)}",
+                "",
+                "Relationship axes:",
+                f"  mean_shape           : {self._format_axis(self.diagnostics.mean_shape)}",
+                f"  variance_shape       : {self._format_axis(self.diagnostics.variance_shape)}",
+                f"  dependence_type      : {self._format_axis(self.diagnostics.dependence_type)}",
+                f"  outlier_sensitivity  : {self._format_axis(self.diagnostics.outlier_sensitivity)}",
+                f"  functional_direction : {self._format_axis(self.diagnostics.functional_direction)}",
             ]
         )
 
@@ -323,6 +356,30 @@ class CorrSleuthResult:
                     [
                         "sq_corr",
                         format_markdown_value(self.diagnostics.sq_corr),
+                    ],
+                ],
+            ),
+            "",
+            "## Relationship Axes",
+            markdown_table(
+                ["Axis", "Value"],
+                [
+                    ["mean_shape", self._format_axis(self.diagnostics.mean_shape)],
+                    [
+                        "variance_shape",
+                        self._format_axis(self.diagnostics.variance_shape),
+                    ],
+                    [
+                        "dependence_type",
+                        self._format_axis(self.diagnostics.dependence_type),
+                    ],
+                    [
+                        "outlier_sensitivity",
+                        self._format_axis(self.diagnostics.outlier_sensitivity),
+                    ],
+                    [
+                        "functional_direction",
+                        self._format_axis(self.diagnostics.functional_direction),
                     ],
                 ],
             ),

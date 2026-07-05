@@ -344,3 +344,156 @@ def detect_metric_warnings(
                 )
 
     return warnings
+
+
+# ---------------------------------------------------------------------------
+# Secondary diagnostic axes
+#
+# The primary ``pattern`` label answers one question — the dominant shape of the
+# relationship — and the cascade is deliberately conservative about it. These
+# axes describe *orthogonal* properties a single label cannot carry without
+# overloading it (a pair can be linear in mean AND heteroscedastic in variance
+# AND driven by one row, all at once). Each axis is a coarse categorical
+# *summary* derived from the numeric diagnostics already computed; the raw
+# numbers stay the source of truth on ``MetricDiagnostics`` beside these labels.
+# See docs/interpretation-guide.md ("Secondary diagnostic fields").
+#
+# ``variance_shape`` is intentionally always ``None`` here — it is populated by
+# the heteroscedasticity work (see docs/development ticket 1.1) once that lands.
+# ---------------------------------------------------------------------------
+
+
+def _mean_shape_axis(
+    p: float | None, s: float | None, bin_lof: float | None
+) -> str | None:
+    """Is E[Y|X] a straight line, or curved? (``None`` when not assessable.)"""
+    if p is None or s is None:
+        return None
+    # Curvature via either route the cascade uses for monotonic_nonlinear: a
+    # positive bin lack-of-fit gain, or a strong Spearman meaningfully above
+    # Pearson. Either means the conditional mean is not a straight line.
+    curved = (bin_lof is not None and bin_lof > BIN_LOF_R2_GAIN_THRESHOLD) or (
+        s > STRONG_MAGNITUDE_THRESHOLD and s - p > RANK_LINEAR_GAP_THRESHOLD
+    )
+    if curved:
+        return "curved"
+    # Assert "linear" only when we actually checked for curvature (the
+    # lack-of-fit test ran) and there is a real trend, or when both coefficients
+    # are strong and close (the near_linear regime). Otherwise the shape of the
+    # mean is unknown (weak trend, or n below the lack-of-fit floor).
+    linear = (
+        bin_lof is not None
+        and bin_lof <= BIN_LOF_R2_GAIN_THRESHOLD
+        and max(p, s) >= WEAK_MAGNITUDE_THRESHOLD
+    ) or (
+        p > STRONG_MAGNITUDE_THRESHOLD
+        and s > STRONG_MAGNITUDE_THRESHOLD
+        and abs(p - s) < NEAR_LINEAR_GAP_THRESHOLD
+    )
+    if linear:
+        return "linear"
+    return None
+
+
+def _dependence_type_axis(
+    p: float | None,
+    s: float | None,
+    dc: float | None,
+    sq_corr: float | None,
+    xi_fwd: float | None,
+    xi_rev: float | None,
+) -> str | None:
+    """How do the variables depend on each other — monotonically, through
+    magnitude, or as a closed loop? (``None`` when nothing is detected.)"""
+    if p is None or s is None:
+        return None
+    monotone_weak = (
+        p < NONMONOTONIC_MONOTONE_CEILING and s < NONMONOTONIC_MONOTONE_CEILING
+    )
+    sq_dependence = (
+        monotone_weak and sq_corr is not None and abs(sq_corr) > SQ_CORR_THRESHOLD
+    )
+    dc_dependence = monotone_weak and dc is not None and dc > NONMONOTONIC_DC_THRESHOLD
+    if sq_dependence or dc_dependence:
+        # Deep-mode refinement: if neither variable is a function of the other
+        # (both Chatterjee directions weak), this is a closed-loop / multivalued
+        # relationship (a circle), not a plain magnitude link (a U-shape, where
+        # Y is still a function of X). Needs xi, so only reachable in deep mode.
+        if (
+            xi_fwd is not None
+            and xi_rev is not None
+            and max(xi_fwd, xi_rev) < XI_DEPENDENCE_WARN_THRESHOLD
+        ):
+            return "closed_loop_or_multivalued"
+        return "magnitude_linked" if sq_dependence else "nonmonotone"
+    if max(p, s) >= WEAK_MAGNITUDE_THRESHOLD:
+        return "monotone"
+    return None
+
+
+def _outlier_sensitivity_axis(outlier_status: str | None) -> str | None:
+    """Is the summary driven by a few rows? Reuses the trim-sensitivity verdict
+    computed for the leverage rule."""
+    if outlier_status == "sensitive":
+        return "high"
+    if outlier_status == "stable":
+        return "low"
+    if outlier_status == "unavailable":
+        return "unavailable"
+    return None
+
+
+def _functional_direction_axis(
+    xi_fwd: float | None, xi_rev: float | None
+) -> str | None:
+    """Is Y a function of X, X of Y, both, or neither? Derived from Chatterjee's
+    xi, so only populated in deep mode (``None`` otherwise)."""
+    if xi_fwd is None or xi_rev is None:
+        return None
+    fwd = xi_fwd >= XI_DEPENDENCE_WARN_THRESHOLD
+    rev = xi_rev >= XI_DEPENDENCE_WARN_THRESHOLD
+    if fwd and rev:
+        return "both_directions"
+    if fwd:
+        return "y_of_x"
+    if rev:
+        return "x_of_y"
+    return "neither_direction"
+
+
+def derive_diagnostic_axes(
+    metrics: dict[str, MetricResult], label: str, outlier_status: str | None
+) -> dict[str, str | None]:
+    """Derive the five secondary diagnostic axes from the computed metrics.
+
+    Returns a dict with keys ``mean_shape``, ``variance_shape``,
+    ``dependence_type``, ``outlier_sensitivity``, and ``functional_direction``.
+    Each value is a coarse categorical summary (or ``None`` when the axis is not
+    assessable from the available metrics); the underlying numeric diagnostics
+    remain on :class:`~corrsleuth.result.MetricDiagnostics` alongside them.
+
+    These axes are orthogonal to the primary ``label`` — a pair can be, e.g.,
+    ``near_linear`` in mean shape while still being magnitude-linked or
+    outlier-driven — so they are derived from the numeric evidence rather than
+    read off the label. ``variance_shape`` is always ``None`` until the
+    heteroscedasticity diagnostics land.
+    """
+    p_val = _finite_metric_value(metrics.get("pearson"))
+    s_val = _finite_metric_value(metrics.get("spearman"))
+    p = abs(p_val) if p_val is not None else None
+    s = abs(s_val) if s_val is not None else None
+    dc = _finite_metric_value(
+        metrics.get("distance_correlation"), require_available=True
+    )
+    bin_lof = _finite_metric_value(metrics.get("bin_lof_r2_gain"))
+    sq_corr = _finite_metric_value(metrics.get("sq_corr"))
+    xi_fwd = _finite_metric_value(metrics.get("chatterjee_xi"))
+    xi_rev = _finite_metric_value(metrics.get("chatterjee_xi_reverse"))
+
+    return {
+        "mean_shape": _mean_shape_axis(p, s, bin_lof),
+        "variance_shape": None,
+        "dependence_type": _dependence_type_axis(p, s, dc, sq_corr, xi_fwd, xi_rev),
+        "outlier_sensitivity": _outlier_sensitivity_axis(outlier_status),
+        "functional_direction": _functional_direction_axis(xi_fwd, xi_rev),
+    }
