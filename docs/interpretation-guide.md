@@ -79,10 +79,12 @@ signs, both at least moderate): that is a leverage signature, so it is routed to
 3. `possible_outlier_or_leverage` — when Pearson is strong, materially
    stronger than the rank metrics, and a trimmed-Pearson sensitivity check
    says Pearson is leverage-driven (or sensitivity could not be computed).
-4. `nonmonotonic_dependence` — when distance correlation is high while
-   Pearson and Spearman are weak (requires `mode="standard"`).
+4. `nonmonotonic_dependence` — when Pearson and Spearman are weak and either
+   distance correlation is high (`mode="standard"`) or `|corr(X², Y²)|` is
+   high (`sq_corr`, no mode gate).
 5. `monotonic_nonlinear` — when Spearman is meaningfully stronger than
-   Pearson.
+   Pearson, or the bin lack-of-fit diagnostic (`bin_lof_r2_gain`, no mode
+   gate) finds real curvature a small Spearman-Pearson gap misses.
 6. `near_linear` — when Pearson and Spearman are both strong and close.
 7. `weak_or_no_relationship` — when all available metrics are small.
 8. `mixed_or_ambiguous` — fallback when none of the above applies.
@@ -144,8 +146,12 @@ absolute gap between Pearson and Spearman is below `0.15`. If
 not well summarized by a straight line. Spearman captures the monotonic
 trend that Pearson is missing.
 
-**Typical metric pattern.** `|spearman| > 0.50` and `|spearman| - |pearson|
-> 0.20`. Kendall tau-b usually agrees with Spearman.
+**Typical metric pattern.** `|spearman| > 0.50` and either `|spearman| -
+|pearson| > 0.20`, or the bin lack-of-fit diagnostic `bin_lof_r2_gain > 0.05`
+(see [shape-diagnostics-design.md](shape-diagnostics-design.md)). The second
+route catches smooth monotonic curves and step functions whose Pearson stays
+close enough to Spearman that the gap alone misses them — no mode gate, so it
+applies in `lite` mode too. Kendall tau-b usually agrees with Spearman.
 
 **Common examples.**
 
@@ -153,6 +159,9 @@ trend that Pearson is missing.
 - Saturating responses (e.g., diminishing returns, dose-response curves).
 - Power laws (`y = x^k` for `k != 1`).
 - Income vs spending — often monotonic but not linear.
+- Threshold/step effects (e.g., a response that jumps between two levels at
+  a cutoff) — these can have a small Spearman-vs-Pearson gap, so they rely on
+  `bin_lof_r2_gain` rather than the gap test.
 
 **Recommended next steps.**
 
@@ -175,20 +184,27 @@ trend that Pearson is missing.
 ### `nonmonotonic_dependence`
 
 **Meaning.** Evidence consistent with a relationship that is not simply
-increasing or decreasing — U-shapes, V-shapes, oscillations. Pearson and
-Spearman both miss it, but distance correlation flags it.
+increasing or decreasing — U-shapes, V-shapes, or dependence that shows up in
+magnitude rather than direction (e.g. points scattered around a circle).
+Pearson and Spearman both miss it; distance correlation or the `sq_corr`
+shape diagnostic flags it.
 
-**Typical metric pattern.** Available only in `mode="standard"`:
-`|pearson| < 0.25`, `|spearman| < 0.25`, `distance_correlation > 0.35`.
-In `mode="deep"`, Chatterjee's ξ usually shows the same story
-asymmetrically (`ξ(X → Y)` is high; `ξ(Y → X)` may be lower).
+**Typical metric pattern.** `|pearson| < 0.25`, `|spearman| < 0.25`, and
+either `distance_correlation > 0.35` (`mode="standard"` only) or
+`|corr(X², Y²)| > 0.35` (`sq_corr`, no mode gate — computed in every mode,
+see [shape-diagnostics-design.md](shape-diagnostics-design.md)). The second
+route exists because distance correlation itself is structurally capped
+around ~0.2 for a true circular/radial relationship, even noiseless. In
+`mode="deep"`, Chatterjee's ξ usually shows the same story asymmetrically
+(`ξ(X → Y)` is high; `ξ(Y → X)` may be lower).
 
 **Common examples.**
 
 - `y = x²` on data centered around zero — quadratic relationships.
 - Dose-response curves with a peak (e.g., medication response that drops at
   both low and high doses).
-- Cyclical patterns (seasonality vs an outcome).
+- Points scattered around a circle or ring (`x² + y² ≈ const`) — dependence
+  exists (knowing `x` constrains `|y|`) but isn't a function of `x`.
 
 **Recommended next steps.**
 
@@ -200,16 +216,23 @@ asymmetrically (`ξ(X → Y)` is high; `ξ(Y → X)` may be lower).
 
 **Caveats.**
 
-- Requires `mode="standard"`. In `lite` mode, distance correlation is
-  unavailable and the cascade falls through to
-  `weak_or_no_relationship` or `mixed_or_ambiguous`.
+- The `sq_corr` route needs no optional dependency and works in every mode,
+  but it's tuned for magnitude/radial dependence specifically (an even
+  function of `x` and/or `y`, roughly). A shape with real nonmonotonic
+  dependence but no magnitude signature (e.g. some oscillating shapes) can
+  still need `mode="standard"` distance correlation, or may not be caught by
+  either route — see the periodic/cyclical discussion in
+  [shape-diagnostics-design.md](shape-diagnostics-design.md).
 - Distance correlation is sensitive to extreme values. A handful of
   outliers can produce a high `dcor` for an otherwise weak relationship —
   always check the plot.
 - Bootstrap pattern stability for this label uses *lite* metrics by
-  default, so the stability number is a lower bound on what
-  standard-metric stability would show. If you need a tighter check,
-  pass `bootstrap_metrics="standard"`.
+  default. Because `sq_corr` is lite-computable, a label driven purely by
+  `sq_corr` is already fully testable on lite metrics — but CorrSleuth
+  doesn't currently distinguish that from a `dcor`-driven label, so the
+  "may not fully test a standard-mode label" warning can still appear even
+  when it isn't needed. If you need a tighter check regardless, pass
+  `bootstrap_metrics="standard"`.
 
 ### `possible_outlier_or_leverage`
 
@@ -405,10 +428,10 @@ assumptions breaks:
 - **Curvature.** A monotonic but nonlinear relationship (`y = log(x)`,
   `y = x^2.5`) lowers Pearson while leaving Spearman strong — that's the
   `monotonic_nonlinear` story.
-- **Nonmonotonicity.** A U-shape or cyclical pattern can leave Pearson
-  near zero even though the variables are tightly related — that's
-  `nonmonotonic_dependence` (visible only with distance correlation
-  available).
+- **Nonmonotonicity.** A U-shape, circular/radial pattern, or cyclical shape
+  can leave Pearson near zero even though the variables are tightly related
+  — that's `nonmonotonic_dependence` (visible with distance correlation, or,
+  for magnitude/radial dependence, the no-mode-gate `sq_corr` diagnostic).
 - **Leverage.** A handful of extreme points can pull Pearson up
   dramatically while the rank metrics stay flat — that's
   `possible_outlier_or_leverage`.
@@ -435,11 +458,13 @@ consistently decreases) with `x`, even if the rate changes. It is
 | Common shapes | Logarithmic, exponential, power, threshold | U-shape, V-shape, parabolic, cyclical |
 | Best fit family | Monotonic transforms, splines | Polynomials, splines, kernels, trees |
 
-In `lite` mode CorrSleuth can detect monotonic-nonlinear relationships
-(via the rank vs linear gap) but **cannot** distinguish nonmonotonic
-dependence from independence. If you suspect a U-shape, run with
-`mode="standard"` or `mode="deep"` so distance correlation or
-Chatterjee's ξ is available.
+In `lite` mode CorrSleuth can detect monotonic-nonlinear relationships (via
+the rank-vs-linear gap or the bin lack-of-fit diagnostic) and magnitude/radial
+nonmonotonic dependence such as U-shapes and circular data (via `sq_corr`),
+but it **cannot** distinguish other forms of nonmonotonic dependence —
+oscillating or cyclical shapes, in particular — from independence. If you
+suspect one of those, run with `mode="standard"` or `mode="deep"` so distance
+correlation or Chatterjee's ξ is available.
 
 ### Outlier-Sensitive Correlations
 
@@ -528,6 +553,11 @@ Notes:
   correlation and mutual information (slower).
 - Distance correlation downsamples to 20 000 rows by default
   (`max_n_for_dcor=20000`). The downsample is seeded for reproducibility.
+- Two shape diagnostics (`bin_lof_r2_gain`, `sq_corr` — see
+  [shape-diagnostics-design.md](shape-diagnostics-design.md)) run in every
+  mode, including `lite`. They feed `monotonic_nonlinear` and
+  `nonmonotonic_dependence` but never appear in the metrics table; they show
+  up under `result.diagnostics`.
 - `scan_target()` profiles columns **sequentially** — one `profile_pair`
   call at a time, with no parallelism. For typical EDA this is fine, but a
   very wide DataFrame (hundreds to thousands of columns) combined with
@@ -552,6 +582,9 @@ dependence is the question, and you don't want to install extras.
 - [Nonlinear metrics design note](nonlinear-metrics-design.md) — why
   Chatterjee's ξ was chosen over HSIC, MGC, and MIC, and which other
   nonlinear measures were deferred.
+- [Shape diagnostics design note](shape-diagnostics-design.md) — why
+  `bin_lof_r2_gain` and `sq_corr` were added, the misses they fix, and the
+  periodic/cyclical case deliberately left open.
 - [thresholds-and-rationale.md](thresholds-and-rationale.md) — every threshold
   in the package: what it gates, its value, the rationale, and how to override
   the label-driving ones.

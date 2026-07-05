@@ -22,6 +22,10 @@ User-facing documentation for the CorrSleuth package. Start with the
   — why Chatterjee's ξ was chosen for `mode="deep"` over HSIC, MGC, MIC,
   and Hoeffding's D. Useful if you want to know *why* a particular
   dependence measure was added to the package.
+- [Shape Diagnostics Design Note](shape-diagnostics-design.md) — why
+  `bin_lof_r2_gain` and `sq_corr` were added to catch smooth monotonic
+  curves, step functions, and circular/radial dependence, and why a
+  periodic/cyclical label is deliberately deferred.
 
 ## For contributors and maintainers
 

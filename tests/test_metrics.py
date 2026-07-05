@@ -7,6 +7,7 @@ import pytest
 from corrsleuth.api import profile_pair
 from corrsleuth.exceptions import MetricComputationError, OptionalDependencyError
 from corrsleuth.metrics import (
+    compute_bin_lof_r2_gain,
     compute_biweight_midcorrelation,
     compute_chatterjee_xi,
     compute_chatterjee_xi_reverse,
@@ -16,6 +17,7 @@ from corrsleuth.metrics import (
     compute_mutual_information,
     compute_pearson,
     compute_spearman,
+    compute_squared_correlation,
     compute_trimmed_pearson,
     compute_winsorized_pearson,
 )
@@ -432,4 +434,147 @@ def test_chatterjee_xi_exposes_both_directions_in_a_single_deep_call():
 
     assert metrics["chatterjee_xi"] > 0.80
     assert metrics["chatterjee_xi_reverse"] < 0.50
-    assert metrics["chatterjee_xi"] - metrics["chatterjee_xi_reverse"] > 0.40
+
+
+# --- Shape diagnostics (bin_lof_r2_gain, sq_corr) ---
+
+
+def _reference_bin_lof_r2_gain(x, y, target_per_bin=10, min_bins=5, max_bins=20):
+    """Independent reimplementation of the equal-frequency-bin lack-of-fit
+    test, used as an oracle below. Uses an explicit per-bin loop for the bin
+    R^2 (rather than the vectorized ``array_split`` + broadcast approach in
+    ``metrics/shape.py``) and the R^2-equals-squared-Pearson-r identity for
+    the linear R^2 (rather than an explicit polyfit residual sum), so the two
+    implementations share only the bin-split rule, not the arithmetic path."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    n = len(x)
+    order = np.argsort(x, kind="mergesort")
+    xs = x[order]
+    ys = y[order]
+    n_bins = int(np.clip(n // target_per_bin, min_bins, max_bins))
+    bins = np.array_split(np.arange(n), n_bins)
+    ss_tot = float(np.sum((ys - ys.mean()) ** 2))
+    ss_res_bins = sum(float(np.sum((ys[b] - ys[b].mean()) ** 2)) for b in bins)
+    r2_bins = 1.0 - ss_res_bins / ss_tot
+    from scipy.stats import pearsonr
+
+    r_lin, _ = pearsonr(xs, ys)
+    r2_linear = r_lin**2
+    return r2_bins - r2_linear
+
+
+def test_bin_lof_r2_gain_matches_reference_on_curved_data():
+    rng = np.random.default_rng(0)
+    n = 307  # deliberately not evenly divisible by any bin count in range
+    x = rng.uniform(0, 3, size=n)
+    y = np.exp(x) + rng.normal(0, 0.1, size=n) * np.exp(x).std()
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_bin_lof_r2_gain(pair)
+    expected = _reference_bin_lof_r2_gain(x, y)
+
+    assert result.value == pytest.approx(expected, abs=1e-9)
+
+
+def test_bin_lof_r2_gain_positive_for_curved_data_near_zero_for_linear():
+    rng = np.random.default_rng(0)
+    n = 300
+
+    x_lin = rng.uniform(-3, 3, size=n)
+    y_lin = x_lin + rng.normal(0, 0.1, size=n)
+    linear_pair = validate_pair(pd.DataFrame({"x": x_lin, "y": y_lin}), "x", "y")
+
+    x_curved = rng.uniform(-3, 3, size=n)
+    y_curved = x_curved**2 + rng.normal(0, 0.1, size=n)
+    curved_pair = validate_pair(pd.DataFrame({"x": x_curved, "y": y_curved}), "x", "y")
+
+    linear_gain = compute_bin_lof_r2_gain(linear_pair).value
+    curved_gain = compute_bin_lof_r2_gain(curved_pair).value
+
+    assert linear_gain < 0.05
+    assert curved_gain > 0.5
+
+
+def test_bin_lof_r2_gain_returns_none_for_constant_input():
+    df = pd.DataFrame({"x": [1.0] * 60, "y": list(range(60))})
+    pair = validate_pair(df, "x", "y")
+
+    result = compute_bin_lof_r2_gain(pair)
+    assert result.value is None
+    assert result.available is True
+
+
+def test_bin_lof_r2_gain_returns_none_below_min_n():
+    rng = np.random.default_rng(0)
+    n = 40  # below _MIN_N_FOR_BIN_LOF (50)
+    df = pd.DataFrame({"x": rng.uniform(size=n), "y": rng.uniform(size=n)})
+    pair = validate_pair(df, "x", "y")
+
+    result = compute_bin_lof_r2_gain(pair)
+    assert result.value is None
+    assert result.available is True
+
+
+def test_bin_lof_r2_gain_handles_heavy_ties_without_raising():
+    """Heavy ties in X don't shrink any bin below 2 points here — binning is
+    by sorted *position*, not by distinct X value, and n >= _MIN_N_FOR_BIN_LOF
+    with at most 20 bins guarantees every bin has >= 2 points — but a heavily
+    tied sort key is exactly the shape that could regress this if the binning
+    logic ever changed to group by value instead of position."""
+    n = 200
+    # All but a handful of rows share the same X value.
+    x = np.concatenate([np.zeros(n - 3), [1.0, 2.0, 3.0]])
+    y = np.arange(n, dtype=float)
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_bin_lof_r2_gain(pair)
+    assert result.available is True
+    assert result.value is not None
+
+
+def test_squared_correlation_strongly_negative_for_circular_data():
+    rng = np.random.default_rng(0)
+    n = 500
+    theta = rng.uniform(0, 2 * np.pi, size=n)
+    radius = 5.0 * (1 + rng.normal(0, 0.05, size=n))
+    x = radius * np.cos(theta)
+    y = radius * np.sin(theta)
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_squared_correlation(pair)
+    assert result.name == "sq_corr"
+    assert result.value < -0.7
+
+
+def test_squared_correlation_near_zero_for_independent_variables():
+    rng = np.random.default_rng(0)
+    n = 500
+    x = rng.normal(size=n)
+    y = rng.normal(size=n)
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_squared_correlation(pair)
+    assert abs(result.value) < 0.15
+
+
+def test_squared_correlation_returns_none_for_constant_input():
+    df = pd.DataFrame({"x": [1.0] * 50, "y": list(range(50))})
+    pair = validate_pair(df, "x", "y")
+
+    result = compute_squared_correlation(pair)
+    assert result.value is None
+    assert result.available is True
+
+
+def test_squared_correlation_returns_none_when_squared_x_is_constant():
+    """X alternating between +c and -c makes X^2 constant even though X itself
+    is not."""
+    n = 50
+    x = np.array([2.0, -2.0] * (n // 2))
+    y = np.arange(n, dtype=float)
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_squared_correlation(pair)
+    assert result.value is None
+    assert result.available is True

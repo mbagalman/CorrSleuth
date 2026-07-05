@@ -29,6 +29,14 @@ env/
 code-review-*.md
 *-review-*.md
 
+# Local-only reference material and working folders (not shipped or published)
+docs/references/
+/user-testing/
+
+# Local-only planning / proposal notes (not shipped; promoted into tracked
+# ticket packs only once accepted).
+docs/development/proposed-diagnostics-tickets.md
+
 # Local editor and OS files
 .idea/
 .vscode/

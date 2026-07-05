@@ -11,6 +11,7 @@ from .robust import (
     compute_trimmed_pearson,
     compute_winsorized_pearson,
 )
+from .shape import compute_bin_lof_r2_gain, compute_squared_correlation
 
 __all__ = [
     "compute_pearson",
@@ -26,6 +27,8 @@ __all__ = [
     "compute_median_clipped_pearson",
     "compute_chatterjee_xi",
     "compute_chatterjee_xi_reverse",
+    "compute_bin_lof_r2_gain",
+    "compute_squared_correlation",
     "ROBUST_METRIC_MIN_N",
     "compute_bootstrap",
     "compute_bootstrap_intervals",

@@ -11,7 +11,11 @@ def test_make_relationship_shapes():
         "linear_positive",
         "linear_negative",
         "monotonic_log",
+        "exponential_monotonic",
+        "logarithmic_monotonic",
+        "threshold_step",
         "u_shape",
+        "circular",
         "outlier_driven",
         "independent",
     ]

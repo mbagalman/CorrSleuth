@@ -7,6 +7,7 @@ from corrsleuth.heuristics import apply_heuristics, detect_metric_warnings
 from corrsleuth.metrics import (
     ROBUST_METRIC_MIN_N,
     assess_outlier_sensitivity,
+    compute_bin_lof_r2_gain,
     compute_biweight_midcorrelation,
     compute_bootstrap,
     compute_chatterjee_xi,
@@ -17,6 +18,7 @@ from corrsleuth.metrics import (
     compute_mutual_information,
     compute_pearson,
     compute_spearman,
+    compute_squared_correlation,
     compute_winsorized_pearson,
 )
 from corrsleuth.result import CorrSleuthResult, MetricDiagnostics
@@ -37,7 +39,11 @@ def _metric_value(metrics_map, metric_name: str) -> float | None:
 
 
 def _build_diagnostics(
-    metrics_map, disagreement_score: float, outlier_sensitivity=None
+    metrics_map,
+    disagreement_score: float,
+    outlier_sensitivity=None,
+    bin_lof_r2_gain=None,
+    sq_corr=None,
 ) -> MetricDiagnostics:
     pearson = _metric_value(metrics_map, "pearson")
     spearman = _metric_value(metrics_map, "spearman")
@@ -73,6 +79,8 @@ def _build_diagnostics(
         if outlier_sensitivity
         else None,
         pearson_trim_delta=outlier_sensitivity.delta if outlier_sensitivity else None,
+        bin_lof_r2_gain=bin_lof_r2_gain.value if bin_lof_r2_gain else None,
+        sq_corr=sq_corr.value if sq_corr else None,
     )
 
 
@@ -193,6 +201,13 @@ def profile_pair(
             pair, mode=mode, random_state=random_state
         )
 
+    # Shape diagnostics: pure numpy/scipy, no mode gate, cheap enough for
+    # every mode. Feed the label cascade and MetricDiagnostics only — kept out
+    # of metrics_map so they never appear in the public metrics table
+    # alongside primary association coefficients like pearson/dcor/MI.
+    bin_lof_r2_gain = compute_bin_lof_r2_gain(pair)
+    sq_corr = compute_squared_correlation(pair)
+
     # 3. Outlier sensitivity check (informs the leverage label)
     #
     # Steps 3-4 enrich `pair` in place — appending to `pair.flags` and
@@ -241,9 +256,17 @@ def profile_pair(
         )
 
     # 4. Apply heuristics and metric-agreement warnings
-    heuristic_result = apply_heuristics(metrics_map, pair.flags, pair.n_used)
+    #
+    # The shape diagnostics are merged in only for the cascade/warning calls,
+    # never into metrics_map itself, so they stay out of metrics_df.
+    cascade_metrics = {
+        **metrics_map,
+        "bin_lof_r2_gain": bin_lof_r2_gain,
+        "sq_corr": sq_corr,
+    }
+    heuristic_result = apply_heuristics(cascade_metrics, pair.flags, pair.n_used)
     pair.warnings.extend(
-        detect_metric_warnings(metrics_map, label=heuristic_result.label)
+        detect_metric_warnings(cascade_metrics, label=heuristic_result.label)
     )
 
     # 5. Build outputs
@@ -283,7 +306,11 @@ def profile_pair(
 
     disagreement_score = rank_gap + nonmonotonic
     diagnostics = _build_diagnostics(
-        metrics_map, disagreement_score, outlier_sensitivity
+        metrics_map,
+        disagreement_score,
+        outlier_sensitivity,
+        bin_lof_r2_gain=bin_lof_r2_gain,
+        sq_corr=sq_corr,
     )
     bootstrap_result = compute_bootstrap(
         pair,

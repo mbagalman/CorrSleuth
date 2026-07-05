@@ -54,9 +54,12 @@ class MetricDiagnostics:
     Carries the absolute rank-vs-linear gap (``rank_linear_gap``), the signed
     Pearson-minus-Spearman gap (``pearson_spearman_signed_gap``, which reveals
     sign disagreement the absolute gap hides), the nonmonotonic and
-    Pearson-Kendall gaps, the overall ``disagreement_score``, and the
-    outlier-sensitivity fields (``pearson_trimmed``, ``pearson_trim_delta``).
-    Gap fields are ``None`` when the metrics they depend on are unavailable.
+    Pearson-Kendall gaps, the overall ``disagreement_score``, the
+    outlier-sensitivity fields (``pearson_trimmed``, ``pearson_trim_delta``),
+    and the shape diagnostics (``bin_lof_r2_gain``, the equal-frequency-bin
+    lack-of-fit test's R² gain over a linear fit; ``sq_corr``, the correlation
+    between X² and Y²) — see ``corrsleuth/metrics/shape.py``. Gap and shape
+    fields are ``None`` when the metrics they depend on are unavailable.
     """
 
     rank_linear_gap: float | None
@@ -66,6 +69,8 @@ class MetricDiagnostics:
     disagreement_score: float
     pearson_trimmed: float | None = None
     pearson_trim_delta: float | None = None
+    bin_lof_r2_gain: float | None = None
+    sq_corr: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -107,6 +112,8 @@ class CorrSleuthResult:
             disagreement_score=disagreement_score,
             pearson_trimmed=None,
             pearson_trim_delta=None,
+            bin_lof_r2_gain=None,
+            sq_corr=None,
         )
         self.bootstrap_intervals = bootstrap_intervals
         self.bootstrap_stability = bootstrap_stability
@@ -154,6 +161,8 @@ class CorrSleuthResult:
                 f"  nonmonotonic_gap         : {self._format_value(self.diagnostics.nonmonotonic_gap)}",
                 f"  pearson_kendall_gap      : {self._format_value(self.diagnostics.pearson_kendall_gap)}",
                 f"  pearson_trim_delta       : {self._format_value(self.diagnostics.pearson_trim_delta)}",
+                f"  bin_lof_r2_gain          : {self._format_value(self.diagnostics.bin_lof_r2_gain)}",
+                f"  sq_corr                  : {self._format_value(self.diagnostics.sq_corr)}",
             ]
         )
 
@@ -224,7 +233,9 @@ class CorrSleuthResult:
             if self.pattern in STANDARD_ONLY_LABELS and stability.metric_set == "lite":
                 explanation += (
                     f" Because stability used lite metrics, it may not fully test a "
-                    f"standard-mode {self.pattern} label."
+                    f"standard-mode {self.pattern} label (this can be conservative "
+                    f"if the label was actually driven by the lite-computable "
+                    f"sq_corr shape diagnostic rather than distance correlation)."
                 )
         return explanation
 
@@ -304,6 +315,14 @@ class CorrSleuthResult:
                     [
                         "pearson_trim_delta",
                         format_markdown_value(self.diagnostics.pearson_trim_delta),
+                    ],
+                    [
+                        "bin_lof_r2_gain",
+                        format_markdown_value(self.diagnostics.bin_lof_r2_gain),
+                    ],
+                    [
+                        "sq_corr",
+                        format_markdown_value(self.diagnostics.sq_corr),
                     ],
                 ],
             ),

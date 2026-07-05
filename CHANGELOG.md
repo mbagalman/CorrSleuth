@@ -58,6 +58,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   normal-consistent MAD, which pushed the outlier-rejection cutoff out to ~13
   MADs and made the estimator less outlier-resistant than its name implies.
   This changes the metric's numeric output for non-degenerate data.
+- **Smooth monotonic curves and step functions were mislabeled `near_linear`.**
+  The cascade's only nonlinearity test — the Spearman-vs-Pearson gap — can stay
+  small for exponential/logarithmic curves and step/threshold functions over an
+  ordinary (non-rigged) X range, even though real curvature exists. A new
+  equal-frequency-bin lack-of-fit diagnostic (`bin_lof_r2_gain`, see
+  `corrsleuth/metrics/shape.py`) now provides an alternate route into
+  `monotonic_nonlinear` for these cases. No mode gate — runs in `lite` too.
+- **Circular/radial dependence was mislabeled `weak_or_no_relationship`.** A
+  true circular relationship (points scattered around a ring) structurally
+  caps distance correlation around dCor ≈ 0.2, even noiseless, so it never
+  cleared the `nonmonotonic_dependence` floor. A new squared-value correlation
+  diagnostic (`sq_corr = corr(X², Y²)`, `corrsleuth/metrics/shape.py`) now
+  provides an alternate route into `nonmonotonic_dependence`, and into the
+  `weak_or_no_relationship` ceiling check, for this shape. No mode gate — as a
+  side effect, classic U-shapes are now also detectable via `sq_corr` in
+  `lite` and `deep` mode, not only `mode="standard"`.
+  See `docs/shape-diagnostics-design.md` for the full investigation
+  (including why a periodic/cyclical case is deliberately deferred).
 
 ### Changed
 - Bootstrap **intervals** are now computed only when the *effective
@@ -112,6 +130,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enrichment of the internal `CleanPair` in `profile_pair`.
 
 ### Added
+- `corrsleuth/metrics/shape.py`: two no-new-dependency shape diagnostics,
+  `bin_lof_r2_gain` (bin-mean-model R² minus linear-fit R², a classical
+  lack-of-fit test) and `sq_corr` (`corr(X², Y²)`), wired into the
+  `monotonic_nonlinear` and `nonmonotonic_dependence` cascade rules as
+  additional constants `BIN_LOF_R2_GAIN_THRESHOLD` (0.05) and
+  `SQ_CORR_THRESHOLD` (0.35). Diagnostic-only — surfaced on
+  `result.diagnostics`, not in the metrics table.
+- `detect_metric_warnings` now also considers mutual information (converted
+  to a comparable scale via `sqrt(1 - exp(-2*MI))`) alongside Chatterjee's ξ
+  when warning that a weak/ambiguous label may understate real dependence, so
+  the warning can fire in `mode="standard"` too, not only deep mode.
+- Four new realistic `shape_type`s for `make_relationship()`:
+  `exponential_monotonic`, `logarithmic_monotonic`, `threshold_step`, and
+  `circular`.
+- `docs/shape-diagnostics-design.md`, the design note behind the diagnostics
+  above.
 - `docs/thresholds-and-rationale.md` cataloguing every threshold in the package
   — its value, location, what it gates, the justification, and how to override
   the label-driving ones. Linked from the README and the interpretation guide.

@@ -1,3 +1,5 @@
+import math
+
 from corrsleuth.result import HeuristicResult, MetricResult
 
 from .explanations import generate_recommendations
@@ -79,21 +81,46 @@ NEAR_LINEAR_GAP_THRESHOLD = 0.15
 #: nonmonotonic signal is not mislabeled "no relationship".
 WEAK_DC_THRESHOLD = 0.20
 
+#: Bin-mean-model R² minus linear-fit R² (see metrics/shape.py) above which
+#: real curvature exists that the Spearman-vs-Pearson gap misses — smooth
+#: monotonic curves (exponential, logarithmic) and step/threshold functions
+#: whose Pearson stays nearly as high as Spearman. An alternate trigger for
+#: monotonic_nonlinear, alongside RANK_LINEAR_GAP_THRESHOLD. Genuinely linear
+#: data measured ~-0.01 on the bundled test scenarios; real curvature measured
+#: >=0.06. The margin here (0.05) is thinner than most cascade gaps, so this
+#: threshold leans on the simulations.py regression coverage more than most.
+BIN_LOF_R2_GAIN_THRESHOLD = 0.05
+
+#: |corr(X^2, Y^2)| above which weak Pearson/Spearman (both under
+#: NONMONOTONIC_MONOTONE_CEILING) is read as magnitude/radial dependence — the
+#: signature of points scattered around a circle or similar X^2+Y^2-linked
+#: structure — rather than no relationship. An alternate trigger for
+#: nonmonotonic_dependence, alongside NONMONOTONIC_DC_THRESHOLD, for cases
+#: where distance correlation itself is structurally capped (a true circular
+#: relationship measures dCor ~0.19-0.20 even noiseless). Set equal to
+#: NONMONOTONIC_DC_THRESHOLD for consistency; null pairs on the bundled test
+#: scenarios measured <=0.11, real magnitude-linked dependence measured >=0.30.
+SQ_CORR_THRESHOLD = 0.35
+
 #: Magnitude above which Pearson and Spearman having *opposite signs* is worth
 #: a directionality warning. Below this both coefficients are near zero and a
 #: sign disagreement is just noise, so the warning would be spurious.
 CONFLICTING_SIGN_THRESHOLD = 0.3
 
-#: Chatterjee's xi value above which an otherwise weak/ambiguous label gets a
-#: dependence warning. Matches :data:`NONMONOTONIC_DC_THRESHOLD`, the
-#: distance-correlation threshold used by the nonmonotonic_dependence rule in
-#: the cascade.
+#: Chatterjee's xi value — or, on the same scale via the Gaussian-equivalent-
+#: correlation transform, mutual information — above which an otherwise
+#: weak/ambiguous label gets a dependence warning. Matches
+#: :data:`NONMONOTONIC_DC_THRESHOLD`, the distance-correlation threshold used
+#: by the nonmonotonic_dependence rule in the cascade.
 XI_DEPENDENCE_WARN_THRESHOLD = 0.35
 
-#: Labels that understate the relationship when Chatterjee's xi is high. The
-#: cascade does not consult xi, so without a warning a deep-mode profile could
-#: report a strong functional dependence and a "weak" label side by side.
-_XI_CONTRADICTED_LABELS = frozenset({"weak_or_no_relationship", "mixed_or_ambiguous"})
+#: Labels that understate the relationship when Chatterjee's xi or mutual
+#: information is high. The cascade does not consult either when assigning a
+#: label, so without a warning a standard- or deep-mode profile could report a
+#: strong dependence signal and a "weak"/"ambiguous" label side by side.
+_DEPENDENCE_WARNING_LABELS = frozenset(
+    {"weak_or_no_relationship", "mixed_or_ambiguous"}
+)
 
 #: Heuristic labels that can only be assigned when standard-mode metrics
 #: (distance correlation, mutual information) are available. Bootstrap stability
@@ -135,11 +162,21 @@ def apply_heuristics(
     (``pearson_trim_sensitive``, ``outlier_sensitivity_unavailable``) gate the
     ``possible_outlier_or_leverage`` label so it is only assigned when there is
     independent evidence of leverage.
+
+    ``metrics`` may include two shape diagnostics (see ``metrics/shape.py``) in
+    addition to the primary correlation metrics: ``bin_lof_r2_gain`` (an
+    alternate route into ``monotonic_nonlinear``, for smooth monotonic curves
+    and step functions the Spearman-vs-Pearson gap misses) and ``sq_corr`` (an
+    alternate route into ``nonmonotonic_dependence``, for magnitude/radial
+    dependence distance correlation under-reads). Both are optional; their
+    absence never blocks a label the other metrics would otherwise assign.
     """
     m_p = metrics.get("pearson")
     m_s = metrics.get("spearman")
     m_k = metrics.get("kendall_tau_b")
     m_dc = metrics.get("distance_correlation")
+    m_bin_lof = metrics.get("bin_lof_r2_gain")
+    m_sq_corr = metrics.get("sq_corr")
 
     p_val = _finite_metric_value(m_p)
     s_val = _finite_metric_value(m_s)
@@ -148,6 +185,8 @@ def apply_heuristics(
     s = abs(s_val) if s_val is not None else None
     k = abs(k_val) if k_val is not None else None
     dc = _finite_metric_value(m_dc, require_available=True)
+    bin_lof = _finite_metric_value(m_bin_lof)
+    sq_corr = _finite_metric_value(m_sq_corr)
 
     # Pearson and Spearman pointing in opposite directions, both non-trivial, is
     # a directional conflict — not a clean linear or monotone signal, and almost
@@ -187,11 +226,19 @@ def apply_heuristics(
     ):
         label = "possible_outlier_or_leverage"
     # 4. nonmonotonic_dependence
+    # Two independent routes to the same conclusion: distance correlation
+    # clearing its floor (any form of dependence), or |corr(X^2, Y^2)| clearing
+    # its floor (magnitude/radial dependence — e.g. points on a circle — that
+    # dCor itself can under-read; see BIN_LOF_R2_GAIN_THRESHOLD /
+    # SQ_CORR_THRESHOLD module docs). Either is only trusted once Pearson and
+    # Spearman are both already weak, so this never competes with rules 5/6.
     elif (
-        dc is not None
-        and p < NONMONOTONIC_MONOTONE_CEILING
+        p < NONMONOTONIC_MONOTONE_CEILING
         and s < NONMONOTONIC_MONOTONE_CEILING
-        and dc > NONMONOTONIC_DC_THRESHOLD
+        and (
+            (dc is not None and dc > NONMONOTONIC_DC_THRESHOLD)
+            or (sq_corr is not None and abs(sq_corr) > SQ_CORR_THRESHOLD)
+        )
     ):
         label = "nonmonotonic_dependence"
     # 5. monotonic_nonlinear
@@ -199,10 +246,17 @@ def apply_heuristics(
     # Spearman is the primary monotone measure here, and tau-b is numerically
     # smaller for the same signal, so adding an OR on tau would only loosen the
     # rule. A borderline-Spearman case deliberately falls through to
-    # mixed_or_ambiguous rather than overclaiming nonlinearity.
+    # mixed_or_ambiguous rather than overclaiming nonlinearity. The bin
+    # lack-of-fit gain is a second, independent route: it catches smooth
+    # monotonic curves (exponential, logarithmic) and step/threshold functions
+    # whose Pearson stays close enough to Spearman that the rank-linear gap
+    # alone misses them.
     elif (
         s > STRONG_MAGNITUDE_THRESHOLD
-        and (s - p > RANK_LINEAR_GAP_THRESHOLD)
+        and (
+            s - p > RANK_LINEAR_GAP_THRESHOLD
+            or (bin_lof is not None and bin_lof > BIN_LOF_R2_GAIN_THRESHOLD)
+        )
         and not pearson_spearman_conflict
     ):
         label = "monotonic_nonlinear"
@@ -215,10 +269,16 @@ def apply_heuristics(
     ):
         label = "near_linear"
     # 7. weak_or_no_relationship
+    # Mirrors the distance-correlation ceiling with the same ceiling on
+    # |corr(X^2, Y^2)|, so a moderate magnitude-linked signal (below
+    # SQ_CORR_THRESHOLD, so rule 4 didn't fire, but above WEAK_DC_THRESHOLD)
+    # falls through to mixed_or_ambiguous instead of being called "no
+    # relationship" — the same conservative buffer the dc check already gets.
     elif (
         p < WEAK_MAGNITUDE_THRESHOLD
         and s < WEAK_MAGNITUDE_THRESHOLD
         and (dc is None or dc < WEAK_DC_THRESHOLD)
+        and (sq_corr is None or abs(sq_corr) < WEAK_DC_THRESHOLD)
     ):
         label = "weak_or_no_relationship"
 
@@ -236,8 +296,12 @@ def detect_metric_warnings(
     These warnings supplement validation warnings; they do not override the
     primary label. Flags conflicting Pearson/Spearman directionality when both
     magnitudes exceed :data:`CONFLICTING_SIGN_THRESHOLD`, and — when ``label``
-    is provided — high Chatterjee's xi alongside a weak or ambiguous label,
-    since the cascade does not consult xi when assigning labels.
+    is provided — high Chatterjee's xi or high mutual information alongside a
+    weak or ambiguous label, since the cascade does not consult either when
+    assigning labels. Mutual information (nats) is converted to a bounded,
+    correlation-like scale via the Gaussian-equivalent-correlation transform
+    ``sqrt(1 - exp(-2*MI))`` before comparing against
+    :data:`XI_DEPENDENCE_WARN_THRESHOLD`, so both signals share one cut point.
     """
     warnings: list[str] = []
 
@@ -256,18 +320,24 @@ def detect_metric_warnings(
             "plot and check for nonlinearity, segments, or leverage points."
         )
 
-    if label in _XI_CONTRADICTED_LABELS:
-        xi_candidates = [
-            (name, value)
+    if label in _DEPENDENCE_WARNING_LABELS:
+        candidates = [
+            (name, value, value)
             for name in ("chatterjee_xi", "chatterjee_xi_reverse")
             if (value := _finite_metric_value(metrics.get(name))) is not None
         ]
-        if xi_candidates:
-            xi_name, xi_value = max(xi_candidates, key=lambda item: item[1])
-            if xi_value > XI_DEPENDENCE_WARN_THRESHOLD:
+        mi_value = _finite_metric_value(metrics.get("mutual_information"))
+        if mi_value is not None and mi_value >= 0:
+            mi_compare = math.sqrt(1.0 - math.exp(-2.0 * mi_value))
+            candidates.append(("mutual_information", mi_value, mi_compare))
+
+        if candidates:
+            name, display_value, compare_value = max(candidates, key=lambda c: c[2])
+            if compare_value > XI_DEPENDENCE_WARN_THRESHOLD:
+                unit = " nats" if name == "mutual_information" else ""
                 warnings.append(
-                    f"{xi_name} ({xi_value:.3f}) is high while linear and rank "
-                    f"metrics are weak, which is evidence of nonmonotonic or "
+                    f"{name} ({display_value:.3f}{unit}) is high while linear and "
+                    f"rank metrics are weak, which is evidence of nonmonotonic or "
                     f"functional dependence that the '{label}' label may "
                     f"understate. Inspect the scatter plot, or use "
                     f"mode='standard' to check distance correlation."

@@ -17,7 +17,11 @@ def make_relationship(
     - linear_positive
     - linear_negative
     - monotonic_log
+    - exponential_monotonic
+    - logarithmic_monotonic
+    - threshold_step
     - u_shape
+    - circular
     - outlier_driven
     - independent
 
@@ -59,8 +63,37 @@ def make_relationship(
         # Create a heavily skewed X so that the log relationship is strongly nonlinear (s - p > 0.20)
         x = np.exp(rng.uniform(0.1, 10, size=n))
         y = np.log(x) + rng.normal(0, noise, size=n)
+    elif shape_type == "exponential_monotonic":
+        # A smooth monotonic curve over an ordinary (non-rigged) X range: real
+        # curvature (see docs/shape-diagnostics-design.md), but mild enough that
+        # Pearson stays close to Spearman (s - p well under 0.20) — this is the
+        # regime the rank-linear gap alone misses and bin_lof_r2_gain catches.
+        x = rng.uniform(0, 3, size=n)
+        signal = np.exp(x)
+        y = signal + rng.normal(0, noise, size=n) * signal.std()
+    elif shape_type == "logarithmic_monotonic":
+        # Same idea as exponential_monotonic, in the other direction, over an
+        # ordinary X range (unlike the rigged monotonic_log above).
+        x = rng.uniform(0.1, 20, size=n)
+        signal = np.log(x)
+        y = signal + rng.normal(0, noise, size=n) * signal.std()
+    elif shape_type == "threshold_step":
+        # A two-level step function: Pearson and Spearman both read moderately
+        # strong (dominated by the between-group separation), with a small gap
+        # between them — near_linear's regime by the rank-linear gap alone, but
+        # bin_lof_r2_gain reveals the two flat groups a line doesn't capture.
+        y = np.where(x > 0, 1.0, -1.0) + rng.normal(0, noise, size=n)
     elif shape_type == "u_shape":
         y = x**2 + rng.normal(0, noise, size=n)
+    elif shape_type == "circular":
+        # Points scattered around a ring: X and Y are dependent (X^2 + Y^2 is
+        # approximately constant) but Pearson, Spearman, and distance
+        # correlation on the raw values are all near zero — only sq_corr
+        # (corr(X^2, Y^2)) reveals it. See docs/shape-diagnostics-design.md.
+        theta = rng.uniform(0, 2 * np.pi, size=n)
+        radius = 5.0 * (1 + rng.normal(0, noise, size=n))
+        x = radius * np.cos(theta)
+        y = radius * np.sin(theta)
     elif shape_type == "outlier_driven":
         y = rng.normal(0, noise, size=n)
         # Add a few extreme outliers that drive correlation

@@ -65,8 +65,11 @@ Defined in
 [`corrsleuth/heuristics/classifier.py`](../corrsleuth/heuristics/classifier.py).
 These are the most consequential thresholds — they assign the primary label.
 The cascade evaluates rules in priority order and returns the first match;
-`p`, `s`, `k` are `|pearson|`, `|spearman|`, `|kendall_tau_b|`, and `dc` is
-distance correlation (standard mode only).
+`p`, `s`, `k` are `|pearson|`, `|spearman|`, `|kendall_tau_b|`, `dc` is
+distance correlation (standard mode only), and `bin_lof`/`sq_corr` are the
+shape diagnostics from
+[`corrsleuth/metrics/shape.py`](../corrsleuth/metrics/shape.py) (no mode gate
+— see [shape-diagnostics-design.md](shape-diagnostics-design.md)).
 
 | Constant | Value | Gates | Rationale |
 |---|---|---|---|
@@ -74,10 +77,12 @@ distance correlation (standard mode only).
 | `WEAK_MAGNITUDE_THRESHOLD` | 0.20 | `weak_or_no_relationship` (Pearson **and** Spearman must fall under it) | Below Cohen's "medium" boundary, so genuinely moderate relationships are not called weak. |
 | `RANK_LINEAR_GAP_THRESHOLD` | 0.20 | how far a rank coefficient must exceed Pearson (or vice versa) to signal nonlinearity / leverage | One effect-size band; comfortably above the bootstrap spread of these coefficients at n ≥ 30. Shared by the leverage rule (`p − s`) and `monotonic_nonlinear` (`s − p`). |
 | `PEARSON_KENDALL_GAP_THRESHOLD` | 0.25 | Pearson-vs-Kendall gap in the leverage rule | Kendall's τ is numerically smaller than Spearman's ρ for the same monotone signal (`τ ≈ (2/π)·arcsin ρ`), so a wider gap carries the same evidence. |
-| `NONMONOTONIC_MONOTONE_CEILING` | 0.25 | ceiling on `p` and `s` for `nonmonotonic_dependence` | Both monotone measures must be weak before a high distance correlation is read as nonmonotonic (e.g. U-shaped) rather than a monotone trend the rank metrics already saw. |
+| `NONMONOTONIC_MONOTONE_CEILING` | 0.25 | ceiling on `p` and `s` for `nonmonotonic_dependence` | Both monotone measures must be weak before a high distance correlation (or `sq_corr`) is read as nonmonotonic (e.g. U-shaped or circular) rather than a monotone trend the rank metrics already saw. |
 | `NONMONOTONIC_DC_THRESHOLD` | 0.35 | distance-correlation floor for `nonmonotonic_dependence` | "Real dependence" cut point; set equal to `XI_DEPENDENCE_WARN_THRESHOLD` so the cascade and the deep-mode ξ warning agree. |
+| `SQ_CORR_THRESHOLD` | 0.35 | `|corr(X², Y²)|` floor for `nonmonotonic_dependence` — an alternate route alongside `NONMONOTONIC_DC_THRESHOLD` | Catches magnitude/radial dependence (e.g. points scattered around a circle) that distance correlation itself under-reads — a true circular relationship measures dCor ≈ 0.19–0.20 even noiseless. Set equal to `NONMONOTONIC_DC_THRESHOLD`; on the bundled test scenarios null pairs measured ≤ 0.11, real magnitude-linked dependence ≥ 0.30. |
+| `BIN_LOF_R2_GAIN_THRESHOLD` | 0.05 | bin-lack-of-fit R² gain floor for `monotonic_nonlinear` — an alternate route alongside `RANK_LINEAR_GAP_THRESHOLD` | Catches smooth monotonic curves (exponential, logarithmic) and step/threshold functions whose Pearson stays close enough to Spearman that the rank-linear gap alone misses them. Genuinely linear data measured ≈ −0.01 on the bundled scenarios; real curvature measured ≥ 0.06. Thinner margin than most cascade gaps, so this one leans more heavily on the `simulations.py` regression coverage — see [shape-diagnostics-design.md](shape-diagnostics-design.md). |
 | `NEAR_LINEAR_GAP_THRESHOLD` | 0.15 | max `|p − s|` for `near_linear` (both must already be strong) | Tight closeness test that keeps monotone-but-curved relationships out of the "approximately linear" bucket. |
-| `WEAK_DC_THRESHOLD` | 0.20 | distance-correlation ceiling for `weak_or_no_relationship` | When distance correlation is available it must also be small, so a hidden nonmonotonic signal is not mislabeled "no relationship." |
+| `WEAK_DC_THRESHOLD` | 0.20 | distance-correlation **and** `sq_corr` ceiling for `weak_or_no_relationship` | When distance correlation is available it must also be small; `sq_corr` gets the same ceiling so a moderate magnitude-linked signal (below `SQ_CORR_THRESHOLD` but above this) falls through to `mixed_or_ambiguous` instead of "no relationship," mirroring how a moderate `dc` is already treated. |
 
 The plain-language version of each rule and its failure modes is in
 [interpretation-guide.md](interpretation-guide.md#how-a-label-is-assigned).
@@ -92,6 +97,7 @@ The plain-language version of each rule and its failure modes is in
 | `_HIGH_MISSINGNESS_THRESHOLD` | 0.50 | `validation/input.py` | high-missingness warning | Past half missing, deletion has removed most data and any coefficient is on an unrepresentative remainder. |
 | `_LOW_UNIQUE_RATIO_THRESHOLD` | 0.05 | `validation/input.py` | low-unique-ratio warning | < 5% distinct values means each value is shared by ~20 rows on average — effectively discrete, so rank metrics are tie-unstable. |
 | `_MIN_N_FOR_CHATTERJEE_XI` | 20 | `metrics/nonlinear.py` | minimum n before ξ is computed | ξ converges slowly and is biased on tiny samples; 20 is a conservative floor below the labeling cutoff, since ξ is only ever a supplementary diagnostic. |
+| `_MIN_N_FOR_BIN_LOF` | 50 | `metrics/shape.py` | minimum n before `bin_lof_r2_gain` is computed (5 bins × 10 points/bin) | Below this, equal-frequency bins would have too few points each for a stable bin mean. No mode gate — this and `sq_corr` are pure numpy/scipy, so they run in every mode including `lite`. |
 | `_MIN_N_FOR_ROBUST` / `ROBUST_METRIC_MIN_N` | 50 | `metrics/robust.py` | minimum n before robust deep-mode metrics run | A 1% trim removes too few rows to mean anything below ~50; 50 keeps ≥ 1 row in each trimmed tail. |
 | `_MIN_N_AFTER_TRIM` | 30 | `metrics/robust.py` | minimum n that must survive trimming | Mirrors `LOW_N_THRESHOLD` so a trimmed correlation is never reported on a sample CorrSleuth would otherwise call low-power. |
 
@@ -129,7 +135,7 @@ These add cautionary text but never change the primary label
 | Constant | Value | Gates | Rationale |
 |---|---|---|---|
 | `CONFLICTING_SIGN_THRESHOLD` | 0.30 | both `|pearson|` and `|spearman|` must exceed this before an opposite-sign disagreement is worth a warning | Below this both coefficients are near zero and a sign flip is just noise. |
-| `XI_DEPENDENCE_WARN_THRESHOLD` | 0.35 | Chatterjee's ξ above which a weak/ambiguous label gets a "may understate dependence" warning | Matches `NONMONOTONIC_DC_THRESHOLD` so the two dependence signals share one cut point. |
+| `XI_DEPENDENCE_WARN_THRESHOLD` | 0.35 | Chatterjee's ξ — or mutual information, converted to a comparable scale via `sqrt(1 − exp(−2·MI))` — above which a weak/ambiguous label gets a "may understate dependence" warning | Matches `NONMONOTONIC_DC_THRESHOLD` so the dependence signals share one cut point. Mutual information is included so this warning can fire in `mode="standard"` too, not only deep mode. |
 
 ## Scan-level thresholds
 
@@ -203,5 +209,7 @@ Notes and caveats:
   how to act on it.
 - [nonlinear-metrics-design.md](nonlinear-metrics-design.md)
   — why particular metrics were chosen.
+- [shape-diagnostics-design.md](shape-diagnostics-design.md) — why
+  `bin_lof_r2_gain` and `sq_corr` were added, and what's deliberately deferred.
 - [`corrsleuth/heuristics/classifier.py`](../corrsleuth/heuristics/classifier.py)
   — the constants and the cascade, with inline docstrings.

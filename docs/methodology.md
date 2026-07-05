@@ -125,6 +125,16 @@ be the (signed) Pearson, Spearman, Kendall, and distance-correlation values.
 - `nonmonotonic_gap = dc − max(|p|, |s|)`. Distance correlation in excess of the
   strongest monotone signal; the positive part is evidence of non-monotone
   dependence. Reported raw (can be negative).
+- `bin_lof_r2_gain` and `sq_corr` — two shape diagnostics (no mode gate; pure
+  numpy/scipy) that feed the label cascade but are **not** included in the
+  `disagreement_score` formula below. `bin_lof_r2_gain` is the R² of an
+  equal-frequency-bin model of Y|X minus the R² of a linear fit — a classical
+  lack-of-fit test (Neter, Kutner, Nachtsheim & Wasserman) that catches smooth
+  monotonic curvature and step/threshold functions the rank-vs-linear gap
+  misses. `sq_corr` is `corr(X², Y²)` — it catches dependence carried in
+  magnitude rather than sign (e.g. points scattered around a circle), which
+  distance correlation itself under-reads for that shape. See
+  [shape-diagnostics-design.md](shape-diagnostics-design.md).
 
 The headline **`disagreement_score`** aggregates two orthogonal kinds of
 disagreement:
@@ -165,15 +175,21 @@ the defaults.
    leverage-sensitive (or sensitivity could not be computed). This rule requires
    *independent* leverage evidence — a gap alone is not enough.
 4. **`nonmonotonic_dependence`** — `|p|` and `|s|` are both weak (`< 0.25`) while
-   distance correlation is high (`> 0.35`). Only available in `mode="standard"`
-   (distance correlation is not computed otherwise).
+   either distance correlation is high (`> 0.35`, `mode="standard"` only) or
+   `|corr(X², Y²)|` is high (`> 0.35`, `sq_corr`, no mode gate — added because
+   a true circular/radial relationship structurally caps distance correlation
+   around ~0.2, even noiseless).
 5. **`monotonic_nonlinear`** — Spearman is meaningfully stronger than Pearson
-   (`|s| > 0.50` and `|s| − |p| > 0.20`), without a Pearson/Spearman sign
-   conflict.
+   (`|s| > 0.50` and `|s| − |p| > 0.20`), **or** `|s| > 0.50` and the bin
+   lack-of-fit diagnostic finds real curvature (`bin_lof_r2_gain > 0.05`, no
+   mode gate — added because a smooth monotonic curve or step function can
+   keep Pearson and Spearman close together despite genuine nonlinearity),
+   without a Pearson/Spearman sign conflict.
 6. **`near_linear`** — Pearson and Spearman are both strong (`|p| > 0.50` and
    `|s| > 0.50`) and close (`||p|−|s|| < 0.15`), without a sign conflict.
 7. **`weak_or_no_relationship`** — all available measures are small (`|p|, |s| <
-   0.20`, and `dc < 0.20` when present).
+   0.20`, `dc < 0.20` when present, and `|corr(X², Y²)| < 0.20` when
+   computable).
 8. **`mixed_or_ambiguous`** — fallback when none of the above matches.
 
 Two design choices a reviewer should know:
@@ -323,6 +339,14 @@ for a fixed `random_state` but not invariant to input row order.
 - **The bootstrap assumes exchangeable / i.i.d. rows.** Like any row-resampling
   bootstrap, intervals and stability are not valid under strong serial
   dependence, clustering, or other non-exchangeable structure.
+- **The shape diagnostics catch specific shapes, not all nonlinearity or
+  nonmonotonicity.** `sq_corr` is tuned for magnitude/radial dependence
+  (roughly, an even function of X and/or Y); an oscillating or cyclical shape
+  can still be missed even in `mode="standard"` — see
+  [shape-diagnostics-design.md](shape-diagnostics-design.md) for what's
+  deliberately deferred. `BIN_LOF_R2_GAIN_THRESHOLD`'s margin (0.05) is
+  thinner than most cascade thresholds, so it leans more on the
+  `simulations.py` regression coverage than on a single hand-picked value.
 - **Always inspect the scatter.** Every label is a pointer to look, not a verdict.
 
 ## 11. References and further reading
@@ -331,6 +355,8 @@ for a fixed `random_state` but not invariant to input row order.
   typical metric patterns, and how to act on each label.
 - [thresholds-and-rationale.md](thresholds-and-rationale.md) — every cut point,
   its value, and its justification.
+- [shape-diagnostics-design.md](shape-diagnostics-design.md) — why
+  `bin_lof_r2_gain` and `sq_corr` were added, and the misses they fix.
 - [nonlinear-metrics-design.md](nonlinear-metrics-design.md)
   — why Chatterjee's ξ was selected for deep mode.
 - Test suite (§8): `tests/test_property.py` (property-based invariants),

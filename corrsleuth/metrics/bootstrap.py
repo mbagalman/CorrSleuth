@@ -12,6 +12,10 @@ from corrsleuth.metrics.optional import (
     compute_mutual_information,
 )
 from corrsleuth.metrics.robust import assess_outlier_sensitivity
+from corrsleuth.metrics.shape import (
+    compute_bin_lof_r2_gain,
+    compute_squared_correlation,
+)
 from corrsleuth.validation.input import (
     LOW_N_THRESHOLD,
     CleanPair,
@@ -353,8 +357,20 @@ def compute_bootstrap(
         outlier_status = assess_outlier_sensitivity(
             sample_pair, baseline_pearson
         ).status
+        # Shape diagnostics (see metrics/shape.py) feed two cascade rules
+        # (monotonic_nonlinear, nonmonotonic_dependence) but are not named
+        # bootstrap metrics, so they must be computed unconditionally here too
+        # — otherwise a replicate could never reproduce a label that only the
+        # bin-lof/sq_corr route (not distance correlation or the rank-linear
+        # gap) can assign, understating pattern_stability for exactly the
+        # labels this diagnostic exists to fix.
+        cascade_sample_metrics = {
+            **sample_metrics,
+            "bin_lof_r2_gain": compute_bin_lof_r2_gain(sample_pair),
+            "sq_corr": compute_squared_correlation(sample_pair),
+        }
         heuristic = apply_heuristics(
-            sample_metrics,
+            cascade_sample_metrics,
             _bootstrap_flags(sample_pair, outlier_status),
             sample_pair.n_used,
         )
@@ -424,16 +440,24 @@ def compute_bootstrap(
             n_iterations=n_iterations,
         )
 
-        # A standard-only label (e.g. nonmonotonic_dependence) needs distance
-        # correlation to be tested; warn whenever the cascade did not see it,
-        # regardless of how the interval metric set was labeled.
+        # A standard-only label (e.g. nonmonotonic_dependence) can be reached
+        # via distance correlation (needs mode="standard") or, since the
+        # sq_corr shape diagnostic is lite-computable, via sq_corr alone — so
+        # this warning is now conservative rather than universally true: it
+        # still fires whenever dc wasn't in the cascade, even though a
+        # sq_corr-only assignment would have been fully testable on lite
+        # metrics. Distinguishing which route produced the label is out of
+        # scope for now (see docs/shape-diagnostics-design.md).
         if (
             original_pattern in STANDARD_ONLY_LABELS
             and "distance_correlation" not in cascade_metrics
         ):
             pair.warnings.append(
                 f"Pattern stability used lite bootstrap metrics, so it may not "
-                f"fully test a standard-mode {original_pattern} label."
+                f"fully test a standard-mode {original_pattern} label (this can "
+                f"be conservative if the label was actually driven by the "
+                f"lite-computable sq_corr shape diagnostic rather than distance "
+                f"correlation)."
             )
 
     return BootstrapResult(intervals=intervals, stability=stability)

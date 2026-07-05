@@ -32,6 +32,54 @@ def test_canonical_shapes_standard():
     assert res.pattern == "weak_or_no_relationship"
 
 
+def test_exponential_monotonic_resolves_to_monotonic_nonlinear():
+    # A smooth monotonic curve over an ordinary (non-rigged) X range: Pearson
+    # and Spearman stay close together (gap well under
+    # RANK_LINEAR_GAP_THRESHOLD), so only bin_lof_r2_gain catches the real
+    # curvature. Lite mode: no optional dependency needed.
+    df = make_relationship("exponential_monotonic", n=500, noise=0.1, random_state=42)
+    res = profile_pair(df, "x", "y", mode="lite")
+    assert res.pattern == "monotonic_nonlinear"
+
+
+def test_logarithmic_monotonic_resolves_to_monotonic_nonlinear():
+    df = make_relationship("logarithmic_monotonic", n=500, noise=0.1, random_state=42)
+    res = profile_pair(df, "x", "y", mode="lite")
+    assert res.pattern == "monotonic_nonlinear"
+
+
+def test_threshold_step_resolves_to_monotonic_nonlinear():
+    # A two-level step function sits in near_linear's regime by the
+    # rank-linear gap alone (Pearson and Spearman both moderately strong, gap
+    # small), but bin_lof_r2_gain reveals the two flat groups a line doesn't
+    # capture.
+    df = make_relationship("threshold_step", n=500, noise=0.1, random_state=42)
+    res = profile_pair(df, "x", "y", mode="lite")
+    assert res.pattern == "monotonic_nonlinear"
+
+
+def test_circular_resolves_to_nonmonotonic_dependence():
+    # Points scattered around a ring: Pearson, Spearman, and distance
+    # correlation on the raw values are all near zero (distance correlation is
+    # structurally capped around ~0.2 for a true circular relationship), but
+    # sq_corr (corr(X^2, Y^2)) is strongly negative. Lite mode: no optional
+    # dependency needed.
+    df = make_relationship("circular", n=500, noise=0.1, random_state=42)
+    res = profile_pair(df, "x", "y", mode="lite")
+    assert res.pattern == "nonmonotonic_dependence"
+
+
+@pytest.mark.parametrize("shape", ["linear_positive", "linear_negative"])
+@pytest.mark.parametrize("seed", range(10))
+def test_linear_shapes_stay_near_linear_across_seeds(shape, seed):
+    # BIN_LOF_R2_GAIN_THRESHOLD (0.05) has a thinner margin than most cascade
+    # thresholds (genuinely linear data measures ~-0.01 on any single seed), so
+    # this regression check runs across many seeds rather than relying on one.
+    df = make_relationship(shape, n=500, noise=0.1, random_state=seed)
+    res = profile_pair(df, "x", "y", mode="lite")
+    assert res.pattern == "near_linear"
+
+
 def test_conflicting_signs_warning():
     import numpy as np
     import pandas as pd
@@ -238,23 +286,25 @@ def test_detect_metric_warnings_ignores_nan_xi():
     assert not any("chatterjee_xi" in w for w in warnings)
 
 
-def test_deep_mode_u_shape_warns_about_high_xi():
-    # The cascade cannot assign nonmonotonic_dependence without distance
-    # correlation, so a deep-mode U-shape keeps the weak_or_no_relationship
-    # label — but the high chatterjee_xi must surface as a warning instead of
-    # being silently contradicted by the label.
+def test_deep_mode_u_shape_resolves_via_sq_corr_without_xi_warning():
+    # The sq_corr shape diagnostic (corr(X^2, Y^2)) is lite-computable, so a
+    # classic U-shape now resolves to nonmonotonic_dependence even without
+    # distance correlation (deep mode) — it no longer falls back to
+    # weak_or_no_relationship, and no longer needs the chatterjee_xi warning
+    # as a safety net for this case.
     df = make_relationship("u_shape", n=500, noise=0.1, random_state=42)
     res = profile_pair(df, "x", "y", mode="deep")
 
-    assert res.pattern == "weak_or_no_relationship"
-    assert any("chatterjee_xi" in w and "understate" in w for w in res.warnings)
+    assert res.pattern == "nonmonotonic_dependence"
+    assert not any("understate" in w for w in res.warnings)
 
 
-def test_lite_mode_u_shape_has_no_xi_warning():
-    # Lite mode never computes xi, so the warning must not fire.
+def test_lite_mode_u_shape_resolves_via_sq_corr():
+    # sq_corr needs no optional dependency, so lite mode resolves the same way.
     df = make_relationship("u_shape", n=500, noise=0.1, random_state=42)
     res = profile_pair(df, "x", "y", mode="lite")
 
+    assert res.pattern == "nonmonotonic_dependence"
     assert not any("chatterjee_xi" in w for w in res.warnings)
 
 

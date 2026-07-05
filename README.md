@@ -177,6 +177,15 @@ CorrSleuth takes a fundamentally different approach to bivariate analysis. Inste
 
 By examining where these metrics **agree or disagree**, CorrSleuth assigns a heuristic diagnostic label (e.g., `monotonic_nonlinear` if Spearman is high but Pearson is low, or `nonmonotonic_dependence` if Distance Correlation is high but Spearman is low).
 
+Two additional shape diagnostics — a bin-based lack-of-fit test and a
+squared-value correlation — run in every mode (no optional dependency) and
+feed those same labels for cases the metrics above miss on their own: smooth
+monotonic curves and step functions that keep Pearson close to Spearman, and
+circular/radial dependence that even distance correlation under-reads. They
+aren't reported as standalone metrics; see
+[the design note](https://github.com/mbagalman/CorrSleuth/blob/main/docs/shape-diagnostics-design.md)
+for details.
+
 ## Scope
 
 CorrSleuth focuses on numeric pairwise profiling and target-oriented scans.
@@ -208,7 +217,7 @@ Out of scope for now:
   `scan_target()` run this profiles every column on the same complete-case rows.
 - `missing="raise"` raises an error if either selected variable contains missing values.
 
-Validation warnings are exposed through `result.warnings`. CorrSleuth warns about small samples, high missingness, low unique-value ratios, constant inputs, downsampling, conflicting directional evidence, and (in deep mode) high Chatterjee's ξ alongside a weak or ambiguous label, when applicable.
+Validation warnings are exposed through `result.warnings`. CorrSleuth warns about small samples, high missingness, low unique-value ratios, constant inputs, downsampling, conflicting directional evidence, and high Chatterjee's ξ or mutual information alongside a weak or ambiguous label, when applicable.
 
 ## Standard Mode
 
@@ -366,6 +375,7 @@ The object returned by `scan_target()`.
 - [Interpretation Guide](https://github.com/mbagalman/CorrSleuth/blob/main/docs/interpretation-guide.md) — meaning, typical metric pattern, common examples, recommended next steps, and caveats for every diagnostic label, plus topic notes on Pearson misleads, monotonicity, leverage, ties, and performance modes.
 - [Thresholds and Rationale](https://github.com/mbagalman/CorrSleuth/blob/main/docs/thresholds-and-rationale.md) — every cut point that drives a label or warning, with its value, location, justification, and how to override the label-driving ones.
 - [Nonlinear Metrics Design Note](https://github.com/mbagalman/CorrSleuth/blob/main/docs/nonlinear-metrics-design.md) — why Chatterjee's ξ was chosen over HSIC, MGC, MIC, and Hoeffding's D for `mode="deep"`.
+- [Shape Diagnostics Design Note](https://github.com/mbagalman/CorrSleuth/blob/main/docs/shape-diagnostics-design.md) — why `bin_lof_r2_gain` and `sq_corr` were added to catch smooth monotonic curves, step functions, and circular/radial dependence.
 
 ## License
 
