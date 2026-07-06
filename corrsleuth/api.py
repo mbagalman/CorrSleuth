@@ -11,14 +11,16 @@ from corrsleuth.heuristics import (
 from corrsleuth.metrics import (
     ROBUST_METRIC_MIN_N,
     assess_outlier_sensitivity,
-    compute_bin_lof_r2_gain,
+    compute_bin_lof,
     compute_biweight_midcorrelation,
     compute_bootstrap,
     compute_chatterjee_xi,
     compute_chatterjee_xi_reverse,
     compute_distance_correlation,
     compute_heteroscedasticity,
+    compute_heteroscedasticity_excluding,
     compute_influence,
+    compute_influential_mask,
     compute_kendall,
     compute_median_clipped_pearson,
     compute_mutual_information,
@@ -49,7 +51,7 @@ def _build_diagnostics(
     metrics_map,
     disagreement_score: float,
     outlier_sensitivity=None,
-    bin_lof_r2_gain=None,
+    bin_lof=None,
     sq_corr=None,
     heteroscedasticity=None,
     segmentation=None,
@@ -81,9 +83,13 @@ def _build_diagnostics(
     )
 
     axes = axes or {}
+    bin_lof = bin_lof or {}
+    bin_lof_result = bin_lof.get("bin_lof_r2_gain")
+    reversal_result = bin_lof.get("bin_reversal_count")
     heteroscedasticity = heteroscedasticity or {}
     bp_result = heteroscedasticity.get("bp_pvalue")
     gq_result = heteroscedasticity.get("gq_ratio")
+    bowtie_result = heteroscedasticity.get("bowtie_ratio")
     segmentation = segmentation or {}
     segment_gain_result = segmentation.get("segment_gain")
     breakpoint_result = segmentation.get("breakpoint_x")
@@ -104,10 +110,14 @@ def _build_diagnostics(
         if outlier_sensitivity
         else None,
         pearson_trim_delta=outlier_sensitivity.delta if outlier_sensitivity else None,
-        bin_lof_r2_gain=bin_lof_r2_gain.value if bin_lof_r2_gain else None,
+        bin_lof_r2_gain=bin_lof_result.value if bin_lof_result else None,
+        bin_reversal_count=int(reversal_result.value)
+        if (reversal_result and reversal_result.value is not None)
+        else None,
         sq_corr=sq_corr.value if sq_corr else None,
         bp_pvalue=bp_result.value if bp_result else None,
         gq_ratio=gq_result.value if gq_result else None,
+        bowtie_ratio=bowtie_result.value if bowtie_result else None,
         segment_gain=segment_gain_result.value if segment_gain_result else None,
         breakpoint_x=breakpoint_result.value
         if (report_breakpoint and breakpoint_result)
@@ -245,13 +255,32 @@ def profile_pair(
     # enough for every mode. Feed the label cascade / secondary axes /
     # MetricDiagnostics only — kept out of metrics_map so they never appear in
     # the public metrics table alongside primary association coefficients like
-    # pearson/dcor/MI. compute_heteroscedasticity returns a {name: MetricResult}
-    # dict (bp_pvalue, gq_ratio).
-    bin_lof_r2_gain = compute_bin_lof_r2_gain(pair)
+    # pearson/dcor/MI. compute_bin_lof and compute_heteroscedasticity return
+    # {name: MetricResult} dicts (bin_lof_r2_gain, bin_reversal_count;
+    # bp_pvalue, gq_ratio, bowtie_ratio).
+    bin_lof = compute_bin_lof(pair)
     sq_corr = compute_squared_correlation(pair)
     heteroscedasticity = compute_heteroscedasticity(pair)
     segmentation = compute_segmentation(pair)
     influence = compute_influence(pair)
+
+    # Re-test heteroscedasticity excluding the Cook's-flagged row(s), but only
+    # when there is one to exclude (n_influential_points >= 1) -- this keeps
+    # the common case (no elevated leverage) free of the extra computation.
+    # Feeds detect_metric_warnings so it can tell a genuine variance-shape
+    # signal apart from one that's just an echo of the same row(s)
+    # outlier_sensitivity already flags (see Ticket 1.5 / X13, X16).
+    n_influential = _metric_value(influence, "n_influential_points")
+    heteroscedasticity_excl_influential = {}
+    if n_influential is not None and n_influential >= 1:
+        influential_mask = compute_influential_mask(pair)
+        if influential_mask is not None and influential_mask.any():
+            heteroscedasticity_excl_influential = {
+                f"{name}_excl_influential": result
+                for name, result in compute_heteroscedasticity_excluding(
+                    pair, influential_mask
+                ).items()
+            }
 
     # 3. Outlier sensitivity check (informs the leverage label)
     #
@@ -308,11 +337,12 @@ def profile_pair(
     # a modifier, not a label input.)
     cascade_metrics = {
         **metrics_map,
-        "bin_lof_r2_gain": bin_lof_r2_gain,
+        **bin_lof,
         "sq_corr": sq_corr,
         **heteroscedasticity,
         **segmentation,
         **influence,
+        **heteroscedasticity_excl_influential,
     }
     heuristic_result = apply_heuristics(cascade_metrics, pair.flags, pair.n_used)
     pair.warnings.extend(
@@ -366,7 +396,7 @@ def profile_pair(
         metrics_map,
         disagreement_score,
         outlier_sensitivity,
-        bin_lof_r2_gain=bin_lof_r2_gain,
+        bin_lof=bin_lof,
         sq_corr=sq_corr,
         heteroscedasticity=heteroscedasticity,
         segmentation=segmentation,

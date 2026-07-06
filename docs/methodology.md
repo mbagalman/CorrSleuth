@@ -125,14 +125,19 @@ be the (signed) Pearson, Spearman, Kendall, and distance-correlation values.
 - `nonmonotonic_gap = dc − max(|p|, |s|)`. Distance correlation in excess of the
   strongest monotone signal; the positive part is evidence of non-monotone
   dependence. Reported raw (can be negative).
-- `bin_lof_r2_gain` and `sq_corr` — two shape diagnostics (no mode gate; pure
-  numpy/scipy) that feed the label cascade but are **not** included in the
-  `disagreement_score` formula below. `bin_lof_r2_gain` is the R² of an
-  equal-frequency-bin model of Y|X minus the R² of a linear fit — a classical
-  lack-of-fit test (Neter, Kutner, Nachtsheim & Wasserman) that catches smooth
-  monotonic curvature and step/threshold functions the rank-vs-linear gap
-  misses. `sq_corr` is `corr(X², Y²)` — it catches dependence carried in
-  magnitude rather than sign (e.g. points scattered around a circle), which
+- `bin_lof_r2_gain`, `bin_reversal_count`, and `sq_corr` — three shape
+  diagnostics (no mode gate; pure numpy/scipy) that feed the label cascade but
+  are **not** included in the `disagreement_score` formula below.
+  `bin_lof_r2_gain` is the R² of an equal-frequency-bin model of Y|X minus the
+  R² of a linear fit — a classical lack-of-fit test (Neter, Kutner, Nachtsheim
+  & Wasserman) that catches smooth monotonic curvature and step/threshold
+  functions the rank-vs-linear gap misses. `bin_reversal_count`, computed from
+  the same bins, is how many times the sequence of bin means changes direction
+  (counted with hysteresis so noise wiggle is not a turn: 0 for a monotone
+  trend, 1 for a single bend, 2+ for an oscillation) — meaningful only jointly
+  with a high `bin_lof_r2_gain`, since pure noise reverses constantly with
+  near-zero gain. `sq_corr` is `corr(X², Y²)` — it catches dependence carried
+  in magnitude rather than sign (e.g. points scattered around a circle), which
   distance correlation itself under-reads for that shape. See
   [shape-diagnostics-design.md](shape-diagnostics-design.md).
 
@@ -175,10 +180,16 @@ the defaults.
    leverage-sensitive (or sensitivity could not be computed). This rule requires
    *independent* leverage evidence — a gap alone is not enough.
 4. **`nonmonotonic_dependence`** — `|p|` and `|s|` are both weak (`< 0.25`) while
-   either distance correlation is high (`> 0.35`, `mode="standard"` only) or
-   `|corr(X², Y²)|` is high (`> 0.35`, `sq_corr`, no mode gate — added because
-   a true circular/radial relationship structurally caps distance correlation
-   around ~0.2, even noiseless).
+   any of three routes fires: distance correlation is high (`> 0.35`,
+   `mode="standard"` only); `|corr(X², Y²)|` is high (`> 0.35`, `sq_corr`, no
+   mode gate — added because a true circular/radial relationship structurally
+   caps distance correlation around ~0.2, even noiseless); or the bin means
+   reverse direction repeatedly with substantial bin structure
+   (`bin_reversal_count ≥ 2` **and** `bin_lof_r2_gain > 0.3`, no mode gate —
+   added because an oscillating relationship like a sinusoid keeps distance
+   correlation only marginally above its floor and has no magnitude signature
+   for `sq_corr`; the joint gate is essential, as pure noise produces many
+   reversals with near-zero gain).
 5. **`monotonic_nonlinear`** — Spearman is meaningfully stronger than Pearson
    (`|s| > 0.50` and `|s| − |p| > 0.20`), **or** `|s| > 0.50` and the bin
    lack-of-fit diagnostic finds real curvature (`bin_lof_r2_gain > 0.05`, no
@@ -227,7 +238,14 @@ the label, so they stay orthogonal to it; each keeps its underlying number on
 linear-fit residuals for significance, with a Goldfeld-Quandt residual-variance
 ratio for effect size and direction (`metrics/variance.py`), assessed only when
 the mean is adequately linear so a curved mean's misspecification residuals are
-not mistaken for changing noise variance. `mean_shape` refines a curved
+not mistaken for changing noise variance. A third, independent check — the
+edge-vs-middle ("bowtie") residual-variance ratio — catches a *symmetric*
+variance pattern (spread high at both extremes of X and calm in the middle, or
+the reverse) that Goldfeld-Quandt's low-vs-high split and Breusch-Pagan's
+linear auxiliary regression are both blind to by construction (a bowtie's
+low-x and high-x groups have similar variance, and its squared-residuals-vs-x
+relationship is U/hill-shaped rather than linear); it reports
+`edge_high_spread` / `center_high_spread`. `mean_shape` refines a curved
 *monotone* mean into `smooth_curve` versus `step_or_threshold` (with a
 `breakpoint_x`) using a single-breakpoint search (`metrics/shape.py`): a step's
 segments are flat, so a two-level model fits as well as a two-line one, while a
@@ -277,11 +295,14 @@ label rule), not just the sampling variability of a single coefficient.
   original. The cascade always evaluates at least the lite triple per replicate,
   so stability is meaningful for lite-expressible labels even when intervals are
   requested for a custom metric subset. **Caveat:** a *standard-only* label —
-  currently `nonmonotonic_dependence`, which needs distance correlation — can
-  only be re-tested faithfully when `bootstrap_metrics` includes
-  `distance_correlation` (or `"standard"`). With the default lite bootstrap the
-  replicate cascade cannot reassess dCor, so stability is approximate for that
-  label and CorrSleuth emits a warning saying so.
+  currently `nonmonotonic_dependence`, whose distance-correlation route needs
+  `mode="standard"` — can only be re-tested faithfully when `bootstrap_metrics`
+  includes `distance_correlation` (or `"standard"`). With the default lite
+  bootstrap the replicate cascade cannot reassess dCor, so stability is
+  approximate for that label and CorrSleuth emits a warning saying so. The
+  warning is conservative: the label's other two routes (`sq_corr` and the
+  bin-reversal oscillation gate) *are* recomputed per replicate in every mode,
+  so a label driven by those routes is fully re-tested despite the warning.
 - **m-out-of-n capping.** `max_n_for_bootstrap` caps the rows drawn per replicate
   for cost. Resampling fewer rows than the data contains widens the intervals
   (they become conservative by roughly `sqrt(n / m)`); a warning discloses this
@@ -367,21 +388,31 @@ for a fixed `random_state` but not invariant to input row order.
   dependence, clustering, or other non-exchangeable structure.
 - **The shape diagnostics catch specific shapes, not all nonlinearity or
   nonmonotonicity.** `sq_corr` is tuned for magnitude/radial dependence
-  (roughly, an even function of X and/or Y); an oscillating or cyclical shape
-  can still be missed even in `mode="standard"` — see
-  [shape-diagnostics-design.md](shape-diagnostics-design.md) for what's
-  deliberately deferred. `BIN_LOF_R2_GAIN_THRESHOLD`'s margin (0.05) is
-  thinner than most cascade thresholds, so it leans more on the
-  `simulations.py` regression coverage than on a single hand-picked value.
-- **`variance_shape` can echo a leverage cluster rather than report an
-  independent phenomenon.** It is gated against curvature artifacts (a curved
-  mean suppresses it) but not against leverage artifacts: a high-leverage
-  cluster can genuinely widen the Goldfeld-Quandt ratio in the region it
-  occupies, so `increasing_spread`/`decreasing_spread` can co-occur with
+  (roughly, an even function of X and/or Y); oscillating shapes are caught by
+  the separate bin-reversal route (`bin_reversal_count` jointly with a high
+  `bin_lof_r2_gain`), but only when Pearson and Spearman are both weak — a
+  sinusoid whose sampled range gives it a substantial net linear component
+  (an integer number of cycles can push |ρ| to ~0.4–0.5) fails the rule's
+  monotone ceiling and falls to `mixed_or_ambiguous`, and at small `n` the
+  ~10 bins cannot resolve many cycles (validated misses: 3–5 cycles at n=100
+  under heavy noise). See
+  [shape-diagnostics-design.md](shape-diagnostics-design.md).
+  `BIN_LOF_R2_GAIN_THRESHOLD`'s margin (0.05) is thinner than most cascade
+  thresholds, so it leans more on the `simulations.py` regression coverage
+  than on a single hand-picked value.
+- **`variance_shape` (the value) can echo a leverage cluster rather than report
+  an independent phenomenon.** It is gated against curvature artifacts (a
+  curved mean suppresses it) but not against leverage artifacts: a
+  high-leverage cluster can genuinely widen the Goldfeld-Quandt/bowtie ratio in
+  the region it occupies, so `increasing_spread`/`decreasing_spread`/
+  `edge_high_spread`/`center_high_spread` can co-occur with
   `outlier_sensitivity = single_point_driven`/`high_leverage_cluster` from the
-  same rows. Both readings are individually correct; a concurrent variance
-  warning in that situation is corroborating, not necessarily a second,
-  unrelated issue.
+  same rows. The *warning* corrects for this where it matters: when
+  `n_influential_points >= 1`, the variance test is recomputed excluding the
+  Cook's-flagged row(s), and if the signal vanishes on the remainder the
+  warning attributes it to that same row rather than reporting independent
+  evidence (if it survives exclusion, both warnings are kept, since a genuine
+  cluster and genuine independent heteroscedasticity can coexist).
 - **Always inspect the scatter.** Every label is a pointer to look, not a verdict.
 
 ## 11. References and further reading

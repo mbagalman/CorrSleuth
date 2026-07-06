@@ -76,6 +76,50 @@ def test_circular_resolves_to_nonmonotonic_dependence():
     assert res.pattern == "nonmonotonic_dependence"
 
 
+def test_sinusoidal_resolves_to_nonmonotonic_dependence_in_every_mode():
+    # A ~2.5-cycle sinusoid: Pearson/Spearman weak, distance correlation only
+    # marginally above its floor, sq_corr blind to it. The bin-mean reversal
+    # count jointly with the bin lack-of-fit gain (the lite-computable
+    # oscillation route) is what labels it — previously lite and deep mode
+    # read this as weak_or_no_relationship, actively underselling a strong
+    # deterministic function.
+    for mode in ("lite", "deep"):
+        df = make_relationship("sinusoidal", n=500, noise=0.1, random_state=42)
+        res = profile_pair(df, "x", "y", mode=mode)
+        assert res.pattern == "nonmonotonic_dependence"
+        assert res.diagnostics.dependence_type == "oscillating"
+        assert res.diagnostics.bin_reversal_count >= 2
+        assert res.diagnostics.bin_lof_r2_gain > 0.3
+        # The label now states the dependence, so the deep-mode "xi is high
+        # but the label may understate dependence" warning has nothing to
+        # correct and must not fire.
+        assert not any("may understate" in w for w in res.warnings)
+
+
+@pytest.mark.parametrize("seed", range(10))
+@pytest.mark.parametrize("noise", [0.1, 0.3])
+def test_sinusoidal_stays_oscillating_across_seeds_and_noise(seed, noise):
+    # OSCILLATION_BIN_LOF_FLOOR / OSCILLATION_MIN_REVERSALS were locked via a
+    # 2,080-run sweep; this keeps the shipped generator pinned to the gate
+    # across seeds and noise levels the way the other thin-margin thresholds
+    # are regression-tested.
+    df = make_relationship("sinusoidal", n=500, noise=noise, random_state=seed)
+    res = profile_pair(df, "x", "y", mode="lite")
+    assert res.pattern == "nonmonotonic_dependence"
+    assert res.diagnostics.dependence_type == "oscillating"
+
+
+@pytest.mark.parametrize("shape", ["u_shape", "circular", "independent"])
+@pytest.mark.parametrize("seed", range(10))
+def test_non_oscillating_shapes_never_read_oscillating(shape, seed):
+    # A single bend (U-shape: exactly 1 reversal), a closed loop (bin means
+    # flat, gain below the floor), and pure noise (many reversals, near-zero
+    # gain) must all stay out of the oscillation gate.
+    df = make_relationship(shape, n=500, noise=0.1, random_state=seed)
+    res = profile_pair(df, "x", "y", mode="lite")
+    assert res.diagnostics.dependence_type != "oscillating"
+
+
 @pytest.mark.parametrize("shape", ["linear_positive", "linear_negative"])
 @pytest.mark.parametrize("seed", range(10))
 def test_linear_shapes_stay_near_linear_across_seeds(shape, seed):
@@ -396,6 +440,97 @@ def test_axes_magnitude_link_without_xi_is_not_closed_loop():
     assert axes["functional_direction"] is None
 
 
+def test_axes_oscillating_requires_joint_reversal_and_gain_gate():
+    # Both conditions present -> oscillating.
+    metrics = _axis_metrics(
+        pearson=0.08, spearman=0.10, bin_lof_r2_gain=0.83, bin_reversal_count=4
+    )
+    axes = derive_diagnostic_axes(metrics, "nonmonotonic_dependence", "stable")
+    assert axes["dependence_type"] == "oscillating"
+
+    # One reversal (a single bend, e.g. a U-shape) is not oscillation.
+    metrics = _axis_metrics(
+        pearson=0.08, spearman=0.10, bin_lof_r2_gain=0.83, bin_reversal_count=1
+    )
+    axes = derive_diagnostic_axes(metrics, "nonmonotonic_dependence", "stable")
+    assert axes["dependence_type"] != "oscillating"
+
+    # Many reversals but negligible gain (pure noise) is not oscillation.
+    metrics = _axis_metrics(
+        pearson=0.05, spearman=0.05, bin_lof_r2_gain=0.06, bin_reversal_count=14
+    )
+    axes = derive_diagnostic_axes(metrics, "weak_or_no_relationship", "stable")
+    assert axes["dependence_type"] != "oscillating"
+
+    # Gated on weak monotone signals, like the other rule-4 routes: a strong
+    # trend with wiggle is a monotone story, not an oscillation one.
+    metrics = _axis_metrics(
+        pearson=0.60, spearman=0.65, bin_lof_r2_gain=0.83, bin_reversal_count=4
+    )
+    axes = derive_diagnostic_axes(metrics, "near_linear", "stable")
+    assert axes["dependence_type"] == "monotone"
+
+
+def test_axes_oscillating_takes_precedence_over_nonmonotone():
+    # In standard mode a sinusoid also clears the distance-correlation floor;
+    # "oscillating" is the more specific description and must win over the
+    # generic "nonmonotone".
+    metrics = _axis_metrics(
+        pearson=0.08,
+        spearman=0.10,
+        distance_correlation=0.43,
+        bin_lof_r2_gain=0.83,
+        bin_reversal_count=4,
+    )
+    axes = derive_diagnostic_axes(metrics, "nonmonotonic_dependence", "stable")
+    assert axes["dependence_type"] == "oscillating"
+
+
+def test_axes_missing_reversal_count_preserves_previous_behavior():
+    # Without bin_reversal_count in the metrics (e.g. older callers), the axis
+    # must fall through to the existing sq/dc logic, never oscillating.
+    metrics = _axis_metrics(
+        pearson=0.05, spearman=0.05, bin_lof_r2_gain=0.9, sq_corr=0.95
+    )
+    axes = derive_diagnostic_axes(metrics, "nonmonotonic_dependence", "stable")
+    assert axes["dependence_type"] == "magnitude_linked"
+
+
+def test_cascade_oscillation_route_into_nonmonotonic_dependence():
+    def metrics(p, s, k, **extra):
+        base = {
+            "pearson": MetricResult("pearson", p, True),
+            "spearman": MetricResult("spearman", s, True),
+            "kendall_tau_b": MetricResult("kendall_tau_b", k, True),
+        }
+        base.update(
+            {name: MetricResult(name, value, True) for name, value in extra.items()}
+        )
+        return base
+
+    # The oscillation route labels without dc or sq_corr (lite mode).
+    oscillating = metrics(0.08, 0.12, 0.08, bin_lof_r2_gain=0.83, bin_reversal_count=4)
+    assert (
+        apply_heuristics(oscillating, ["pearson_trim_stable"], 500).label
+        == "nonmonotonic_dependence"
+    )
+
+    # Reversals without the gain floor (noise) must not fire the route.
+    noise = metrics(0.05, 0.06, 0.04, bin_lof_r2_gain=0.06, bin_reversal_count=14)
+    assert (
+        apply_heuristics(noise, ["pearson_trim_stable"], 500).label
+        == "weak_or_no_relationship"
+    )
+
+    # Gain without enough reversals (a U-shape reads 1) must not fire it
+    # either — the U-shape's own route is sq_corr, deliberately not this one.
+    single_bend = metrics(0.05, 0.06, 0.04, bin_lof_r2_gain=0.75, bin_reversal_count=1)
+    assert (
+        apply_heuristics(single_bend, ["pearson_trim_stable"], 500).label
+        != "nonmonotonic_dependence"
+    )
+
+
 def test_axes_outlier_sensitivity_from_trim_status():
     metrics = _axis_metrics(pearson=0.9, spearman=0.5, bin_lof_r2_gain=0.0)
     assert (
@@ -464,6 +599,42 @@ def test_variance_shape_axis_none_when_not_computed():
     assert _variance_shape_axis(1e-10, 7.0, None) is None
 
 
+def test_variance_shape_axis_bowtie_direction_and_effect_floor():
+    linear_bin_lof = 0.0
+    # BP does not reject at all -- a real bowtie's squared-residuals-vs-x
+    # relationship is not linear, so BP alone can miss it entirely. bowtie_ratio
+    # still catches it independently.
+    assert _variance_shape_axis(0.4, 1.1, linear_bin_lof, bowtie_ratio=11.0) == (
+        "edge_high_spread"
+    )
+    # BP rejects but gq_ratio is inconclusive (~1, as a bowtie's low-x/high-x
+    # groups have similar variance) -- bowtie_ratio still catches it.
+    assert _variance_shape_axis(1e-10, 1.1, linear_bin_lof, bowtie_ratio=11.0) == (
+        "edge_high_spread"
+    )
+    # Reversed: spread high in the middle, calm at the edges.
+    assert _variance_shape_axis(0.4, 1.1, linear_bin_lof, bowtie_ratio=1.0 / 11.0) == (
+        "center_high_spread"
+    )
+    # bowtie_ratio near 1 (no real edge-vs-middle effect) -> constant.
+    assert (
+        _variance_shape_axis(0.4, 1.1, linear_bin_lof, bowtie_ratio=1.1) == "constant"
+    )
+    # bowtie_ratio unavailable -> falls back to constant (unchanged from before
+    # this axis existed).
+    assert _variance_shape_axis(0.4, 1.1, linear_bin_lof) == "constant"
+
+
+def test_variance_shape_axis_funnel_takes_priority_over_bowtie():
+    # A genuine one-directional funnel must still report increasing_spread even
+    # if bowtie_ratio happens to be non-trivial -- the existing check is not
+    # replaced by the new one.
+    linear_bin_lof = 0.0
+    assert _variance_shape_axis(1e-10, 7.0, linear_bin_lof, bowtie_ratio=3.0) == (
+        "increasing_spread"
+    )
+
+
 def test_heteroscedastic_shape_is_near_linear_with_increasing_spread_and_warning():
     df = make_relationship("heteroscedastic", n=500, noise=0.1, random_state=42)
     res = profile_pair(df, "x", "y", mode="lite")
@@ -496,6 +667,40 @@ def test_curved_relationship_does_not_report_variance_shape():
     assert res.pattern == "monotonic_nonlinear"
     assert res.diagnostics.variance_shape is None
     assert not any("residual spread" in w for w in res.warnings)
+
+
+# --- bowtie (edge-vs-middle) variance (ticket 1.6) ---
+
+
+def test_bowtie_variance_reports_edge_high_spread_with_warning():
+    df = make_relationship("bowtie_variance", n=600, noise=0.1, random_state=42)
+    res = profile_pair(df, "x", "y", mode="lite")
+
+    # The mean trend is still linear (label unchanged); only the variance
+    # *shape* sub-diagnosis differs from a one-directional funnel.
+    assert res.pattern == "near_linear"
+    assert res.diagnostics.mean_shape == "linear"
+    assert res.diagnostics.variance_shape == "edge_high_spread"
+    assert res.diagnostics.bowtie_ratio is not None
+    assert any("extremes of x" in w for w in res.warnings)
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_bowtie_variance_stays_edge_high_spread_across_seeds(seed):
+    df = make_relationship("bowtie_variance", n=600, noise=0.1, random_state=seed)
+    res = profile_pair(df, "x", "y", mode="lite")
+    assert res.diagnostics.variance_shape == "edge_high_spread"
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_homoscedastic_and_funnel_never_report_bowtie(seed):
+    # Guards against false positives: clean homoscedastic data and a genuine
+    # one-directional funnel must never be misread as a symmetric bowtie.
+    for shape in ("linear_positive", "heteroscedastic"):
+        df = make_relationship(shape, n=500, noise=0.1, random_state=seed)
+        res = profile_pair(df, "x", "y", mode="lite")
+        assert res.diagnostics.variance_shape != "edge_high_spread"
+        assert res.diagnostics.variance_shape != "center_high_spread"
 
 
 # --- mean_shape refinement / segmentation (ticket 1.2) ---
@@ -621,3 +826,148 @@ def test_clean_linear_reports_low_outlier_sensitivity():
 
     assert res.diagnostics.outlier_sensitivity == "low"
     assert res.diagnostics.n_influential_points == 0
+
+
+# --- suppress heteroscedasticity warning when it's a leverage artifact (ticket 1.5) ---
+
+
+def _het_metrics(bp, gq, bin_lof=0.0, bowtie=1.1, n_influential=None, excl=None):
+    metrics = {
+        "bp_pvalue": MetricResult("bp_pvalue", bp, True),
+        "gq_ratio": MetricResult("gq_ratio", gq, True),
+        "bin_lof_r2_gain": MetricResult("bin_lof_r2_gain", bin_lof, True),
+        "bowtie_ratio": MetricResult("bowtie_ratio", bowtie, True),
+    }
+    if n_influential is not None:
+        metrics["n_influential_points"] = MetricResult(
+            "n_influential_points", n_influential, True
+        )
+    if excl is not None:
+        bp_excl, gq_excl, bowtie_excl = excl
+        metrics["bp_pvalue_excl_influential"] = MetricResult(
+            "bp_pvalue_excl_influential", bp_excl, True
+        )
+        metrics["gq_ratio_excl_influential"] = MetricResult(
+            "gq_ratio_excl_influential", gq_excl, True
+        )
+        metrics["bowtie_ratio_excl_influential"] = MetricResult(
+            "bowtie_ratio_excl_influential", bowtie_excl, True
+        )
+    return metrics
+
+
+def test_variance_warning_attributed_to_leverage_when_signal_vanishes_on_exclusion():
+    # X13-shaped: funnel signal on the full sample, gone on the subset
+    # excluding the Cook's-flagged row -- report it as the same leverage
+    # artifact, not an independent-sounding heteroscedasticity warning.
+    metrics = _het_metrics(
+        bp=0.002,
+        gq=27.5,
+        n_influential=1,
+        excl=(0.44, 1.2, 1.1),
+    )
+    warnings = detect_metric_warnings(metrics)
+    assert len(warnings) == 1
+    assert "same leverage issue" in warnings[0]
+    assert "Pearson describes the center trend" not in warnings[0]
+
+
+def test_bowtie_warning_attributed_to_leverage_when_signal_vanishes_on_exclusion():
+    metrics = _het_metrics(
+        bp=0.4,
+        gq=1.1,
+        bowtie=11.0,
+        n_influential=1,
+        excl=(0.5, 1.1, 1.1),
+    )
+    warnings = detect_metric_warnings(metrics)
+    assert len(warnings) == 1
+    assert "same leverage issue" in warnings[0]
+    assert "invisible to a simple increasing/decreasing" not in warnings[0]
+
+
+def test_variance_warning_stays_independent_when_signal_survives_exclusion():
+    # The signal is still present after excluding the flagged row -- a genuine
+    # leverage cluster and genuinely independent heteroscedasticity can
+    # coexist, so both must be reported (not folded into one artifact claim).
+    metrics = _het_metrics(
+        bp=0.002,
+        gq=27.5,
+        n_influential=1,
+        excl=(0.0009, 6.0, 1.1),
+    )
+    warnings = detect_metric_warnings(metrics)
+    assert len(warnings) == 1
+    assert "Pearson describes the center trend" in warnings[0]
+    assert "same leverage issue" not in warnings[0]
+
+
+def test_variance_warning_not_attributed_when_influence_unavailable():
+    # No n_influential_points to reason about -- default to the ordinary
+    # (independent-sounding) warning rather than guessing.
+    metrics = _het_metrics(bp=0.002, gq=27.5)
+    warnings = detect_metric_warnings(metrics)
+    assert len(warnings) == 1
+    assert "same leverage issue" not in warnings[0]
+
+
+def test_variance_warning_not_attributed_when_exclusion_metrics_missing():
+    # n_influential_points >= 1, but the *_excl_influential metrics were never
+    # computed (e.g. the caller didn't run the recomputation) -- conservative
+    # default is to keep the ordinary warning, not assume it's an artifact.
+    metrics = _het_metrics(bp=0.002, gq=27.5, n_influential=1)
+    warnings = detect_metric_warnings(metrics)
+    assert len(warnings) == 1
+    assert "same leverage issue" not in warnings[0]
+
+
+def test_single_outlier_manufacturing_correlation_reports_one_attributed_warning():
+    """End-to-end X13 shape: pure noise plus one extreme row. Both the funnel
+    Goldfeld-Quandt signal and the leverage flag stem from the same row -- the
+    warnings must say so, not read as two independent problems."""
+    import numpy as np
+    import pandas as pd
+
+    rng = np.random.default_rng(0)
+    n = 500
+    x = rng.normal(size=n)
+    y = rng.normal(size=n)
+    x[-1], y[-1] = 20.0, 20.0
+    df = pd.DataFrame({"x": x, "y": y})
+    res = profile_pair(df, "x", "y", mode="lite")
+
+    assert res.diagnostics.n_influential_points == 1
+    assert res.diagnostics.variance_shape is not None
+    variance_warnings = [
+        w
+        for w in res.warnings
+        if "residual spread" in w.lower() or "Residual spread" in w
+    ]
+    assert len(variance_warnings) == 1
+    assert "same leverage issue" in variance_warnings[0]
+
+
+def test_outlier_cluster_with_surviving_heteroscedasticity_keeps_both_warnings():
+    # The bundled outlier_driven scenario: a leverage cluster (not a single
+    # row) manufactures the correlation. Excluding only the Cook's-flagged
+    # rows does not fully remove the scale difference the remaining outliers
+    # still carry, so the heteroscedasticity signal survives -- both warnings
+    # must still be reported, not folded into one.
+    df = make_relationship("outlier_driven", n=500, noise=0.1, random_state=42)
+    res = profile_pair(df, "x", "y", mode="lite")
+
+    assert res.diagnostics.outlier_sensitivity == "high_leverage_cluster"
+    assert any("leverage-sensitive" in w for w in res.warnings)
+    assert any("Pearson describes the center trend" in w for w in res.warnings)
+
+
+def test_no_exclusion_recomputation_when_outlier_sensitivity_low():
+    # Common case: clean heteroscedastic data with no elevated leverage.
+    # Behavior must be unchanged from ticket 1.6 -- no attribution attempted.
+    df = make_relationship("heteroscedastic", n=500, noise=0.1, random_state=42)
+    res = profile_pair(df, "x", "y", mode="lite")
+
+    assert res.diagnostics.outlier_sensitivity == "low"
+    assert res.diagnostics.variance_shape == "increasing_spread"
+    assert any("Pearson describes the center trend" in w for w in res.warnings)
+    assert not any("same leverage issue" in w for w in res.warnings)

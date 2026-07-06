@@ -102,6 +102,28 @@ BIN_LOF_R2_GAIN_THRESHOLD = 0.05
 #: scenarios measured <=0.11, real magnitude-linked dependence measured >=0.30.
 SQ_CORR_THRESHOLD = 0.35
 
+#: Minimum bin-mean direction reversals (see metrics/shape.py's
+#: ``bin_reversal_count``) before dependence is read as *oscillating* — a
+#: sinusoid or any relationship with more than one bend. A single bend
+#: (U-shape) measures exactly 1, so 2 is the smallest count that separates
+#: oscillation from it; a 1.5-cycle sinusoid measures >= 2 (usually 3) across
+#: the validation sweep. Always applied jointly with
+#: :data:`OSCILLATION_BIN_LOF_FLOOR` below — the count alone is meaningless.
+OSCILLATION_MIN_REVERSALS = 2
+
+#: ``bin_lof_r2_gain`` floor for the oscillation gate. Deliberately much higher
+#: than :data:`BIN_LOF_R2_GAIN_THRESHOLD` (0.05): the reversal count is only
+#: trustworthy once there is *substantial* bin structure. This floor is what
+#: keeps pure noise out — noise produces more raw reversals than a real
+#: sinusoid (measured 13-16 vs 3-4 on the blind test data) but a bin-fit gain
+#: ~15x smaller (0.057 vs 0.826). Validated jointly with the reversal count
+#: over a 2,080-run sweep (13 shapes x 4 sample sizes x 4 noise levels x 10
+#: seeds): zero false positives, with sinusoid detection 10/10 in every cell
+#: except 3-5 cycles at n=100 under heavy noise (where ~10 bins genuinely
+#: cannot resolve the cycles). Real sinusoids measured gains 0.3-0.97; the
+#: floor sits at the bottom of that range.
+OSCILLATION_BIN_LOF_FLOOR = 0.3
+
 #: Breusch-Pagan p-value below which the residual variance is treated as
 #: non-constant, for the ``variance_shape`` secondary axis (not the primary
 #: cascade). Unlike the effect-size-band thresholds, this is a real hypothesis
@@ -117,6 +139,18 @@ HETEROSCEDASTICITY_PVALUE_THRESHOLD = 0.05
 #: floor keeps the large-n Breusch-Pagan test from flagging negligible variance
 #: change (clean linear data measured a ratio ~0.8-1.2 across seeds).
 HETEROSCEDASTICITY_RATIO_FLOOR = 1.5
+
+#: Edge-vs-middle ("bowtie") residual-variance ratio (see metrics/variance.py)
+#: that must be cleared — above it, or below its reciprocal — before a
+#: symmetric variance pattern (spread high at both extremes of x and calm in
+#: the middle, or the reverse) is reported. Complements
+#: HETEROSCEDASTICITY_RATIO_FLOOR: a bowtie's low-x and high-x groups have
+#: *similar* variance (so gq_ratio reads ~1, missing it by construction), but
+#: its edges-combined-vs-middle ratio is large. Set conservatively above the
+#: 1.5x funnel floor since clean linear and one-directional-funnel data both
+#: measured ~1.0-1.2 on the bundled/blind test data, while a real bowtie
+#: measured ~11x — a wide margin with room to be conservative.
+BOWTIE_RATIO_FLOOR = 2.5
 
 #: Segment "stepness" (see metrics/shape.py) above which a curved monotone mean
 #: is read as a step/threshold jump rather than a smooth bend — the fraction of
@@ -187,13 +221,16 @@ def apply_heuristics(
     ``possible_outlier_or_leverage`` label so it is only assigned when there is
     independent evidence of leverage.
 
-    ``metrics`` may include two shape diagnostics (see ``metrics/shape.py``) in
-    addition to the primary correlation metrics: ``bin_lof_r2_gain`` (an
+    ``metrics`` may include three shape diagnostics (see ``metrics/shape.py``)
+    in addition to the primary correlation metrics: ``bin_lof_r2_gain`` (an
     alternate route into ``monotonic_nonlinear``, for smooth monotonic curves
-    and step functions the Spearman-vs-Pearson gap misses) and ``sq_corr`` (an
+    and step functions the Spearman-vs-Pearson gap misses), ``sq_corr`` (an
     alternate route into ``nonmonotonic_dependence``, for magnitude/radial
-    dependence distance correlation under-reads). Both are optional; their
-    absence never blocks a label the other metrics would otherwise assign.
+    dependence distance correlation under-reads), and ``bin_reversal_count``
+    (a third route into ``nonmonotonic_dependence``, jointly with
+    ``bin_lof_r2_gain``, for oscillating/periodic dependence neither of the
+    other two reliably catches). All are optional; their absence never blocks
+    a label the other metrics would otherwise assign.
     """
     m_p = metrics.get("pearson")
     m_s = metrics.get("spearman")
@@ -201,6 +238,7 @@ def apply_heuristics(
     m_dc = metrics.get("distance_correlation")
     m_bin_lof = metrics.get("bin_lof_r2_gain")
     m_sq_corr = metrics.get("sq_corr")
+    m_reversals = metrics.get("bin_reversal_count")
 
     p_val = _finite_metric_value(m_p)
     s_val = _finite_metric_value(m_s)
@@ -211,6 +249,7 @@ def apply_heuristics(
     dc = _finite_metric_value(m_dc, require_available=True)
     bin_lof = _finite_metric_value(m_bin_lof)
     sq_corr = _finite_metric_value(m_sq_corr)
+    reversals = _finite_metric_value(m_reversals)
 
     # Pearson and Spearman pointing in opposite directions, both non-trivial, is
     # a directional conflict — not a clean linear or monotone signal, and almost
@@ -250,18 +289,30 @@ def apply_heuristics(
     ):
         label = "possible_outlier_or_leverage"
     # 4. nonmonotonic_dependence
-    # Two independent routes to the same conclusion: distance correlation
-    # clearing its floor (any form of dependence), or |corr(X^2, Y^2)| clearing
+    # Three independent routes to the same conclusion: distance correlation
+    # clearing its floor (any form of dependence); |corr(X^2, Y^2)| clearing
     # its floor (magnitude/radial dependence — e.g. points on a circle — that
-    # dCor itself can under-read; see BIN_LOF_R2_GAIN_THRESHOLD /
-    # SQ_CORR_THRESHOLD module docs). Either is only trusted once Pearson and
-    # Spearman are both already weak, so this never competes with rules 5/6.
+    # dCor itself can under-read); or the bin-mean reversal count jointly with
+    # a high bin lack-of-fit gain (oscillating/periodic dependence — e.g. a
+    # sinusoid — which dCor reads only marginally above its floor and sq_corr
+    # misses entirely; the joint gate is essential because pure noise produces
+    # many reversals with near-zero gain). The last two are lite-computable, so
+    # this label is reachable in every mode for those shapes. Any route is only
+    # trusted once Pearson and Spearman are both already weak, so this never
+    # competes with rules 5/6. See BIN_LOF_R2_GAIN_THRESHOLD / SQ_CORR_THRESHOLD
+    # / OSCILLATION_* module docs.
     elif (
         p < NONMONOTONIC_MONOTONE_CEILING
         and s < NONMONOTONIC_MONOTONE_CEILING
         and (
             (dc is not None and dc > NONMONOTONIC_DC_THRESHOLD)
             or (sq_corr is not None and abs(sq_corr) > SQ_CORR_THRESHOLD)
+            or (
+                reversals is not None
+                and reversals >= OSCILLATION_MIN_REVERSALS
+                and bin_lof is not None
+                and bin_lof > OSCILLATION_BIN_LOF_FLOOR
+            )
         )
     ):
         label = "nonmonotonic_dependence"
@@ -327,6 +378,14 @@ def detect_metric_warnings(
     to a bounded, correlation-like scale via the Gaussian-equivalent-correlation
     transform ``sqrt(1 - exp(-2*MI))`` before comparing against
     :data:`XI_DEPENDENCE_WARN_THRESHOLD`, so both signals share one cut point.
+
+    A variance-shape signal is checked against ``n_influential_points`` before
+    being reported as independent evidence: when Cook's distance already flags
+    an influential row (``n_influential_points >= 1``) and the ``*_excl_influential``
+    metrics (``api.py`` recomputes heteroscedasticity excluding that row —
+    Ticket 1.5) show the signal vanishes on the remainder, the warning is
+    reworded to attribute it to that same row instead of reporting it as a
+    second, independent-sounding problem.
     """
     warnings: list[str] = []
 
@@ -351,18 +410,85 @@ def detect_metric_warnings(
     bp_pvalue = _finite_metric_value(metrics.get("bp_pvalue"))
     gq_ratio = _finite_metric_value(metrics.get("gq_ratio"))
     bin_lof = _finite_metric_value(metrics.get("bin_lof_r2_gain"))
-    variance_shape = _variance_shape_axis(bp_pvalue, gq_ratio, bin_lof)
-    if variance_shape in ("increasing_spread", "decreasing_spread") and (
-        bp_pvalue is not None and gq_ratio is not None
+    bowtie_ratio = _finite_metric_value(metrics.get("bowtie_ratio"))
+    variance_shape = _variance_shape_axis(bp_pvalue, gq_ratio, bin_lof, bowtie_ratio)
+
+    if variance_shape in (
+        "increasing_spread",
+        "decreasing_spread",
+        "edge_high_spread",
+        "center_high_spread",
     ):
-        direction = "grows" if variance_shape == "increasing_spread" else "shrinks"
-        warnings.append(
-            f"The mean relationship is approximately linear, but the residual "
-            f"spread {direction} across x (Breusch-Pagan p={bp_pvalue:.3g}; "
-            f"variance {gq_ratio:.1f}x between the high- and low-x thirds). Pearson "
-            f"describes the center trend, but homoscedastic inference (standard "
-            f"errors, prediction intervals) may be unreliable."
-        )
+        # Is this signal just an echo of the same row(s) outlier_sensitivity
+        # already flags (e.g. one outlier both inflating Goldfeld-Quandt's
+        # high-x group and manufacturing the whole "relationship")? Only
+        # concluded when the recomputed *_excl_influential values are present
+        # (api.py only computes them once n_influential_points >= 1) and the
+        # signal actually disappears on the remainder -- an inconclusive or
+        # missing recomputation defaults to treating the signal as
+        # independent, the safer default.
+        n_influential = _finite_metric_value(metrics.get("n_influential_points"))
+        is_leverage_artifact = False
+        if n_influential is not None and n_influential >= 1:
+            bp_excl = _finite_metric_value(metrics.get("bp_pvalue_excl_influential"))
+            gq_excl = _finite_metric_value(metrics.get("gq_ratio_excl_influential"))
+            bowtie_excl = _finite_metric_value(
+                metrics.get("bowtie_ratio_excl_influential")
+            )
+            if bp_excl is not None and gq_excl is not None:
+                variance_shape_excl = _variance_shape_axis(
+                    bp_excl, gq_excl, bin_lof, bowtie_excl
+                )
+                is_leverage_artifact = variance_shape_excl == "constant"
+
+        if variance_shape in ("increasing_spread", "decreasing_spread") and (
+            bp_pvalue is not None and gq_ratio is not None
+        ):
+            direction = "grows" if variance_shape == "increasing_spread" else "shrinks"
+            if is_leverage_artifact:
+                grow_or_shrink = (
+                    "grow" if variance_shape == "increasing_spread" else "shrink"
+                )
+                warnings.append(
+                    f"Residual spread appears to {grow_or_shrink} across x "
+                    f"(Breusch-Pagan p={bp_pvalue:.3g}; variance {gq_ratio:.1f}x "
+                    f"between the high- and low-x thirds), but this signal "
+                    f"disappears once the influential row(s) flagged by "
+                    f"outlier_sensitivity are excluded -- it is very likely the "
+                    f"same leverage issue, not independent heteroscedasticity."
+                )
+            else:
+                warnings.append(
+                    f"The mean relationship is approximately linear, but the residual "
+                    f"spread {direction} across x (Breusch-Pagan p={bp_pvalue:.3g}; "
+                    f"variance {gq_ratio:.1f}x between the high- and low-x thirds). Pearson "
+                    f"describes the center trend, but homoscedastic inference (standard "
+                    f"errors, prediction intervals) may be unreliable."
+                )
+        elif variance_shape in ("edge_high_spread", "center_high_spread") and (
+            bowtie_ratio is not None
+        ):
+            if variance_shape == "edge_high_spread":
+                location = "highest at both extremes of x and lowest near the center"
+                ratio = bowtie_ratio
+            else:
+                location = "highest near the center and lowest at both extremes of x"
+                ratio = 1.0 / bowtie_ratio
+            if is_leverage_artifact:
+                warnings.append(
+                    f"Residual spread appears {location} (edge/middle variance "
+                    f"ratio {ratio:.1f}x), but this signal disappears once the "
+                    f"influential row(s) flagged by outlier_sensitivity are "
+                    f"excluded -- it is very likely the same leverage issue, not "
+                    f"an independent variance pattern."
+                )
+            else:
+                warnings.append(
+                    f"The mean relationship is approximately linear, but residual spread "
+                    f"is {location} (edge/middle variance ratio {ratio:.1f}x). This "
+                    f"symmetric pattern is invisible to a simple increasing/decreasing "
+                    f"spread check; consider a variance model that allows for this shape."
+                )
 
     if label in _DEPENDENCE_WARNING_LABELS:
         candidates = [
@@ -452,7 +578,10 @@ def _mean_shape_axis(
 
 
 def _variance_shape_axis(
-    bp_pvalue: float | None, gq_ratio: float | None, bin_lof: float | None
+    bp_pvalue: float | None,
+    gq_ratio: float | None,
+    bin_lof: float | None,
+    bowtie_ratio: float | None = None,
 ) -> str | None:
     """Does the spread of Y change with X? (``None`` when not assessable.)
 
@@ -467,15 +596,26 @@ def _variance_shape_axis(
         return None
     if bin_lof is None or bin_lof > BIN_LOF_R2_GAIN_THRESHOLD:
         return None
-    if bp_pvalue >= HETEROSCEDASTICITY_PVALUE_THRESHOLD:
-        return "constant"
-    # Breusch-Pagan rejects; require a meaningful effect (guards against the
-    # large-n test flagging negligible heteroscedasticity), and take the
-    # direction from which side of the x-range carries the larger spread.
-    if gq_ratio > HETEROSCEDASTICITY_RATIO_FLOOR:
-        return "increasing_spread"
-    if gq_ratio < 1.0 / HETEROSCEDASTICITY_RATIO_FLOOR:
-        return "decreasing_spread"
+    if bp_pvalue < HETEROSCEDASTICITY_PVALUE_THRESHOLD:
+        # Breusch-Pagan rejects; require a meaningful effect (guards against the
+        # large-n test flagging negligible heteroscedasticity), and take the
+        # direction from which side of the x-range carries the larger spread.
+        if gq_ratio > HETEROSCEDASTICITY_RATIO_FLOOR:
+            return "increasing_spread"
+        if gq_ratio < 1.0 / HETEROSCEDASTICITY_RATIO_FLOOR:
+            return "decreasing_spread"
+    # Either Breusch-Pagan did not reject, or it did but gq_ratio was
+    # inconclusive. Neither rules out a symmetric ("bowtie") pattern: its
+    # low-x and high-x groups have similar variance (so gq_ratio reads ~1),
+    # and the squared-residuals-vs-x relationship it drives is not linear
+    # (it's U- or hill-shaped in x), so Breusch-Pagan's linear auxiliary
+    # regression can also miss it. Checked independently via the
+    # edges-combined-vs-middle ratio.
+    if bowtie_ratio is not None:
+        if bowtie_ratio > BOWTIE_RATIO_FLOOR:
+            return "edge_high_spread"
+        if bowtie_ratio < 1.0 / BOWTIE_RATIO_FLOOR:
+            return "center_high_spread"
     return "constant"
 
 
@@ -486,14 +626,32 @@ def _dependence_type_axis(
     sq_corr: float | None,
     xi_fwd: float | None,
     xi_rev: float | None,
+    bin_lof: float | None = None,
+    reversals: float | None = None,
 ) -> str | None:
     """How do the variables depend on each other — monotonically, through
-    magnitude, or as a closed loop? (``None`` when nothing is detected.)"""
+    magnitude, as an oscillation, or as a closed loop? (``None`` when nothing
+    is detected.)"""
     if p is None or s is None:
         return None
     monotone_weak = (
         p < NONMONOTONIC_MONOTONE_CEILING and s < NONMONOTONIC_MONOTONE_CEILING
     )
+    # Oscillation is checked first: it is the most specific description (a
+    # sinusoid also clears the dc floor in standard mode, but "nonmonotone"
+    # would undersell its cyclical structure — an analyst should look for
+    # periodicity, not a single inflection point). The joint gate mirrors the
+    # cascade's rule-4 oscillation route exactly; a shape that qualifies here
+    # cannot be a closed loop (a multivalued loop's bin means average the
+    # branches, flattening the gain below the floor — a circle measures ~0.05).
+    if (
+        monotone_weak
+        and reversals is not None
+        and reversals >= OSCILLATION_MIN_REVERSALS
+        and bin_lof is not None
+        and bin_lof > OSCILLATION_BIN_LOF_FLOOR
+    ):
+        return "oscillating"
     sq_dependence = (
         monotone_weak and sq_corr is not None and abs(sq_corr) > SQ_CORR_THRESHOLD
     )
@@ -579,18 +737,24 @@ def derive_diagnostic_axes(
         metrics.get("distance_correlation"), require_available=True
     )
     bin_lof = _finite_metric_value(metrics.get("bin_lof_r2_gain"))
+    reversals = _finite_metric_value(metrics.get("bin_reversal_count"))
     sq_corr = _finite_metric_value(metrics.get("sq_corr"))
     xi_fwd = _finite_metric_value(metrics.get("chatterjee_xi"))
     xi_rev = _finite_metric_value(metrics.get("chatterjee_xi_reverse"))
     bp_pvalue = _finite_metric_value(metrics.get("bp_pvalue"))
     gq_ratio = _finite_metric_value(metrics.get("gq_ratio"))
+    bowtie_ratio = _finite_metric_value(metrics.get("bowtie_ratio"))
     segment_stepness = _finite_metric_value(metrics.get("segment_stepness"))
     n_influential = _finite_metric_value(metrics.get("n_influential_points"))
 
     return {
         "mean_shape": _mean_shape_axis(p, s, bin_lof, segment_stepness),
-        "variance_shape": _variance_shape_axis(bp_pvalue, gq_ratio, bin_lof),
-        "dependence_type": _dependence_type_axis(p, s, dc, sq_corr, xi_fwd, xi_rev),
+        "variance_shape": _variance_shape_axis(
+            bp_pvalue, gq_ratio, bin_lof, bowtie_ratio
+        ),
+        "dependence_type": _dependence_type_axis(
+            p, s, dc, sq_corr, xi_fwd, xi_rev, bin_lof, reversals
+        ),
         "outlier_sensitivity": _outlier_sensitivity_axis(outlier_status, n_influential),
         "functional_direction": _functional_direction_axis(xi_fwd, xi_rev),
     }

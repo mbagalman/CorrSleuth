@@ -76,6 +76,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `lite` and `deep` mode, not only `mode="standard"`.
   See `docs/shape-diagnostics-design.md` for the full investigation
   (including why a periodic/cyclical case is deliberately deferred).
+- **Oscillating/periodic dependence was mislabeled `weak_or_no_relationship`
+  outside `mode="standard"`.** A sinusoid over a few cycles keeps Pearson,
+  Spearman, *and* the magnitude diagnostic `sq_corr` all near zero, and even
+  distance correlation reads only marginally above its floor — so in `lite`
+  and `deep` mode a strong deterministic function was actively undersold as
+  "no relationship" (deep mode's Chatterjee-ξ warning fired, but the primary
+  label was still wrong). A new bin-mean reversal count
+  (`bin_reversal_count`, computed by `compute_bin_lof` in
+  `corrsleuth/metrics/shape.py` from the same bins as `bin_lof_r2_gain`, with
+  range-scaled hysteresis so noise wiggle is not counted as a turn) now
+  provides a third, lite-computable route into `nonmonotonic_dependence`:
+  `bin_reversal_count >= OSCILLATION_MIN_REVERSALS` (2) jointly with
+  `bin_lof_r2_gain > OSCILLATION_BIN_LOF_FLOOR` (0.3). The joint gate is
+  essential — pure noise produces *more* raw reversals than a real sinusoid
+  (16 vs. 4 measured on blind test data) but a bin-fit gain ~15× smaller —
+  and was validated over a 2,080-run sweep (13 shapes × sample sizes × noise
+  levels × 10 seeds: zero false positives) before the thresholds were locked.
+  A new `dependence_type = "oscillating"` axis value distinguishes the
+  cyclical case from a single-bend U-shape (which reads exactly 1 reversal),
+  so the label says "real nonmonotonic dependence" and the axis says "look
+  for periodicity, not one inflection point". Adds a `sinusoidal` shape to
+  `make_relationship()`. Bootstrap replicates recompute the reversal count,
+  so `pattern_stability` fully re-tests oscillation-driven labels in every
+  mode. This closes the periodic/cyclical case deliberately deferred in
+  `docs/shape-diagnostics-design.md` (see the amendment there) and
+  substantially resolves the deep-mode open question in
+  `docs/nonlinear-metrics-design.md`. `compute_bin_lof_r2_gain` was renamed
+  to `compute_bin_lof` and now returns a dict of both bin diagnostics
+  (internal `corrsleuth.metrics` API; the public `profile_pair`/`scan_target`
+  surface is unchanged).
+- **The heteroscedasticity warning could read as a second, independent
+  problem when it was really the same leverage row `outlier_sensitivity`
+  already flagged.** A single influential row can simultaneously manufacture
+  or mask a correlation *and* skew Goldfeld-Quandt/bowtie's group variances,
+  producing two independent-sounding warnings about one root cause. When
+  `n_influential_points >= 1`, `profile_pair` now recomputes heteroscedasticity
+  excluding the Cook's-flagged row(s) (`compute_heteroscedasticity_excluding`,
+  reusing the same arithmetic as `compute_heteroscedasticity` — no new
+  statistic); if the variance signal vanishes on the remainder, the warning is
+  reworded to attribute it to that same row instead of reporting it as
+  independent evidence. If the signal survives exclusion (a genuine leverage
+  cluster and genuinely independent heteroscedasticity can coexist), both
+  warnings are still reported unchanged. No added computation when
+  `n_influential_points` is 0 or unavailable (the common case). New
+  `compute_influential_mask` (`corrsleuth/metrics/influence.py`) exposes the
+  boolean Cook's-flagged-row mask for this purpose.
 
 ### Changed
 - Bootstrap **intervals** are now computed only when the *effective
@@ -165,6 +211,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   may be unreliable. Only assessed when the mean is adequately linear (a curved
   mean's misspecification residuals are not mistaken for changing variance).
   Adds a `heteroscedastic` shape to `make_relationship()`.
+- **Symmetric ("bowtie") variance detection**, extending the heteroscedasticity
+  diagnostics above: `compute_heteroscedasticity` now also returns
+  `bowtie_ratio` — the combined low+high-thirds residual variance over the
+  middle third's — exposed on `result.diagnostics` and populating two new
+  `variance_shape` values, `edge_high_spread` (spread high at both extremes of
+  x, calm in the middle) and `center_high_spread` (the reverse). Goldfeld-Quandt's
+  low-vs-high split cannot see this shape by construction (both edges have
+  similar variance, so the ratio reads ~1), and Breusch-Pagan's linear
+  auxiliary regression can miss it too (the squared-residuals-vs-x relationship
+  is U/hill-shaped, not linear) — so this is checked independently, additive to
+  the existing funnel check rather than replacing it. New threshold
+  `BOWTIE_RATIO_FLOOR` (2.5). Adds a `bowtie_variance` shape to
+  `make_relationship()`.
 - **Secondary diagnostic axes** on `result.diagnostics`: five coarse
   categorical summaries — `mean_shape`, `variance_shape`, `dependence_type`,
   `outlier_sensitivity`, and `functional_direction` — describing orthogonal

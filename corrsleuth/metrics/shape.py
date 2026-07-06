@@ -7,13 +7,18 @@ public metrics table the way Pearson/distance correlation/mutual information
 are. They exist to catch two blind spots the existing rank/linear/distance
 metrics leave open (see docs/shape-diagnostics-design.md):
 
-- :func:`compute_bin_lof_r2_gain` — a lack-of-fit test comparing an
-  equal-frequency-bin model of Y|X to a straight-line fit. A classical
-  technique (Neter, Kutner, Nachtsheim & Wasserman, *Applied Linear
+- :func:`compute_bin_lof` — a lack-of-fit test comparing an
+  equal-frequency-bin model of Y|X to a straight-line fit (``bin_lof_r2_gain``).
+  A classical technique (Neter, Kutner, Nachtsheim & Wasserman, *Applied Linear
   Statistical Models*, lack-of-fit F-test using grouped X as a stand-in for
   replicates), used here to catch smooth monotonic curvature (exponential,
   logarithmic) and step/threshold functions that keep Pearson and Spearman
-  close together despite real nonlinearity.
+  close together despite real nonlinearity. From the same bins it also counts
+  direction reversals in the sequence of bin means (``bin_reversal_count``),
+  which separates *oscillating* dependence (a sinusoid: several reversals)
+  from a single bend (a U-shape: exactly one) — the classifier only trusts the
+  count when ``bin_lof_r2_gain`` also shows substantial bin structure, since
+  pure noise produces many spurious reversals with near-zero gain.
 - :func:`compute_squared_correlation` — the correlation between X² and Y²,
   used to catch dependence that shows up in magnitude but not in the raw
   signed values (e.g. points scattered around a circle, where X and Y are
@@ -50,29 +55,88 @@ _MAX_BINS = 20
 #: ``_MIN_BINS`` bins of at least ``_TARGET_POINTS_PER_BIN`` rows each.
 _MIN_N_FOR_BIN_LOF = _MIN_BINS * _TARGET_POINTS_PER_BIN
 
+#: Hysteresis for the bin-mean reversal count, as a fraction of the bin-mean
+#: range: a direction change only counts as a reversal once the sequence has
+#: moved at least this far back from its last confirmed extreme. Per-difference
+#: de-noising (ignore small bin-to-bin steps) was evaluated and rejected: at
+#: high noise a single-bend shape's bin means wiggle enough that noise flips
+#: pass a relative-to-max-step filter (~0.4% false "oscillating" reads on
+#: U/V-shaped data), while range-scaled hysteresis produced zero false
+#: positives over the same 2,080-run sweep with identical sinusoid detection.
+#: 0.15 keeps a 1.5-cycle sinusoid's swings (each ~the full range) countable
+#: while noise wiggle (a small fraction of the range whenever real structure
+#: exists) never confirms a turn.
+_BIN_REVERSAL_HYSTERESIS_FRACTION = 0.15
 
-def compute_bin_lof_r2_gain(pair: CleanPair) -> MetricResult:
-    """Bin-mean R² minus linear-fit R² — a lack-of-fit test for curvature.
+_BIN_LOF_NAMES = ("bin_lof_r2_gain", "bin_reversal_count")
 
-    Sorts by X, splits into equal-frequency bins, and compares how much
-    variance in Y a piecewise-constant "bin mean" model explains versus a
-    single straight line. A positive gain means the data has structure (a
-    curve, a step, a bend) a straight line does not capture — the bin model
-    can only do better than or as well as the line, so this is bounded below
-    by (slightly negative, from finite-sample noise) and unbounded above
-    up to ``1 - r2_linear``.
 
-    Returns ``None`` (``MetricResult.no_value``) for constant inputs,
+def _bin_lof_no_value() -> dict[str, MetricResult]:
+    return {name: MetricResult.no_value(name) for name in _BIN_LOF_NAMES}
+
+
+def _turning_point_count(means: np.ndarray, hysteresis: float) -> int:
+    """Count direction reversals in ``means``, confirming a turn only after the
+    sequence moves at least ``hysteresis`` away from its last extreme (the
+    classic zigzag / turning-point filter, robust to noise wiggle in a way
+    per-step thresholds are not)."""
+    reversals = 0
+    direction = 0  # 0 unknown, +1 rising, -1 falling
+    anchor = means[0]  # start point, then the last confirmed extreme
+    extreme = means[0]
+    for value in means[1:]:
+        if direction == 0:
+            if abs(value - anchor) >= hysteresis:
+                direction = 1 if value > anchor else -1
+                extreme = value
+        elif direction == 1:
+            if value > extreme:
+                extreme = value
+            elif extreme - value >= hysteresis:
+                reversals += 1
+                direction = -1
+                extreme = value
+        else:
+            if value < extreme:
+                extreme = value
+            elif value - extreme >= hysteresis:
+                reversals += 1
+                direction = 1
+                extreme = value
+    return reversals
+
+
+def compute_bin_lof(pair: CleanPair) -> dict[str, MetricResult]:
+    """Equal-frequency-bin lack-of-fit diagnostics for the shape of E[Y|X].
+
+    Sorts by X, splits into equal-frequency bins, and returns two
+    :class:`MetricResult` entries computed from the same bins:
+
+    - ``bin_lof_r2_gain`` — bin-mean-model R² minus linear-fit R², a
+      lack-of-fit test for curvature. A positive gain means the data has
+      structure (a curve, a step, a bend) a straight line does not capture —
+      the bin model can only do better than or as well as the line, so this is
+      bounded below by (slightly negative, from finite-sample noise) and
+      unbounded above up to ``1 - r2_linear``.
+    - ``bin_reversal_count`` — how many times the sequence of bin means changes
+      direction, counted with range-scaled hysteresis
+      (:data:`_BIN_REVERSAL_HYSTERESIS_FRACTION`) so noise wiggle is not
+      counted as a turn. A monotone trend or step measures 0, a single bend
+      (U-shape) exactly 1, an oscillating/periodic relationship 2 or more.
+      Only meaningful alongside a substantial ``bin_lof_r2_gain`` — pure noise
+      produces many "reversals" with near-zero gain, so the classifier gates
+      the count on the gain (see ``OSCILLATION_BIN_LOF_FLOOR`` in
+      ``heuristics/classifier.py``).
+
+    Returns both as ``None`` (``MetricResult.no_value``) for constant inputs,
     ``n_used`` below :data:`_MIN_N_FOR_BIN_LOF`, or a degenerate bin split
     (fewer than 2 points in some bin, which can happen with heavy ties in X).
     """
-    name = "bin_lof_r2_gain"
-
     if pair.x_is_constant or pair.y_is_constant:
-        return MetricResult.no_value(name)
+        return _bin_lof_no_value()
 
     if pair.n_used < _MIN_N_FOR_BIN_LOF:
-        return MetricResult.no_value(name)
+        return _bin_lof_no_value()
 
     x = pair.x.to_numpy()
     y = pair.y.to_numpy()
@@ -86,26 +150,43 @@ def compute_bin_lof_r2_gain(pair: CleanPair) -> MetricResult:
         n_bins = int(np.clip(n // _TARGET_POINTS_PER_BIN, _MIN_BINS, _MAX_BINS))
         bin_indices = np.array_split(np.arange(n), n_bins)
         if any(len(idx) < 2 for idx in bin_indices):
-            return MetricResult.no_value(name)
+            return _bin_lof_no_value()
 
         ss_tot = float(np.sum((ys - ys.mean()) ** 2))
         if ss_tot == 0.0:
-            return MetricResult.no_value(name)
+            return _bin_lof_no_value()
 
         y_bin_pred = np.empty_like(ys)
-        for idx in bin_indices:
-            y_bin_pred[idx] = ys[idx].mean()
+        bin_means = np.empty(n_bins)
+        for i, idx in enumerate(bin_indices):
+            bin_means[i] = ys[idx].mean()
+            y_bin_pred[idx] = bin_means[i]
         r2_bins = 1.0 - float(np.sum((ys - y_bin_pred) ** 2)) / ss_tot
 
         slope, intercept = np.polyfit(xs, ys, 1)
         y_linear_pred = slope * xs + intercept
         r2_linear = 1.0 - float(np.sum((ys - y_linear_pred) ** 2)) / ss_tot
+
+        means_range = float(bin_means.max() - bin_means.min())
+        if means_range <= 0.0:
+            reversals = 0
+        else:
+            reversals = _turning_point_count(
+                bin_means, _BIN_REVERSAL_HYSTERESIS_FRACTION * means_range
+            )
     except (ValueError, RuntimeError, FloatingPointError) as e:
         raise MetricComputationError(
-            f"Failed to compute {name}: {type(e).__name__}: {e}"
+            f"Failed to compute bin lack-of-fit diagnostics: {type(e).__name__}: {e}"
         ) from e
 
-    return MetricResult(name=name, value=float(r2_bins - r2_linear), available=True)
+    return {
+        "bin_lof_r2_gain": MetricResult(
+            name="bin_lof_r2_gain", value=float(r2_bins - r2_linear), available=True
+        ),
+        "bin_reversal_count": MetricResult(
+            name="bin_reversal_count", value=float(reversals), available=True
+        ),
+    }
 
 
 def compute_squared_correlation(pair: CleanPair) -> MetricResult:

@@ -3,10 +3,16 @@
 > This note evaluates candidate fixes for four heuristic-cascade misses found
 > during user testing on synthetic data with known relationship shapes, picks
 > the two worth implementing now (`bin_lof_r2_gain`, `sq_corr`), and documents
-> why the fourth (periodic/cyclical dependence) is deliberately deferred. It is
+> why the fourth (periodic/cyclical dependence) was deliberately deferred. It is
 > the "why these diagnostics" companion to the [methodology
 > doc](methodology.md), in the same spirit as the [nonlinear metrics design
 > note](nonlinear-metrics-design.md).
+>
+> **Update:** the deferred periodicity detector has since been implemented as
+> `bin_reversal_count` — both of the original blockers were resolved by later
+> blind-test evidence and a dedicated validation sweep. See the amendment at
+> the end of section 4 for what shipped and how it differs from the sketch
+> deferred here.
 
 ## Context
 
@@ -58,7 +64,7 @@ The evaluation criteria mirror the nonlinear-metrics note:
 | Bin lack-of-fit R² gain (`bin_lof_r2_gain`) | None | O(n log n) | Directional (X→Y) | (−ε, ~1] | **Implement** |
 | Squared correlation (`sq_corr`) | None | O(n) | Symmetric | [−1, 1] | **Implement** |
 | Mutual information as a cascade signal | None (already computed) | — | Symmetric | unbounded (nats) | **Implement as warning only** |
-| Bin-mean reversal count (periodicity detector) | None | O(n log n) | Directional | integer ≥ 0 | **Defer** |
+| Bin-mean reversal count (periodicity detector) | None | O(n log n) | Directional | integer ≥ 0 | **Defer** *(since implemented — see §4 amendment)* |
 
 ### 1. Bin lack-of-fit R² gain — *primary candidate*
 
@@ -215,6 +221,45 @@ existing one.
 
 **Verdict: Defer.** Worth a follow-up design note once the periodicity
 threshold has been validated across more than one synthetic scenario.
+
+**Amendment — implemented.** Both blockers above were later resolved, and the
+detector shipped as `bin_reversal_count` (computed by `compute_bin_lof` in
+`metrics/shape.py`, from the same bins as `bin_lof_r2_gain`):
+
+- *"Reversal count alone is not trustworthy"* — confirmed, and resolved by the
+  joint gate this section anticipated: the count only fires alongside
+  `bin_lof_r2_gain > OSCILLATION_BIN_LOF_FLOOR` (0.3, deliberately far above
+  the 0.05 curvature threshold). On genuinely blind test data, pure noise
+  measured *more* raw reversals than a real 2.5-cycle sinusoid (16 vs. 4) with
+  a bin-fit gain 15× smaller (0.057 vs. 0.826) — the floor, not the count, is
+  what excludes noise. The count itself also got more robust than the sketch
+  here: turning points are confirmed with hysteresis (a reversal counts only
+  after the bin means move ≥ 15% of their range back from the last extreme),
+  which a comparison sweep showed eliminates the false "oscillating" reads a
+  per-step de-noising filter still allowed on noisy single-bend shapes.
+- *"No single-dataset validation of margins"* — resolved by a 2,080-run sweep
+  (13 shapes × 4 sample sizes × 4 noise levels × 10 seeds, plus a sinusoid
+  grid over 6 cycle counts): zero false positives among the negative controls,
+  detection 10/10 in every sinusoid cell except 3–5 cycles at n=100 under
+  heavy noise (where ~10 bins genuinely cannot resolve the cycles), and a
+  known-shape check that a U-shape reads exactly 1 reversal. See
+  `OSCILLATION_MIN_REVERSALS` / `OSCILLATION_BIN_LOF_FLOOR` in
+  `thresholds-and-rationale.md`.
+- *"Would need a new primary label"* — resolved differently, and more cheaply,
+  than this section costed out: the secondary-axis taxonomy (added after this
+  note was written) carries the cyclical nuance as
+  `dependence_type = "oscillating"`, so the primary label extends the existing
+  `nonmonotonic_dependence` (a third, lite-computable route alongside `dc` and
+  `sq_corr`) rather than introducing `cyclical_or_oscillating_dependence`. An
+  analyst sees "real nonmonotonic dependence" at the label level and "it
+  oscillates — look for periodicity, not a single inflection point" on the
+  axis.
+
+One known limitation carries over from the "Context" section: a sinusoid whose
+sampled range gives it a substantial net linear component (integer cycle
+counts measured |ρ| up to ~0.49) still fails the rule's monotone ceiling
+(`p, s < 0.25`) and falls to `mixed_or_ambiguous` — the oscillation route
+deliberately reuses the existing rule-4 gate rather than loosening it.
 
 ## Recommendation
 

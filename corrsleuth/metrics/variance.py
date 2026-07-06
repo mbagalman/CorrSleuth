@@ -30,6 +30,17 @@ The p-value says *whether* the spread changes; the ratio says *how much* and
 trivially small heteroscedasticity, so the ``variance_shape`` axis
 (``heuristics/classifier.py``) pairs the p-value with a ratio effect-size floor
 before calling a pair heteroscedastic.
+
+A third, complementary check catches the shape the two above are blind to by
+construction:
+
+- **Edge-vs-middle ("bowtie") ratio** — split the x-sorted linear-fit residuals
+  into thirds; compare the combined low-third + high-third mean squared
+  residual against the middle third's. A symmetric variance pattern (spread
+  high at both extremes of ``x``, calm in the middle, or the reverse) leaves
+  the low-``x`` and high-``x`` groups with *similar* variance, so
+  Goldfeld-Quandt's low-vs-high ratio reads near 1 even though the shape is
+  real — this check compares edges-combined against the middle instead.
 """
 
 from __future__ import annotations
@@ -54,34 +65,74 @@ _GQ_DROP_FRACTION = 0.2
 
 _BP_NAME = "bp_pvalue"
 _GQ_NAME = "gq_ratio"
+_BOWTIE_NAME = "bowtie_ratio"
 
 
 def _no_value_result() -> dict[str, MetricResult]:
     return {
         _BP_NAME: MetricResult.no_value(_BP_NAME),
         _GQ_NAME: MetricResult.no_value(_GQ_NAME),
+        _BOWTIE_NAME: MetricResult.no_value(_BOWTIE_NAME),
     }
 
 
 def compute_heteroscedasticity(pair: CleanPair) -> dict[str, MetricResult]:
-    """Test whether Var[Y|X] is constant, via Breusch-Pagan and Goldfeld-Quandt.
+    """Test whether Var[Y|X] is constant, via Breusch-Pagan, Goldfeld-Quandt,
+    and an edge-vs-middle ("bowtie") variance ratio.
 
-    Returns a dict with two :class:`MetricResult` entries: ``bp_pvalue`` (the
-    Koenker studentized Breusch-Pagan p-value — small means heteroscedastic) and
+    Returns a dict with three :class:`MetricResult` entries: ``bp_pvalue`` (the
+    Koenker studentized Breusch-Pagan p-value — small means heteroscedastic),
     ``gq_ratio`` (the Goldfeld-Quandt ratio of high-``x`` to low-``x`` residual
-    variance — ``> 1`` means spread grows with ``x``, ``< 1`` means it shrinks).
+    variance — ``> 1`` means spread grows with ``x``, ``< 1`` means it shrinks),
+    and ``bowtie_ratio`` (the combined low+high-thirds residual variance divided
+    by the middle-third's — ``> 1`` means spread is worse at the extremes,
+    ``< 1`` means it is worse in the middle).
 
-    Both are ``None`` (``MetricResult.no_value``) for constant inputs, ``n_used``
-    below :data:`_MIN_N_FOR_HETEROSCEDASTICITY`, or a degenerate fit (an
-    essentially perfect linear fit leaves no residual variance to analyze).
+    All three are ``None`` (``MetricResult.no_value``) for constant inputs,
+    ``n_used`` below :data:`_MIN_N_FOR_HETEROSCEDASTICITY`, or a degenerate fit
+    (an essentially perfect linear fit leaves no residual variance to analyze).
     """
     if pair.x_is_constant or pair.y_is_constant:
         return _no_value_result()
     if pair.n_used < _MIN_N_FOR_HETEROSCEDASTICITY:
         return _no_value_result()
 
-    x = pair.x.to_numpy()
-    y = pair.y.to_numpy()
+    return _heteroscedasticity_from_arrays(pair.x.to_numpy(), pair.y.to_numpy())
+
+
+def compute_heteroscedasticity_excluding(
+    pair: CleanPair, exclude_mask: np.ndarray
+) -> dict[str, MetricResult]:
+    """Re-test heteroscedasticity on the subset of ``pair`` with
+    ``exclude_mask`` rows removed.
+
+    Used to check whether an apparent variance-shape signal survives once the
+    Cook's-distance-flagged row(s) (:func:`metrics.influence.compute_influential_mask`)
+    are excluded — if it does not, the "heteroscedasticity" was an artifact of
+    the same rows :data:`outlier_sensitivity` already flags, not an independent
+    pattern (see ``heuristics/classifier.py``'s ``detect_metric_warnings``).
+
+    Same return shape and ``None`` guards as :func:`compute_heteroscedasticity`,
+    applied to the reduced subset (so excluding rows can itself push ``n``
+    below :data:`_MIN_N_FOR_HETEROSCEDASTICITY` or leave a constant column).
+    """
+    keep = ~exclude_mask
+    x = pair.x.to_numpy()[keep]
+    y = pair.y.to_numpy()[keep]
+
+    if x.shape[0] < _MIN_N_FOR_HETEROSCEDASTICITY:
+        return _no_value_result()
+    if np.all(x == x[0]) or np.all(y == y[0]):
+        return _no_value_result()
+
+    return _heteroscedasticity_from_arrays(x, y)
+
+
+def _heteroscedasticity_from_arrays(
+    x: np.ndarray, y: np.ndarray
+) -> dict[str, MetricResult]:
+    """Shared Breusch-Pagan / Goldfeld-Quandt / bowtie arithmetic, given
+    already-validated (non-constant, large-enough) ``x``/``y`` arrays."""
     n = x.shape[0]
 
     try:
@@ -124,6 +175,19 @@ def compute_heteroscedasticity(pair: CleanPair) -> dict[str, MetricResult]:
         )
         if gq_ratio is None:
             return _no_value_result()
+
+        # Bowtie (edge-vs-middle) ratio: split the x-sorted residuals from the
+        # single global fit above into thirds, and compare the combined
+        # low+high thirds' mean squared residual to the middle third's. Uses
+        # the raw squared residuals (not re-centered per group) since their
+        # population mean is already ~0 by construction of the OLS fit;
+        # re-centering within a third would partially cancel the very spread
+        # difference this check exists to measure.
+        residuals_sorted = residuals[order]
+        low_resid, mid_resid, high_resid = np.array_split(residuals_sorted, 3)
+        mid_ms = float(np.mean(mid_resid**2))
+        edge_ms = float(np.mean(np.concatenate([low_resid, high_resid]) ** 2))
+        bowtie_ratio = edge_ms / mid_ms if mid_ms > 0.0 else None
     except (ValueError, RuntimeError, FloatingPointError) as e:
         raise MetricComputationError(
             f"Failed to compute heteroscedasticity: {type(e).__name__}: {e}"
@@ -132,6 +196,11 @@ def compute_heteroscedasticity(pair: CleanPair) -> dict[str, MetricResult]:
     return {
         _BP_NAME: MetricResult(name=_BP_NAME, value=bp_pvalue, available=True),
         _GQ_NAME: MetricResult(name=_GQ_NAME, value=gq_ratio, available=True),
+        _BOWTIE_NAME: (
+            MetricResult(name=_BOWTIE_NAME, value=bowtie_ratio, available=True)
+            if bowtie_ratio is not None
+            else MetricResult.no_value(_BOWTIE_NAME)
+        ),
     }
 
 

@@ -177,12 +177,14 @@ CorrSleuth takes a fundamentally different approach to bivariate analysis. Inste
 
 By examining where these metrics **agree or disagree**, CorrSleuth assigns a heuristic diagnostic label (e.g., `monotonic_nonlinear` if Spearman is high but Pearson is low, or `nonmonotonic_dependence` if Distance Correlation is high but Spearman is low).
 
-Two additional shape diagnostics — a bin-based lack-of-fit test and a
-squared-value correlation — run in every mode (no optional dependency) and
-feed those same labels for cases the metrics above miss on their own: smooth
-monotonic curves and step functions that keep Pearson close to Spearman, and
-circular/radial dependence that even distance correlation under-reads. They
-aren't reported as standalone metrics; see
+Three additional shape diagnostics — a bin-based lack-of-fit test, a bin-mean
+reversal count, and a squared-value correlation — run in every mode (no
+optional dependency) and feed those same labels for cases the metrics above
+miss on their own: smooth monotonic curves and step functions that keep
+Pearson close to Spearman, oscillating/periodic relationships (a sinusoid)
+that keep every correlation coefficient near zero, and circular/radial
+dependence that even distance correlation under-reads. They aren't reported
+as standalone metrics; see
 [the design note](https://github.com/mbagalman/CorrSleuth/blob/main/docs/shape-diagnostics-design.md)
 for details.
 

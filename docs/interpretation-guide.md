@@ -189,17 +189,22 @@ applies in `lite` mode too. Kendall tau-b usually agrees with Spearman.
 ### `nonmonotonic_dependence`
 
 **Meaning.** Evidence consistent with a relationship that is not simply
-increasing or decreasing — U-shapes, V-shapes, or dependence that shows up in
-magnitude rather than direction (e.g. points scattered around a circle).
-Pearson and Spearman both miss it; distance correlation or the `sq_corr`
-shape diagnostic flags it.
+increasing or decreasing — U-shapes, V-shapes, oscillating/periodic patterns,
+or dependence that shows up in magnitude rather than direction (e.g. points
+scattered around a circle). Pearson and Spearman both miss it; distance
+correlation, the `sq_corr` shape diagnostic, or the bin-reversal oscillation
+gate flags it. Check `dependence_type` for which kind it is.
 
-**Typical metric pattern.** `|pearson| < 0.25`, `|spearman| < 0.25`, and
-either `distance_correlation > 0.35` (`mode="standard"` only) or
-`|corr(X², Y²)| > 0.35` (`sq_corr`, no mode gate — computed in every mode,
-see [shape-diagnostics-design.md](shape-diagnostics-design.md)). The second
-route exists because distance correlation itself is structurally capped
-around ~0.2 for a true circular/radial relationship, even noiseless. In
+**Typical metric pattern.** `|pearson| < 0.25`, `|spearman| < 0.25`, and any
+of three routes: `distance_correlation > 0.35` (`mode="standard"` only);
+`|corr(X², Y²)| > 0.35` (`sq_corr`, no mode gate — computed in every mode);
+or `bin_reversal_count ≥ 2` together with `bin_lof_r2_gain > 0.3` (the
+oscillation gate, also no mode gate — see
+[shape-diagnostics-design.md](shape-diagnostics-design.md)). The second route
+exists because distance correlation itself is structurally capped around ~0.2
+for a true circular/radial relationship, even noiseless; the third because an
+oscillating relationship (a sinusoid) keeps distance correlation only
+marginally above its floor and has no magnitude signature for `sq_corr`. In
 `mode="deep"`, Chatterjee's ξ usually shows the same story asymmetrically
 (`ξ(X → Y)` is high; `ξ(Y → X)` may be lower).
 
@@ -210,6 +215,9 @@ around ~0.2 for a true circular/radial relationship, even noiseless. In
   both low and high doses).
 - Points scattered around a circle or ring (`x² + y² ≈ const`) — dependence
   exists (knowing `x` constrains `|y|`) but isn't a function of `x`.
+- Sinusoidal/periodic relationships (seasonal cycles, waveforms) — reported
+  with `dependence_type = oscillating` so you look for periodicity, not a
+  single inflection point.
 
 **Recommended next steps.**
 
@@ -221,23 +229,25 @@ around ~0.2 for a true circular/radial relationship, even noiseless. In
 
 **Caveats.**
 
-- The `sq_corr` route needs no optional dependency and works in every mode,
-  but it's tuned for magnitude/radial dependence specifically (an even
-  function of `x` and/or `y`, roughly). A shape with real nonmonotonic
-  dependence but no magnitude signature (e.g. some oscillating shapes) can
-  still need `mode="standard"` distance correlation, or may not be caught by
-  either route — see the periodic/cyclical discussion in
+- The `sq_corr` and oscillation routes need no optional dependency and work
+  in every mode, but each is tuned for a specific family: `sq_corr` for
+  magnitude/radial dependence (an even function of `x` and/or `y`, roughly),
+  the bin-reversal gate for oscillation. An oscillating relationship whose
+  sampled range gives it a substantial net linear component (an integer
+  number of cycles can push `|spearman|` to ~0.4–0.5) fails this rule's
+  monotone ceiling and falls to `mixed_or_ambiguous`, and at small `n` the
+  ~10 bins cannot resolve many cycles — see
   [shape-diagnostics-design.md](shape-diagnostics-design.md).
 - Distance correlation is sensitive to extreme values. A handful of
   outliers can produce a high `dcor` for an otherwise weak relationship —
   always check the plot.
 - Bootstrap pattern stability for this label uses *lite* metrics by
-  default. Because `sq_corr` is lite-computable, a label driven purely by
-  `sq_corr` is already fully testable on lite metrics — but CorrSleuth
-  doesn't currently distinguish that from a `dcor`-driven label, so the
-  "may not fully test a standard-mode label" warning can still appear even
-  when it isn't needed. If you need a tighter check regardless, pass
-  `bootstrap_metrics="standard"`.
+  default. Because `sq_corr` and the oscillation gate are lite-computable, a
+  label driven purely by either is already fully testable on lite metrics —
+  but CorrSleuth doesn't currently distinguish that from a `dcor`-driven
+  label, so the "may not fully test a standard-mode label" warning can still
+  appear even when it isn't needed. If you need a tighter check regardless,
+  pass `bootstrap_metrics="standard"`.
 
 ### `possible_outlier_or_leverage`
 
@@ -442,8 +452,8 @@ available metrics it is `None` (rendered `NA`).
 | Axis | Question | Values |
 |---|---|---|
 | `mean_shape` | Is E[Y\|X] a straight line, a smooth curve, or a step? | `linear`, `smooth_curve`, `step_or_threshold`, `curved`, `None` |
-| `variance_shape` | Does the spread of Y change with X? | `constant`, `increasing_spread`, `decreasing_spread`, `None` |
-| `dependence_type` | What kind of dependence is it? | `monotone`, `magnitude_linked`, `nonmonotone`, `closed_loop_or_multivalued`, `None` |
+| `variance_shape` | Does the spread of Y change with X? | `constant`, `increasing_spread`, `decreasing_spread`, `edge_high_spread`, `center_high_spread`, `None` |
+| `dependence_type` | What kind of dependence is it? | `monotone`, `magnitude_linked`, `oscillating`, `nonmonotone`, `closed_loop_or_multivalued`, `None` |
 | `outlier_sensitivity` | Do a few rows drive the summary? | `low`, `single_point_driven`, `high_leverage_cluster`, `high`, `unavailable` |
 | `functional_direction` | Which variable is a function of the other? | `y_of_x`, `x_of_y`, `both_directions`, `neither_direction`, `None` |
 
@@ -472,18 +482,43 @@ Notes on the less-obvious values:
   point estimate is fine but homoscedastic inference (standard errors,
   prediction intervals) may be unreliable. The underlying numbers are
   `bp_pvalue` and `gq_ratio` on `result.diagnostics`.
+  A *symmetric* variance pattern — spread high at **both** extremes of X and
+  calm in the middle, or the reverse — reads as `edge_high_spread` /
+  `center_high_spread` instead. Goldfeld-Quandt's low-vs-high split cannot see
+  this shape by construction (both edges have similar variance, so the ratio
+  reads ~1), and Breusch-Pagan's linear auxiliary regression can miss it too
+  (the squared-residuals-vs-x relationship is U/hill-shaped, not linear), so
+  this is checked independently via `bowtie_ratio` — the combined low+high
+  thirds' residual variance divided by the middle third's — on
+  `result.diagnostics`.
   **Caveat:** `variance_shape` is gated against *curvature* artifacts (a curved
-  mean suppresses it) but **not** against *leverage* artifacts. A high-leverage
-  cluster can genuinely produce a large Goldfeld-Quandt ratio — the residual
-  spread really is larger in the region containing the cluster — so a pair
-  already flagged `outlier_sensitivity = single_point_driven` or
-  `high_leverage_cluster` can also report `increasing_spread` (with its own
-  warning) even though both stem from the same handful of rows, not two
-  independent problems. The numbers aren't wrong, but treat a concurrent
-  variance warning as corroborating evidence of the same leverage issue, not
-  necessarily a separate one, when `outlier_sensitivity` is already elevated.
+  mean suppresses it) but **not** against *leverage* artifacts — a
+  high-leverage cluster can genuinely produce a large Goldfeld-Quandt ratio (the
+  residual spread really is larger in the region containing the cluster), so a
+  pair already flagged `outlier_sensitivity = single_point_driven` or
+  `high_leverage_cluster` can still report `increasing_spread` (etc.) even
+  though both stem from the same handful of rows. The *warning* handles this:
+  when `n_influential_points >= 1`, CorrSleuth recomputes the variance test
+  excluding the Cook's-flagged row(s), and if the signal disappears on the
+  remainder, the warning explicitly attributes it to that same row instead of
+  reading as a second, independent problem (if the signal survives exclusion,
+  both warnings are kept — a real leverage cluster and real, separate
+  heteroscedasticity can coexist). The `variance_shape` *value itself* is not
+  changed by this check — it still reports the full-sample pattern — so treat
+  it as "this is the shape on the full sample" and read the warning for
+  whether it is independent of, or explained by, an elevated
+  `outlier_sensitivity`.
 - **`dependence_type = magnitude_linked`** — Pearson and Spearman are weak, but
   |X| and |Y| move together (from `sq_corr`). A U-shape is the canonical case.
+- **`dependence_type = oscillating`** — the bin means of Y|X change direction
+  two or more times with substantial bin structure (`bin_reversal_count ≥ 2`
+  and `bin_lof_r2_gain > 0.3` on `result.diagnostics`). A sinusoid is the
+  canonical case. Reported in preference to the generic `nonmonotone` (which a
+  sinusoid would also qualify for via distance correlation in
+  `mode="standard"`) because the practical advice differs: look for
+  periodicity — a cyclical driver, seasonality, a waveform — not a single
+  inflection point. A single bend (U-shape) reads exactly 1 reversal and
+  stays `magnitude_linked`/`nonmonotone`.
 - **`dependence_type = closed_loop_or_multivalued`** — dependence exists, but
   *neither variable is a function of the other* (points on a circle or ring).
   Requires `mode="deep"` (it is confirmed with Chatterjee's ξ in both
@@ -516,6 +551,11 @@ Primary pattern: possible_outlier_or_leverage
 Primary pattern: near_linear
   mean_shape          : linear          # a clean straight-line trend ...
   variance_shape      : increasing_spread   # ... but the spread fans out with x
+
+Primary pattern: near_linear
+  mean_shape          : linear          # a clean straight-line trend ...
+  variance_shape      : edge_high_spread   # ... but spread is high at both ends,
+  bowtie_ratio        : 11.1               #     calm in the middle (symmetric)
 
 Primary pattern: monotonic_nonlinear
   mean_shape          : step_or_threshold   # a jump, not a smooth curve ...
@@ -576,12 +616,14 @@ consistently decreases) with `x`, even if the rate changes. It is
 | Best fit family | Monotonic transforms, splines | Polynomials, splines, kernels, trees |
 
 In `lite` mode CorrSleuth can detect monotonic-nonlinear relationships (via
-the rank-vs-linear gap or the bin lack-of-fit diagnostic) and magnitude/radial
+the rank-vs-linear gap or the bin lack-of-fit diagnostic), magnitude/radial
 nonmonotonic dependence such as U-shapes and circular data (via `sq_corr`),
-but it **cannot** distinguish other forms of nonmonotonic dependence —
-oscillating or cyclical shapes, in particular — from independence. If you
-suspect one of those, run with `mode="standard"` or `mode="deep"` so distance
-correlation or Chatterjee's ξ is available.
+and oscillating/cyclical shapes (via the bin-reversal gate, reported as
+`dependence_type = oscillating`). A nonmonotonic shape outside those families
+can still be missed in `lite` mode — if the label reads
+`weak_or_no_relationship` but you suspect hidden structure, run with
+`mode="standard"` or `mode="deep"` so distance correlation or Chatterjee's ξ
+is available as a general-purpose dependence detector.
 
 ### Outlier-Sensitive Correlations
 
@@ -678,10 +720,10 @@ Notes:
   correlation and mutual information (slower).
 - Distance correlation downsamples to 20 000 rows by default
   (`max_n_for_dcor=20000`). The downsample is seeded for reproducibility.
-- The shape diagnostics (`bin_lof_r2_gain`, `sq_corr` — see
-  [shape-diagnostics-design.md](shape-diagnostics-design.md); `segment_gain`,
-  `breakpoint_x`), the heteroscedasticity diagnostics (`bp_pvalue`,
-  `gq_ratio`), and the influence diagnostics (`max_cook_distance`,
+- The shape diagnostics (`bin_lof_r2_gain`, `bin_reversal_count`, `sq_corr` —
+  see [shape-diagnostics-design.md](shape-diagnostics-design.md);
+  `segment_gain`, `breakpoint_x`), the heteroscedasticity diagnostics (`bp_pvalue`,
+  `gq_ratio`, `bowtie_ratio`), and the influence diagnostics (`max_cook_distance`,
   `n_influential_points`) run in every mode, including `lite`. They feed the
   `monotonic_nonlinear` / `nonmonotonic_dependence` labels and the secondary
   axes but never appear in the metrics table; they show up under
@@ -711,8 +753,9 @@ dependence is the question, and you don't want to install extras.
   Chatterjee's ξ was chosen over HSIC, MGC, and MIC, and which other
   nonlinear measures were deferred.
 - [Shape diagnostics design note](shape-diagnostics-design.md) — why
-  `bin_lof_r2_gain` and `sq_corr` were added, the misses they fix, and the
-  periodic/cyclical case deliberately left open.
+  `bin_lof_r2_gain` and `sq_corr` were added, the misses they fix, and how the
+  originally-deferred periodic/cyclical case was later closed
+  (`bin_reversal_count`).
 - [thresholds-and-rationale.md](thresholds-and-rationale.md) — every threshold
   in the package: what it gates, its value, the rationale, and how to override
   the label-driving ones.

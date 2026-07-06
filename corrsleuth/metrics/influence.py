@@ -57,6 +57,33 @@ def _influence_no_value() -> dict[str, MetricResult]:
     return {name: MetricResult.no_value(name) for name in _INFLUENCE_NAMES}
 
 
+def _cooks_distances(x: np.ndarray, y: np.ndarray) -> np.ndarray | None:
+    """Cook's distance for each row of the elementary ``y ~ x`` fit.
+
+    ``None`` if ``x`` has no variance (constant input is guarded upstream by
+    every caller, but this stays defensive). An all-zero array for a
+    (near-)perfect linear fit, which leaves no residual structure for any row
+    to be influential.
+    """
+    n = x.shape[0]
+    x_centered = x - x.mean()
+    ss_xx = float(np.sum(x_centered**2))
+    if ss_xx <= 0.0:
+        return None
+
+    slope, intercept = np.polyfit(x, y, 1)
+    residuals = y - (slope * x + intercept)
+    sse = float(np.sum(residuals**2))
+    ss_tot_y = float(np.sum((y - y.mean()) ** 2))
+    if ss_tot_y <= 0.0 or sse / ss_tot_y < 1e-12:
+        return np.zeros(n)
+
+    s_squared = sse / (n - 2)
+    leverage = 1.0 / n + x_centered**2 / ss_xx
+    one_minus_h = np.maximum((1.0 - leverage) ** 2, 1e-12)
+    return residuals**2 * leverage / (2.0 * s_squared * one_minus_h)
+
+
 def compute_influence(pair: CleanPair) -> dict[str, MetricResult]:
     """Row-level influence of the ``y ~ x`` fit, via Cook's distance.
 
@@ -78,37 +105,11 @@ def compute_influence(pair: CleanPair) -> dict[str, MetricResult]:
 
     x = pair.x.to_numpy().astype(float)
     y = pair.y.to_numpy().astype(float)
-    n = x.shape[0]
 
     try:
-        x_centered = x - x.mean()
-        ss_xx = float(np.sum(x_centered**2))
-        if ss_xx <= 0.0:  # constant x (guarded upstream, but be defensive)
+        cooks = _cooks_distances(x, y)
+        if cooks is None:
             return _influence_no_value()
-
-        slope, intercept = np.polyfit(x, y, 1)
-        residuals = y - (slope * x + intercept)
-        sse = float(np.sum(residuals**2))
-        ss_tot_y = float(np.sum((y - y.mean()) ** 2))
-
-        # A (near-)perfect linear fit leaves no residual structure — removing any
-        # single row keeps the line, so no row is influential. Report zeros
-        # rather than dividing by an ~0 residual mean square.
-        if ss_tot_y <= 0.0 or sse / ss_tot_y < 1e-12:
-            return {
-                "max_cook_distance": MetricResult(
-                    name="max_cook_distance", value=0.0, available=True
-                ),
-                "n_influential_points": MetricResult(
-                    name="n_influential_points", value=0.0, available=True
-                ),
-            }
-
-        s_squared = sse / (n - 2)
-        leverage = 1.0 / n + x_centered**2 / ss_xx
-        one_minus_h = np.maximum((1.0 - leverage) ** 2, 1e-12)
-        cooks = residuals**2 * leverage / (2.0 * s_squared * one_minus_h)
-
         max_cook = float(np.max(cooks))
         n_influential = float(int(np.sum(cooks > COOK_INFLUENTIAL_THRESHOLD)))
     except (ValueError, RuntimeError, FloatingPointError) as e:
@@ -124,3 +125,37 @@ def compute_influence(pair: CleanPair) -> dict[str, MetricResult]:
             name="n_influential_points", value=n_influential, available=True
         ),
     }
+
+
+def compute_influential_mask(pair: CleanPair) -> np.ndarray | None:
+    """Boolean mask (aligned to ``pair.x``/``pair.y``) of rows exceeding
+    :data:`COOK_INFLUENTIAL_THRESHOLD`.
+
+    Reuses the same Cook's distances as :func:`compute_influence`, so the rows
+    flagged here are exactly what ``n_influential_points`` counts. Exposed for
+    callers that need to *exclude* those rows and re-test something else on the
+    remainder (e.g. re-testing heteroscedasticity to check whether an apparent
+    variance-shape signal is really just this same leverage artifact — see
+    ``heuristics/classifier.py``'s ``detect_metric_warnings``).
+
+    ``None`` under the same guards as :func:`compute_influence` (constant
+    input, ``n_used`` below :data:`_MIN_N_FOR_INFLUENCE`, or a degenerate fit
+    with no residual structure to flag).
+    """
+    if pair.x_is_constant or pair.y_is_constant:
+        return None
+    if pair.n_used < _MIN_N_FOR_INFLUENCE:
+        return None
+
+    x = pair.x.to_numpy().astype(float)
+    y = pair.y.to_numpy().astype(float)
+
+    try:
+        cooks = _cooks_distances(x, y)
+    except (ValueError, RuntimeError, FloatingPointError) as e:
+        raise MetricComputationError(
+            f"Failed to compute influence: {type(e).__name__}: {e}"
+        ) from e
+    if cooks is None:
+        return None
+    return cooks > COOK_INFLUENTIAL_THRESHOLD

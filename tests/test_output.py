@@ -333,6 +333,8 @@ def test_secondary_axes_surfaced_in_every_output_form():
         "constant",
         "increasing_spread",
         "decreasing_spread",
+        "edge_high_spread",
+        "center_high_spread",
     )
 
     nested = res.to_dict()["diagnostics"]

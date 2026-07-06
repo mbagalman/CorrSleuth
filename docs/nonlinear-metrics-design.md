@@ -226,10 +226,19 @@ Conventions applied:
    reverse direction is `ξ(candidate → target)` — the one feature-engineering
    users typically want when prioritizing predictors. Both names are valid
    `sort_by` keys for `report.plot_top()`.
-2. **Heuristic interaction.** ξ is currently diagnostic-only and does
-   not feed `apply_heuristics`. Worth a follow-up ticket to consider
-   whether `nonmonotonic_dependence` should be assignable in deep mode
-   when `dcor` isn't available but ξ is high.
+2. **Heuristic interaction. Substantially resolved, by a different route** —
+   ξ itself still does not feed `apply_heuristics` (it remains
+   diagnostic/warning-only), but the underlying gap this question pointed at
+   (a strong nonmonotonic dependence, e.g. a sinusoid, reading
+   `weak_or_no_relationship` in deep mode because `dcor` isn't available) was
+   closed by the lite-computable shape diagnostics instead:
+   `nonmonotonic_dependence` is now assignable in every mode via `sq_corr`
+   (magnitude/radial dependence) or the bin-reversal oscillation gate
+   (periodic dependence) — see
+   [shape-diagnostics-design.md](shape-diagnostics-design.md). Those routes
+   are also mode-independent, which consulting ξ (deep-only) would not have
+   been — the same call would have produced different labels per mode, a
+   reproducibility cost the shape-diagnostic routes avoid.
 3. **Hoeffding's D.** Worth implementing as a second symmetric
    dependence measure for the deep-mode toolbox? Open question.
 

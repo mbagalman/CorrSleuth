@@ -21,8 +21,10 @@ def make_relationship(
     - logarithmic_monotonic
     - threshold_step
     - u_shape
+    - sinusoidal
     - circular
     - heteroscedastic
+    - bowtie_variance
     - outlier_driven
     - independent
 
@@ -86,6 +88,17 @@ def make_relationship(
         y = np.where(x > 0, 1.0, -1.0) + rng.normal(0, noise, size=n)
     elif shape_type == "u_shape":
         y = x**2 + rng.normal(0, noise, size=n)
+    elif shape_type == "sinusoidal":
+        # ~2.5 full cycles: Pearson, Spearman, and (only marginally above its
+        # floor) distance correlation all read weak, yet Y is a strong
+        # deterministic function of X. Detected via the bin-mean reversal
+        # count jointly with the bin lack-of-fit gain (metrics/shape.py) — the
+        # lite-computable oscillation route into nonmonotonic_dependence. A
+        # half-integer cycle count is used because over an integer number of
+        # cycles the sine's net linear component is larger, pushing
+        # Pearson/Spearman toward the rule's monotone ceiling.
+        x = rng.uniform(0, 5 * np.pi, size=n)
+        y = np.sin(x) + rng.normal(0, noise, size=n)
     elif shape_type == "circular":
         # Points scattered around a ring: X and Y are dependent (X^2 + Y^2 is
         # approximately constant) but Pearson, Spearman, and distance
@@ -103,6 +116,17 @@ def make_relationship(
         # catch. x is drawn positive so the spread scaling is monotone.
         x = rng.uniform(0, 4, size=n)
         spread = noise * (0.5 + x)
+        y = x + rng.normal(0, 1, size=n) * spread
+    elif shape_type == "bowtie_variance":
+        # A linear *mean* with residual spread that is high at both extremes
+        # of x and low in the middle -- a symmetric ("bowtie") pattern the
+        # one-directional Goldfeld-Quandt funnel check is blind to (both edges
+        # have similarly high spread, so its low-vs-high ratio reads ~1). This
+        # is what variance_shape="edge_high_spread" and its bowtie_ratio
+        # diagnostic exist to catch. x is centered at 0 so the spread scales
+        # symmetrically with distance from the center.
+        x = rng.uniform(-4, 4, size=n)
+        spread = noise * (0.5 + np.abs(x))
         y = x + rng.normal(0, 1, size=n) * spread
     elif shape_type == "outlier_driven":
         y = rng.normal(0, noise, size=n)

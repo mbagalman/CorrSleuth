@@ -57,10 +57,13 @@ class MetricDiagnostics:
     Pearson-Kendall gaps, the overall ``disagreement_score``, the
     outlier-sensitivity fields (``pearson_trimmed``, ``pearson_trim_delta``),
     the shape diagnostics (``bin_lof_r2_gain``, the equal-frequency-bin
-    lack-of-fit test's R² gain over a linear fit; ``sq_corr``, the correlation
-    between X² and Y²) — see ``corrsleuth/metrics/shape.py`` — and the
+    lack-of-fit test's R² gain over a linear fit; ``bin_reversal_count``, how
+    many times the sequence of bin means changes direction — 0 for a monotone
+    trend, 1 for a single bend, 2+ for an oscillation; ``sq_corr``, the
+    correlation between X² and Y²) — see ``corrsleuth/metrics/shape.py`` — and the
     heteroscedasticity diagnostics (``bp_pvalue``, the Breusch-Pagan p-value;
-    ``gq_ratio``, the Goldfeld-Quandt high-vs-low-x residual variance ratio) —
+    ``gq_ratio``, the Goldfeld-Quandt high-vs-low-x residual variance ratio;
+    ``bowtie_ratio``, the edge-thirds-vs-middle-third residual variance ratio) —
     see ``corrsleuth/metrics/variance.py`` — the segmentation diagnostics
     (``segment_gain``, the R² gain of the best single-breakpoint two-line fit
     over one line; ``breakpoint_x``, the x-location of a detected step, reported
@@ -91,9 +94,11 @@ class MetricDiagnostics:
     pearson_trimmed: float | None = None
     pearson_trim_delta: float | None = None
     bin_lof_r2_gain: float | None = None
+    bin_reversal_count: int | None = None
     sq_corr: float | None = None
     bp_pvalue: float | None = None
     gq_ratio: float | None = None
+    bowtie_ratio: float | None = None
     segment_gain: float | None = None
     breakpoint_x: float | None = None
     max_cook_distance: float | None = None
@@ -145,9 +150,11 @@ class CorrSleuthResult:
             pearson_trimmed=None,
             pearson_trim_delta=None,
             bin_lof_r2_gain=None,
+            bin_reversal_count=None,
             sq_corr=None,
             bp_pvalue=None,
             gq_ratio=None,
+            bowtie_ratio=None,
             segment_gain=None,
             breakpoint_x=None,
             max_cook_distance=None,
@@ -215,9 +222,11 @@ class CorrSleuthResult:
                 f"  pearson_kendall_gap      : {self._format_value(self.diagnostics.pearson_kendall_gap)}",
                 f"  pearson_trim_delta       : {self._format_value(self.diagnostics.pearson_trim_delta)}",
                 f"  bin_lof_r2_gain          : {self._format_value(self.diagnostics.bin_lof_r2_gain)}",
+                f"  bin_reversal_count       : {self._format_count(self.diagnostics.bin_reversal_count)}",
                 f"  sq_corr                  : {self._format_value(self.diagnostics.sq_corr)}",
                 f"  bp_pvalue                : {self._format_value(self.diagnostics.bp_pvalue)}",
                 f"  gq_ratio                 : {self._format_value(self.diagnostics.gq_ratio)}",
+                f"  bowtie_ratio             : {self._format_value(self.diagnostics.bowtie_ratio)}",
                 f"  segment_gain             : {self._format_value(self.diagnostics.segment_gain)}",
                 f"  breakpoint_x             : {self._format_value(self.diagnostics.breakpoint_x)}",
                 f"  max_cook_distance        : {self._format_value(self.diagnostics.max_cook_distance)}",
@@ -300,8 +309,9 @@ class CorrSleuthResult:
                 explanation += (
                     f" Because stability used lite metrics, it may not fully test a "
                     f"standard-mode {self.pattern} label (this can be conservative "
-                    f"if the label was actually driven by the lite-computable "
-                    f"sq_corr shape diagnostic rather than distance correlation)."
+                    f"if the label was actually driven by a lite-computable shape "
+                    f"diagnostic — sq_corr or the bin-reversal oscillation route — "
+                    f"rather than distance correlation)."
                 )
         return explanation
 
@@ -387,6 +397,10 @@ class CorrSleuthResult:
                         format_markdown_value(self.diagnostics.bin_lof_r2_gain),
                     ],
                     [
+                        "bin_reversal_count",
+                        self._format_count(self.diagnostics.bin_reversal_count),
+                    ],
+                    [
                         "sq_corr",
                         format_markdown_value(self.diagnostics.sq_corr),
                     ],
@@ -397,6 +411,10 @@ class CorrSleuthResult:
                     [
                         "gq_ratio",
                         format_markdown_value(self.diagnostics.gq_ratio),
+                    ],
+                    [
+                        "bowtie_ratio",
+                        format_markdown_value(self.diagnostics.bowtie_ratio),
                     ],
                     [
                         "segment_gain",

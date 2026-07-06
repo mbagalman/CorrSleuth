@@ -8,13 +8,15 @@ from corrsleuth.api import profile_pair
 from corrsleuth.datasets import make_relationship
 from corrsleuth.exceptions import MetricComputationError, OptionalDependencyError
 from corrsleuth.metrics import (
-    compute_bin_lof_r2_gain,
+    compute_bin_lof,
     compute_biweight_midcorrelation,
     compute_chatterjee_xi,
     compute_chatterjee_xi_reverse,
     compute_distance_correlation,
     compute_heteroscedasticity,
+    compute_heteroscedasticity_excluding,
     compute_influence,
+    compute_influential_mask,
     compute_kendall,
     compute_median_clipped_pearson,
     compute_mutual_information,
@@ -475,7 +477,7 @@ def test_bin_lof_r2_gain_matches_reference_on_curved_data():
     y = np.exp(x) + rng.normal(0, 0.1, size=n) * np.exp(x).std()
     pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
 
-    result = compute_bin_lof_r2_gain(pair)
+    result = compute_bin_lof(pair)["bin_lof_r2_gain"]
     expected = _reference_bin_lof_r2_gain(x, y)
 
     assert result.value == pytest.approx(expected, abs=1e-9)
@@ -493,31 +495,33 @@ def test_bin_lof_r2_gain_positive_for_curved_data_near_zero_for_linear():
     y_curved = x_curved**2 + rng.normal(0, 0.1, size=n)
     curved_pair = validate_pair(pd.DataFrame({"x": x_curved, "y": y_curved}), "x", "y")
 
-    linear_gain = compute_bin_lof_r2_gain(linear_pair).value
-    curved_gain = compute_bin_lof_r2_gain(curved_pair).value
+    linear_gain = compute_bin_lof(linear_pair)["bin_lof_r2_gain"].value
+    curved_gain = compute_bin_lof(curved_pair)["bin_lof_r2_gain"].value
 
     assert linear_gain < 0.05
     assert curved_gain > 0.5
 
 
-def test_bin_lof_r2_gain_returns_none_for_constant_input():
+def test_bin_lof_returns_none_for_constant_input():
     df = pd.DataFrame({"x": [1.0] * 60, "y": list(range(60))})
     pair = validate_pair(df, "x", "y")
 
-    result = compute_bin_lof_r2_gain(pair)
-    assert result.value is None
-    assert result.available is True
+    result = compute_bin_lof(pair)
+    assert result["bin_lof_r2_gain"].value is None
+    assert result["bin_reversal_count"].value is None
+    assert result["bin_lof_r2_gain"].available is True
 
 
-def test_bin_lof_r2_gain_returns_none_below_min_n():
+def test_bin_lof_returns_none_below_min_n():
     rng = np.random.default_rng(0)
     n = 40  # below _MIN_N_FOR_BIN_LOF (50)
     df = pd.DataFrame({"x": rng.uniform(size=n), "y": rng.uniform(size=n)})
     pair = validate_pair(df, "x", "y")
 
-    result = compute_bin_lof_r2_gain(pair)
-    assert result.value is None
-    assert result.available is True
+    result = compute_bin_lof(pair)
+    assert result["bin_lof_r2_gain"].value is None
+    assert result["bin_reversal_count"].value is None
+    assert result["bin_lof_r2_gain"].available is True
 
 
 def test_bin_lof_r2_gain_handles_heavy_ties_without_raising():
@@ -532,9 +536,62 @@ def test_bin_lof_r2_gain_handles_heavy_ties_without_raising():
     y = np.arange(n, dtype=float)
     pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
 
-    result = compute_bin_lof_r2_gain(pair)
+    result = compute_bin_lof(pair)["bin_lof_r2_gain"]
     assert result.available is True
     assert result.value is not None
+
+
+def test_bin_reversal_count_separates_oscillation_from_single_bend():
+    rng = np.random.default_rng(0)
+    n = 500
+
+    # A ~2.5-cycle sinusoid: several genuine direction reversals.
+    x_sin = rng.uniform(0, 5 * np.pi, size=n)
+    y_sin = np.sin(x_sin) + rng.normal(0, 0.1, size=n)
+    sine = validate_pair(pd.DataFrame({"x": x_sin, "y": y_sin}), "x", "y")
+    sine_result = compute_bin_lof(sine)
+    assert sine_result["bin_reversal_count"].value >= 2
+    assert sine_result["bin_lof_r2_gain"].value > 0.3
+
+    # A U-shape: exactly one bend, so exactly one reversal.
+    x_u = rng.uniform(-3, 3, size=n)
+    y_u = x_u**2 + rng.normal(0, 0.1, size=n)
+    u_shape = validate_pair(pd.DataFrame({"x": x_u, "y": y_u}), "x", "y")
+    assert compute_bin_lof(u_shape)["bin_reversal_count"].value == 1
+
+    # A monotone trend: no reversals.
+    x_lin = rng.uniform(-3, 3, size=n)
+    y_lin = x_lin + rng.normal(0, 0.1, size=n)
+    linear = validate_pair(pd.DataFrame({"x": x_lin, "y": y_lin}), "x", "y")
+    assert compute_bin_lof(linear)["bin_reversal_count"].value == 0
+
+
+def test_bin_reversal_count_known_zigzag_is_exact():
+    """Known-answer check: a noiseless triangle wave whose bin means form an
+    exact up-down-up-down zigzag must count exactly 3 reversals (4 legs)."""
+    n = 400  # -> 20 bins of 20 rows
+    x = np.linspace(0, 4, n, endpoint=False)
+    y = np.abs((x % 2) - 1)  # triangle wave: down, up, down, up over [0, 4)
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_bin_lof(pair)
+    assert result["bin_reversal_count"].value == 3
+    assert result["bin_lof_r2_gain"].value > 0.3
+
+
+def test_bin_reversal_count_noise_has_many_reversals_but_tiny_gain():
+    """The reversal count alone must never be trusted: pure noise reverses
+    direction constantly, but its bin-fit gain is near zero — the joint gate
+    (see OSCILLATION_BIN_LOF_FLOOR) is what separates it from a sinusoid."""
+    rng = np.random.default_rng(0)
+    n = 500
+    x = rng.uniform(-3, 3, size=n)
+    y = rng.normal(0, 1, size=n)
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_bin_lof(pair)
+    assert result["bin_reversal_count"].value >= 2  # noise wiggles a lot
+    assert result["bin_lof_r2_gain"].value < 0.3  # ... but explains nothing
 
 
 def test_squared_correlation_strongly_negative_for_circular_data():
@@ -652,6 +709,7 @@ def test_heteroscedasticity_returns_none_for_constant_input():
     result = compute_heteroscedasticity(pair)
     assert result["bp_pvalue"].value is None
     assert result["gq_ratio"].value is None
+    assert result["bowtie_ratio"].value is None
     assert result["bp_pvalue"].available is True
 
 
@@ -664,6 +722,7 @@ def test_heteroscedasticity_returns_none_below_min_n():
     result = compute_heteroscedasticity(pair)
     assert result["bp_pvalue"].value is None
     assert result["gq_ratio"].value is None
+    assert result["bowtie_ratio"].value is None
 
 
 def test_heteroscedasticity_returns_none_for_perfect_linear_fit():
@@ -676,6 +735,7 @@ def test_heteroscedasticity_returns_none_for_perfect_linear_fit():
     result = compute_heteroscedasticity(pair)
     assert result["bp_pvalue"].value is None
     assert result["gq_ratio"].value is None
+    assert result["bowtie_ratio"].value is None
 
 
 def test_heteroscedasticity_handles_binary_x_without_raising():
@@ -691,6 +751,80 @@ def test_heteroscedasticity_handles_binary_x_without_raising():
     result = compute_heteroscedasticity(pair)
     assert result["bp_pvalue"].value is not None
     assert result["gq_ratio"].value is not None
+    assert result["bowtie_ratio"].value is not None
+
+
+def _reference_bowtie_ratio(x, y):
+    """Independent edge-vs-middle variance ratio: fit the line with np.polyfit,
+    split x-sorted residuals into thirds via plain array slicing (rather than
+    np.array_split) as a different arithmetic path than metrics/variance.py."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    n = len(x)
+    slope, intercept = np.polyfit(x, y, 1)
+    resid = y - (slope * x + intercept)
+    order = np.argsort(x, kind="mergesort")
+    resid_sorted = resid[order]
+    third = n // 3
+    low, mid, high = (
+        resid_sorted[:third],
+        resid_sorted[third : n - third],
+        resid_sorted[n - third :],
+    )
+    mid_ms = np.mean(mid**2)
+    edge_ms = np.mean(np.concatenate([low, high]) ** 2)
+    return float(edge_ms / mid_ms)
+
+
+def test_bowtie_ratio_matches_reference_on_symmetric_variance_data():
+    rng = np.random.default_rng(0)
+    n = 900
+    x = rng.uniform(-4, 4, size=n)
+    y = x + rng.normal(0, 1, size=n) * (0.5 + np.abs(x))  # spread high at both ends
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_heteroscedasticity(pair)
+    # np.array_split's remainder distribution differs slightly from plain
+    # slicing at n not divisible by 3, so allow a small relative tolerance
+    # rather than requiring exact equality.
+    expected = _reference_bowtie_ratio(x, y)
+    assert result["bowtie_ratio"].value == pytest.approx(expected, rel=0.05)
+
+
+def test_bowtie_ratio_detects_symmetric_variance_and_ignores_funnel():
+    rng = np.random.default_rng(0)
+    n = 900
+    x = rng.uniform(-4, 4, size=n)
+
+    bowtie_y = x + rng.normal(0, 1, size=n) * (0.5 + np.abs(x))
+    bowtie = validate_pair(pd.DataFrame({"x": x, "y": bowtie_y}), "x", "y")
+    het_bowtie = compute_heteroscedasticity(bowtie)
+    assert het_bowtie["bowtie_ratio"].value > 2.5  # clearly edge-high
+
+    # A one-directional funnel has similar low-x/high-x variance to a bowtie's
+    # low+high combined, but its middle third is not calm -- bowtie_ratio
+    # should stay near 1, confirming the two checks measure different shapes.
+    x_pos = rng.uniform(0, 4, size=n)
+    funnel_y = x_pos + rng.normal(0, 1, size=n) * (0.5 + x_pos)
+    funnel = validate_pair(pd.DataFrame({"x": x_pos, "y": funnel_y}), "x", "y")
+    het_funnel = compute_heteroscedasticity(funnel)
+    assert 1.0 / 1.5 < het_funnel["bowtie_ratio"].value < 1.5
+
+    homo_y = x + rng.normal(0, 0.3, size=n)
+    homo = validate_pair(pd.DataFrame({"x": x, "y": homo_y}), "x", "y")
+    het_homo = compute_heteroscedasticity(homo)
+    assert 1.0 / 1.5 < het_homo["bowtie_ratio"].value < 1.5
+
+
+def test_bowtie_ratio_below_one_for_center_high_spread():
+    rng = np.random.default_rng(2)
+    n = 900
+    x = rng.uniform(-4, 4, size=n)
+    y = x + rng.normal(0, 1, size=n) * (2.5 - np.abs(x))  # spread high in the middle
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_heteroscedasticity(pair)
+    assert result["bowtie_ratio"].value < 1.0 / 2.5
 
 
 # --- Segmentation (single-breakpoint, mean-shape refinement) ---
@@ -889,3 +1023,80 @@ def test_influence_perfect_fit_reports_no_influence():
     result = compute_influence(pair)
     assert result["max_cook_distance"].value == 0.0
     assert result["n_influential_points"].value == 0.0
+
+
+# --- compute_influential_mask / compute_heteroscedasticity_excluding (ticket 1.5) ---
+
+
+def test_influential_mask_matches_n_influential_points_count():
+    rng = np.random.default_rng(0)
+    n = 300
+    x = rng.uniform(-3, 3, size=n)
+    y = x + rng.normal(0, 0.3, size=n)
+    x[-1], y[-1] = 20.0, -20.0  # one strongly influential row
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    mask = compute_influential_mask(pair)
+    result = compute_influence(pair)
+    assert mask is not None
+    assert mask.dtype == bool
+    assert mask.shape == (n,)
+    assert int(mask.sum()) == int(result["n_influential_points"].value)
+    assert mask[-1]  # the injected row is the one flagged
+
+
+def test_influential_mask_none_below_min_n():
+    rng = np.random.default_rng(0)
+    n = 40  # below _MIN_N_FOR_INFLUENCE (50)
+    df = pd.DataFrame({"x": rng.uniform(-3, 3, n), "y": rng.uniform(-3, 3, n)})
+    pair = validate_pair(df, "x", "y")
+
+    assert compute_influential_mask(pair) is None
+
+
+def test_influential_mask_none_for_constant_input():
+    df = pd.DataFrame({"x": [1.0] * 80, "y": list(range(80))})
+    pair = validate_pair(df, "x", "y")
+
+    assert compute_influential_mask(pair) is None
+
+
+def test_heteroscedasticity_excluding_removes_leverage_artifact_signal():
+    # A single manufactured outlier creates a spurious Goldfeld-Quandt/bowtie
+    # signal on the full sample; excluding it (matching the row
+    # compute_influential_mask flags) must make the signal disappear, since
+    # the remainder is pure noise. This is the X13 pattern from ticket 1.5.
+    rng = np.random.default_rng(0)
+    n = 500
+    x = rng.normal(size=n)
+    y = rng.normal(size=n)
+    x[-1], y[-1] = 20.0, 20.0
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    full = compute_heteroscedasticity(pair)
+    mask = compute_influential_mask(pair)
+    assert mask is not None and mask.sum() == 1
+
+    excluded = compute_heteroscedasticity_excluding(pair, mask)
+    # Full-sample signal is real (BP rejects, some effect-size ratio clears a
+    # floor); after excluding the flagged row it must no longer clear either
+    # the funnel or the bowtie floor.
+    assert full["bp_pvalue"].value < 0.05
+    assert excluded["bp_pvalue"].value > 0.05
+
+
+def test_heteroscedasticity_excluding_none_when_subset_drops_below_min_n():
+    rng = np.random.default_rng(0)
+    n = 55  # just above _MIN_N_FOR_HETEROSCEDASTICITY (50)
+    x = rng.uniform(0, 4, size=n)
+    y = x + rng.normal(0, 1, size=n) * (0.5 + x)
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    # Exclude enough rows to push the remainder below the floor.
+    mask = np.zeros(n, dtype=bool)
+    mask[:10] = True
+
+    result = compute_heteroscedasticity_excluding(pair, mask)
+    assert result["bp_pvalue"].value is None
+    assert result["gq_ratio"].value is None
+    assert result["bowtie_ratio"].value is None

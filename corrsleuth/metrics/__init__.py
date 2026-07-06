@@ -1,6 +1,6 @@
 from .bootstrap import compute_bootstrap, compute_bootstrap_intervals
 from .core import compute_kendall, compute_pearson, compute_spearman
-from .influence import compute_influence
+from .influence import compute_influence, compute_influential_mask
 from .nonlinear import compute_chatterjee_xi, compute_chatterjee_xi_reverse
 from .optional import compute_distance_correlation, compute_mutual_information
 from .robust import (
@@ -13,11 +13,11 @@ from .robust import (
     compute_winsorized_pearson,
 )
 from .shape import (
-    compute_bin_lof_r2_gain,
+    compute_bin_lof,
     compute_segmentation,
     compute_squared_correlation,
 )
-from .variance import compute_heteroscedasticity
+from .variance import compute_heteroscedasticity, compute_heteroscedasticity_excluding
 
 __all__ = [
     "compute_pearson",
@@ -33,11 +33,13 @@ __all__ = [
     "compute_median_clipped_pearson",
     "compute_chatterjee_xi",
     "compute_chatterjee_xi_reverse",
-    "compute_bin_lof_r2_gain",
+    "compute_bin_lof",
     "compute_squared_correlation",
     "compute_segmentation",
     "compute_heteroscedasticity",
+    "compute_heteroscedasticity_excluding",
     "compute_influence",
+    "compute_influential_mask",
     "ROBUST_METRIC_MIN_N",
     "compute_bootstrap",
     "compute_bootstrap_intervals",
