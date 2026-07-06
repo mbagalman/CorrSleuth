@@ -177,7 +177,11 @@ Chatterjee's-ξ "this label may understate the relationship" warning
 transformed scale. This is a defense-in-depth safety net, not the primary fix
 mechanism — the primary fixes are `bin_lof_r2_gain` and `sq_corr` above.
 
-### 4. Bin-mean reversal count (periodicity detector) — *deferred*
+### 4. Bin-mean reversal count (periodicity detector) — *deferred, then implemented*
+
+> The section below is the original "why deferred" reasoning, preserved for the
+> record. It was **superseded** by the amendment at the end of the section: both
+> blockers were later resolved and the detector shipped as `bin_reversal_count`.
 
 The natural extension of the bin-lack-of-fit idea: after confirming
 `bin_lof_r2_gain` clears a floor (there's real structure beyond a line), count
@@ -270,6 +274,10 @@ additional routes (not new labels). **Extend the existing Chatterjee's-ξ
 warning mechanism** to also consider mutual information, as a coarse
 defense-in-depth safety net. **Defer** a periodicity diagnostic and any new
 `cyclical_or_oscillating_dependence` label to a follow-up design note.
+*(Update: the periodicity diagnostic was subsequently implemented as
+`bin_reversal_count` — see the §4 amendment. It did not need a new primary
+label after all: it routes into `nonmonotonic_dependence` and is described by
+the `dependence_type = "oscillating"` secondary axis.)*
 
 Why extend existing labels rather than add new ones for the first two cases?
 Both `bin_lof_r2_gain` and `sq_corr` showed clean, wide-margin separation
@@ -279,8 +287,10 @@ are semantically identical to what `monotonic_nonlinear` and
 `nonmonotonic_dependence` already mean — "monotonic but not linear" and "real
 dependence the monotone measures miss," respectively. No new concept needs
 introducing to an analyst who already understands those two labels. The
-periodic case is different in kind, not just in threshold, which is why it's
-the one held back for a new label.
+periodic case was originally judged different in kind — but the later
+`dependence_type = "oscillating"` axis (added by the secondary-diagnostic
+taxonomy) carried that nuance without a new primary label; see the §4
+amendment.
 
 ## Implementation summary
 
@@ -291,7 +301,9 @@ This change ships:
   kept out of `metrics_map` in `api.py` — they feed the cascade and
   `result.diagnostics`, but never appear in the public metrics table
   alongside primary association coefficients like Pearson or distance
-  correlation.
+  correlation. *(Update: `compute_bin_lof_r2_gain` was later renamed to
+  `compute_bin_lof` and now returns a dict of `bin_lof_r2_gain` plus
+  `bin_reversal_count` — see the §4 amendment.)*
 - New cascade constants in `classifier.py`: `BIN_LOF_R2_GAIN_THRESHOLD = 0.05`
   and `SQ_CORR_THRESHOLD = 0.35` (the latter matches
   `NONMONOTONIC_DC_THRESHOLD` for consistency).
@@ -337,13 +349,20 @@ This change ships:
    looks like a threshold effect" rather than "some general nonlinear
    monotonic curve." Deferred rather than adding a third label in the same
    change; open to revisiting.
-3. **Periodicity.** As discussed above — worth its own design note once
-   thresholds are validated across more than one dataset.
+3. **Periodicity. Resolved — since implemented.** The thresholds were
+   subsequently validated across many datasets (a 2,080-run sweep) and the
+   detector shipped as `bin_reversal_count`; see the §4 amendment. It reached
+   `nonmonotonic_dependence` via a third cascade route plus a
+   `dependence_type = "oscillating"` axis value, rather than the separate
+   design note / new primary label this question anticipated.
 
 ## Out of scope for this change
 
-- A `cyclical_or_oscillating_dependence` label and its reversal-count
-  diagnostic (deferred, see above).
+- A reversal-count periodicity diagnostic. *(Subsequently implemented as
+  `bin_reversal_count` — but as a route into the existing
+  `nonmonotonic_dependence` label plus a `dependence_type = "oscillating"`
+  secondary axis, not the standalone `cyclical_or_oscillating_dependence`
+  label sketched here. See the §4 amendment.)*
 - Distinguishing which cascade route (dc vs. `sq_corr`, or rank-gap vs.
   bin-lof) produced a given label, for bootstrap-gating or explanatory
   purposes.
