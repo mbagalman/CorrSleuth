@@ -300,6 +300,83 @@ def test_scan_target_rejects_invalid_sample_size():
         scan_target(df, "target", sample_size=2.5)
 
 
+def test_scan_target_rejects_invalid_direction():
+    df = _build_clean_df()
+    with pytest.raises(InputError, match="Unknown direction"):
+        scan_target(df, "target", direction="sideways")
+
+
+def _directional_df(n: int = 800, seed: int = 0) -> pd.DataFrame:
+    """Y drives a step-shaped candidate (Xi = step(Y)) plus a genuine linear one.
+    The step's shape only shows in the reverse (Y -> Xi) orientation."""
+    rng = np.random.default_rng(seed)
+    y = rng.normal(size=n)
+    return pd.DataFrame(
+        {
+            "Y": y,
+            "step": np.where(y > 0, 2.0, -2.0) + rng.normal(0, 0.3, size=n),
+            "lin": y + rng.normal(0, 0.3, size=n),
+        }
+    )
+
+
+def test_scan_direction_reverse_profiles_target_to_candidate():
+    """direction='reverse' profiles profile_pair(target, candidate), so a
+    candidate engineered as step(Y) reads as monotonic_nonlinear (its true shape),
+    where the forward orientation only saw near_linear."""
+    df = _directional_df()
+
+    forward = {
+        e.column: e.result_data.pattern
+        for e in scan_target(df, "Y", direction="forward").successes
+    }
+    reverse = {
+        e.column: e.result_data.pattern
+        for e in scan_target(df, "Y", direction="reverse").successes
+    }
+
+    assert forward["step"] == "near_linear"  # predictive view hides the step
+    assert reverse["step"] == "monotonic_nonlinear"  # truth orientation reveals it
+    assert forward["lin"] == reverse["lin"] == "near_linear"  # genuine linear both ways
+
+
+def test_scan_direction_both_flags_and_frames_reverse_shape():
+    """direction='both' keeps the forward profile as primary, attaches the reverse
+    shape, flags candidates whose reverse shape is structured while the forward is
+    not, and exposes reverse_* columns in to_frame."""
+    report = scan_target(_directional_df(), "Y", direction="both")
+
+    # Primary result stays the forward (predictive) orientation.
+    labels = {e.column: e.result_data.pattern for e in report.successes}
+    assert labels["step"] == "near_linear"
+
+    # The asymmetry section flags the step (reverse structured), not the linear.
+    summary = report.summary()
+    assert "Shape differs by direction" in summary
+    section = summary[summary.index("Shape differs by direction") :]
+    assert "step" in section
+    assert "lin:" not in section  # genuine linear is not flagged
+
+    # to_frame carries the reverse shape.
+    frame = report.to_frame()
+    assert "reverse_pattern" in frame.columns
+    step_row = frame[frame["variable"] == "step"].iloc[0]
+    assert step_row["pattern"] == "near_linear"
+    assert step_row["reverse_pattern"] == "monotonic_nonlinear"
+    assert step_row["reverse_mean_shape"] == "step_or_threshold"
+    lin_row = frame[frame["variable"] == "lin"].iloc[0]
+    assert lin_row["reverse_pattern"] == "near_linear"
+
+
+def test_scan_direction_forward_default_has_no_reverse_columns():
+    """The default (forward) scan is unchanged: no reverse profile is computed and
+    to_frame carries no reverse_* columns."""
+    report = scan_target(_directional_df(), "Y")
+
+    assert all(e.reverse_result is None for e in report.successes)
+    assert "reverse_pattern" not in report.to_frame().columns
+
+
 def test_scan_target_rejects_duplicate_target_columns():
     df = _build_clean_df()
     df = pd.concat([df, df["target"]], axis=1)  # two 'target' columns
