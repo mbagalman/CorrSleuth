@@ -699,6 +699,61 @@ def test_heavy_tailed_y_artifact_does_not_read_as_magnitude_linked():
     assert res.pattern == "weak_or_no_relationship"
     assert res.diagnostics.dependence_type != "magnitude_linked"
 
+
+def test_moderate_spearman_curve_promotes_to_monotonic_nonlinear():
+    """A monotone curve that is flat in the middle and steep in the tails (a
+    noisy cubic) depresses Spearman below Pearson, so gating monotonic_nonlinear
+    on a *strong* Spearman under-labels it mixed_or_ambiguous. The bin-LoF still
+    confirms the bend, so with a moderate monotone trend (Spearman ~0.46 < 0.50 <
+    Pearson) the pair is now promoted. (Blind-test X9.)"""
+    rng = np.random.default_rng(1)
+    x = rng.normal(size=600)
+    df = pd.DataFrame({"x": x, "y": x**3 + 2.0 * rng.normal(size=600)})
+    res = profile_pair(df, "x", "y", mode="lite")
+
+    m = {row["metric"]: row["value"] for _, row in res.metrics.iterrows()}
+    # Precondition: the moderate-Spearman regime the old strong-Spearman gate blocked.
+    assert abs(m["spearman"]) < 0.50 < abs(m["pearson"])
+    assert res.pattern == "monotonic_nonlinear"
+    assert res.diagnostics.mean_shape == "curved"
+
+
+def test_moderate_spearman_curvature_route_requires_robust_bin_lof():
+    """The moderate-Spearman curvature route requires the *robust* (leave-one-bin-
+    out) bin-LoF gain, so a leverage artifact whose raw gain is inflated by a
+    single outlier bin (robust collapses) is NOT promoted — only genuine curvature
+    spread across bins is. The strong-Spearman route is unchanged (raw suffices)."""
+
+    def m(**kw):
+        return {name: MetricResult(name, val, True) for name, val in kw.items()}
+
+    base = dict(pearson=0.64, spearman=0.45, kendall_tau_b=0.35, bin_lof_r2_gain=0.10)
+    # Genuine curve: the robust gain also clears the floor -> promoted.
+    genuine = m(**base, bin_lof_r2_gain_robust=0.09)
+    assert (
+        apply_heuristics(genuine, ["pearson_trim_stable"], 1500).label
+        == "monotonic_nonlinear"
+    )
+    # Leverage 'curvature' (one outlier bin): robust gain collapses -> NOT promoted.
+    artifact = m(**base, bin_lof_r2_gain_robust=0.0)
+    assert (
+        apply_heuristics(artifact, ["pearson_trim_stable"], 1500).label
+        != "monotonic_nonlinear"
+    )
+    # Strong-Spearman route is unaffected: raw gain alone still promotes, even with
+    # a collapsed robust gain (backward compatibility).
+    strong = m(
+        pearson=0.62,
+        spearman=0.72,
+        kendall_tau_b=0.55,
+        bin_lof_r2_gain=0.10,
+        bin_lof_r2_gain_robust=0.0,
+    )
+    assert (
+        apply_heuristics(strong, ["pearson_trim_stable"], 1500).label
+        == "monotonic_nonlinear"
+    )
+
     # A genuine U-shape (sq_corr robust to dropping the extreme points) still
     # lands as magnitude-linked nonmonotonic dependence, in lite mode.
     rr = np.random.default_rng(1)

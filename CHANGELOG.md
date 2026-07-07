@@ -72,7 +72,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keeps the gain's null expectation at ~0 regardless of `n`, so ordinary
   noisy-linear data — including a bivariate normal at moderate ρ — is not read as
   curved; the threshold-calibration sweep lives in `validation/bin_lof_sweep.py`.
-  No mode gate — runs in `lite` too.
+  No mode gate — runs in `lite` too. This bin-LoF route also no longer requires a
+  *strong* Spearman: a monotone curve that is flat in the middle and steep in the
+  tails (e.g. a cubic) depresses Spearman below Pearson, so a moderate Spearman
+  with strong Pearson and confirmed curvature previously fell through to
+  `mixed_or_ambiguous`. It now promotes to `monotonic_nonlinear` when the *robust*
+  (leave-one-bin-out) bin-LoF gain also clears the floor — so a single leverage
+  bin cannot fake the promotion (`validation/curvature_promotion_sweep.py` shows
+  zero incremental false positives on linear/leverage families).
 - **Circular/radial dependence was mislabeled `weak_or_no_relationship`.** A
   true circular relationship (points scattered around a ring) structurally
   caps distance correlation around dCor ≈ 0.2, even noiseless, so it never
