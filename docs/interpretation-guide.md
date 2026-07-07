@@ -749,6 +749,19 @@ Notes:
   rows (`sample_size=`). There is no built-in `joblib`/multiprocessing
   path today; if you need one, parallelize across columns at the call site
   (each `profile_pair` is independent) or open an issue.
+- **Direction matters for shape, not for detection.** The shape diagnostics
+  describe `E[y | x]`, so `scan_target(df, "Y")` (which profiles
+  `profile_pair(candidate, target)`) characterizes each candidate as a *predictor*
+  of the target — the right question for feature screening. But if a candidate was
+  generated *from* the target (`candidate = f(target)` — a step, saturation,
+  sigmoid, sinusoid, or fan of variance), its shape only shows in the reverse
+  orientation. The association strength (Pearson/Spearman/dCor/MI) is the same
+  either way — only the shape flips. Pass `direction="reverse"` to profile
+  `E[candidate | target]`, or `direction="both"` to get a "Shape differs by
+  direction" section that flags candidates whose reverse shape is structured while
+  their predictive shape looks linear — a hint the candidate is driven by the
+  target. Read a reverse shape as *how the candidate depends on the target*, not
+  as predictive of it.
 
 If you are not sure which mode to use: start with `lite`. Move to
 `standard` when an analyst suspects nonmonotonic structure that the lite

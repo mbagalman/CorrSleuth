@@ -93,9 +93,20 @@ class CorrSleuthTargetReport:
     a quick text overview.
     """
 
-    def __init__(self, target: str, entries: list[TargetScanEntry]) -> None:
+    #: Primary patterns considered "structured" (a real nonlinear relationship
+    #: shape) for the reverse-direction comparison — a candidate whose reverse
+    #: pattern is here but whose forward pattern is not looks like ``f(target)``.
+    _STRUCTURED_PATTERNS = frozenset({"monotonic_nonlinear", "nonmonotonic_dependence"})
+
+    def __init__(
+        self,
+        target: str,
+        entries: list[TargetScanEntry],
+        direction: str = "forward",
+    ) -> None:
         self.target = target
         self.entries = list(entries)
+        self.direction = direction
 
     @property
     def successes(self) -> list[TargetScanEntry]:
@@ -104,6 +115,17 @@ class CorrSleuthTargetReport:
     @property
     def failures(self) -> list[TargetScanEntry]:
         return [e for e in self.entries if e.status != "ok"]
+
+    def _reverse_reveals_shape(self, entry: TargetScanEntry) -> bool:
+        """True when ``direction="both"`` and the reverse orientation shows a
+        structured (nonlinear) shape the forward orientation does not — the
+        ``candidate = f(target)`` signature the shape lives in the other view."""
+        if entry.reverse_result is None or entry.result is None:
+            return False
+        return (
+            entry.reverse_result.pattern in self._STRUCTURED_PATTERNS
+            and entry.result.pattern not in self._STRUCTURED_PATTERNS
+        )
 
     def to_frame(self) -> pd.DataFrame:
         """Return one row per inspected column.
@@ -120,7 +142,10 @@ class CorrSleuthTargetReport:
         mirroring :meth:`CorrSleuthResult.to_frame`. Extra ``metric_*`` columns
         are appended when any successful row produced them (standard/deep
         metrics). When bootstrapping was requested, ``pattern_stability`` /
-        ``stability_label`` / ``stability_metric_set`` columns are added.
+        ``stability_label`` / ``stability_metric_set`` columns are added. When the
+        scan ran with ``direction="both"``, ``reverse_pattern`` /
+        ``reverse_mean_shape`` / ``reverse_dependence_type`` columns carry the
+        reverse-orientation (``E[candidate | target]``) shape.
         Skipped/errored rows leave the result-dependent fields NaN and populate
         ``error_type`` / ``error_message`` instead.
         """
@@ -148,11 +173,21 @@ class CorrSleuthTargetReport:
             else []
         )
 
+        # direction="both": the reverse-orientation shape (E[candidate | target])
+        # rides alongside the forward primary so a single frame carries both views.
+        include_reverse = any(e.reverse_result is not None for e in self.entries)
+        reverse_columns = (
+            ["reverse_pattern", "reverse_mean_shape", "reverse_dependence_type"]
+            if include_reverse
+            else []
+        )
+
         all_columns = (
             list(_STATIC_FRAME_COLUMNS)
             + metric_columns
             + diagnostic_columns
             + stability_columns
+            + reverse_columns
         )
 
         rows: list[dict[str, Any]] = []
@@ -180,6 +215,11 @@ class CorrSleuthTargetReport:
                     row["pattern_stability"] = stability.pattern_stability
                     row["stability_label"] = stability.stability_label
                     row["stability_metric_set"] = stability.metric_set
+            if include_reverse and entry.reverse_result is not None:
+                rev = entry.reverse_result
+                row["reverse_pattern"] = rev.pattern
+                row["reverse_mean_shape"] = rev.diagnostics.mean_shape
+                row["reverse_dependence_type"] = rev.diagnostics.dependence_type
             rows.append(row)
         return pd.DataFrame(rows, columns=all_columns)
 
@@ -260,6 +300,29 @@ class CorrSleuthTargetReport:
             for entry in underrate[:top_n]:
                 gap = self._pearson_underrate_gap(entry)
                 lines.append(f"  {entry.column} (gap={gap:.2f})")
+
+        reverse_shape = [e for e in self.successes if self._reverse_reveals_shape(e)]
+        if reverse_shape:
+            reverse_shape.sort(key=lambda e: e.column)
+            lines.extend(
+                [
+                    "",
+                    f"Shape differs by direction (candidate = f({self.target})):",
+                ]
+            )
+            for entry in reverse_shape[:top_n]:
+                rev = entry.reverse_result
+                assert rev is not None  # guaranteed by _reverse_reveals_shape
+                shape = (
+                    rev.diagnostics.mean_shape
+                    or rev.diagnostics.dependence_type
+                    or rev.pattern
+                )
+                lines.append(
+                    f"  {entry.column}: predicts {self.target} as "
+                    f"{entry.result_data.pattern}, but {self.target}->{entry.column} "
+                    f"is {rev.pattern} ({shape})"
+                )
 
         warned = [e for e in self.successes if self._has_reliability_warning(e)]
         if warned:
@@ -344,6 +407,45 @@ class CorrSleuthTargetReport:
                         ]
                         for entry in underrate[:top_n]
                     ],
+                )
+            )
+
+        reverse_shape = [e for e in self.successes if self._reverse_reveals_shape(e)]
+        if reverse_shape:
+            reverse_shape.sort(key=lambda e: e.column)
+            lines.extend(
+                ["", f"## Shape differs by direction (candidate = f(`{self.target}`))"]
+            )
+            lines.append(
+                "These candidates read as unstructured when used to predict "
+                f"`{self.target}`, but `{self.target}` -> candidate is a "
+                "structured nonlinear shape — the signature of the candidate being "
+                f"generated from `{self.target}`. Read the reverse shape as *how "
+                "the candidate depends on the target*, not as predictive."
+            )
+            reverse_rows = []
+            for entry in reverse_shape[:top_n]:
+                rev = entry.reverse_result
+                assert rev is not None  # guaranteed by _reverse_reveals_shape
+                reverse_rows.append(
+                    [
+                        entry.column,
+                        entry.result_data.pattern,
+                        rev.pattern,
+                        rev.diagnostics.mean_shape
+                        or rev.diagnostics.dependence_type
+                        or "-",
+                    ]
+                )
+            lines.append(
+                markdown_table(
+                    [
+                        "Variable",
+                        f"Predicts {self.target}",
+                        "Reverse pattern",
+                        "Reverse shape",
+                    ],
+                    reverse_rows,
                 )
             )
 

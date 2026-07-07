@@ -38,6 +38,8 @@ _VALID_ERRORS_POLICIES = ("warn", "raise")
 #: kwarg value) is not reliably distinguishable from a data one.
 _CONFIG_CLASS_EXCEPTIONS = (OptionalDependencyError, TypeError)
 
+_VALID_DIRECTIONS = ("forward", "reverse", "both")
+
 
 @dataclass
 class TargetScanEntry:
@@ -48,6 +50,13 @@ class TargetScanEntry:
     example, a non-numeric column the caller listed in ``columns=``).
     ``status="error"`` entries describe profile_pair failures captured under
     ``errors="warn"``.
+
+    ``result`` holds the primary profile — ``profile_pair(candidate, target)`` for
+    ``direction="forward"`` (describes ``E[target | candidate]``) or
+    ``profile_pair(target, candidate)`` for ``direction="reverse"`` (describes
+    ``E[candidate | target]``). ``reverse_result`` is populated only for
+    ``direction="both"``, carrying the reverse-orientation profile so the report
+    can show how the candidate's *shape* looks as a function of the target.
     """
 
     column: str
@@ -55,6 +64,7 @@ class TargetScanEntry:
     result: CorrSleuthResult | None = None
     error_type: str | None = None
     error_message: str | None = None
+    reverse_result: CorrSleuthResult | None = None
 
     @property
     def result_data(self) -> CorrSleuthResult:
@@ -205,6 +215,7 @@ def scan_target(
     mode: str = "lite",
     missing: str = "pairwise",
     errors: str = "warn",
+    direction: str = "forward",
     max_pairs: int | None = None,
     sample_size: int | None = None,
     progress: bool = False,
@@ -243,6 +254,24 @@ def scan_target(
         mistake surfaces once rather than as N identical errors. Genuine
         per-column data failures (e.g. an all-NaN or constant column, which raise
         ``InputError``) remain captured.
+    direction : {"forward", "reverse", "both"}, default "forward"
+        Which orientation each pair is profiled in. The primary association
+        metrics (Pearson/Spearman/Kendall/dCor/MI) are symmetric and identical
+        either way; only the **shape** diagnostics (mean shape, curvature,
+        oscillation, variance, segmentation) depend on direction.
+
+        - ``"forward"`` — ``profile_pair(candidate, target)``, describing
+          ``E[target | candidate]``: the feature-screening question, "does this
+          predictor drive the target?"
+        - ``"reverse"`` — ``profile_pair(target, candidate)``, describing
+          ``E[candidate | target]``: "is this candidate a function of the target?"
+          Useful when the data was engineered as ``candidate = f(target)``, where
+          the shape only shows in this orientation.
+        - ``"both"`` — profiles forward (the primary result) *and* reverse, and
+          adds a "Shape differs by direction" report section flagging candidates
+          whose reverse shape is structured (nonlinear) while their forward shape
+          is not — the signature of ``candidate = f(target)``. Costs two
+          ``profile_pair`` calls per candidate.
     max_pairs : int, optional
         Cap on the number of columns profiled. Applied after ``columns=``.
         Must be a positive integer when provided. Columns beyond the cap are
@@ -293,6 +322,11 @@ def scan_target(
             f"Unknown errors policy: '{errors}'. Supported policies are "
             f"{_VALID_ERRORS_POLICIES}."
         )
+    if direction not in _VALID_DIRECTIONS:
+        raise InputError(
+            f"Unknown direction: '{direction}'. Supported directions are "
+            f"{_VALID_DIRECTIONS}."
+        )
     if max_pairs is not None and (
         isinstance(max_pairs, bool) or not isinstance(max_pairs, int) or max_pairs < 1
     ):
@@ -341,25 +375,32 @@ def scan_target(
             )
         candidates = candidates[:max_pairs]
 
+    want_forward = direction in ("forward", "both")
+    want_reverse = direction in ("reverse", "both")
+
+    def _profile(x: str, y: str) -> CorrSleuthResult:
+        # Direction-sensitive diagnostics (bin lack-of-fit, variance shape,
+        # segmentation/breakpoint_x, Cook's influence, forward Chatterjee's xi)
+        # describe E[y | x]; the symmetric metrics (Pearson/Spearman/Kendall/
+        # dCor/MI/sq_corr) are unaffected by the argument order.
+        return profile_pair(
+            data,
+            x,
+            y,
+            mode=mode,
+            missing=missing,
+            random_state=random_state,
+            **profile_pair_kwargs,
+        )
+
     entries: list[TargetScanEntry] = list(pre_skipped)
     for col in _iter_with_progress(candidates, progress):
         try:
-            # Profile with the *candidate* as x and the target as y. The
-            # direction-sensitive diagnostics (bin lack-of-fit, variance shape,
-            # segmentation/breakpoint_x, Cook's influence, and forward
-            # Chatterjee's xi) then describe E[target | candidate] -- the
-            # feature-screening question ("does this predictor drive the
-            # target?"). Symmetric metrics (Pearson/Spearman/Kendall/dCor/MI/
-            # sq_corr) are unaffected by the argument order.
-            result = profile_pair(
-                data,
-                col,
-                target,
-                mode=mode,
-                missing=missing,
-                random_state=random_state,
-                **profile_pair_kwargs,
-            )
+            # Forward = profile_pair(candidate, target) → E[target | candidate]
+            # (feature screening). Reverse = profile_pair(target, candidate) →
+            # E[candidate | target] (is the candidate a function of the target?).
+            forward = _profile(col, target) if want_forward else None
+            reverse = _profile(target, col) if want_reverse else None
         except _CONFIG_CLASS_EXCEPTIONS:
             # Systemic, not per-column (see _CONFIG_CLASS_EXCEPTIONS): propagate
             # regardless of the errors policy so the actionable install/config
@@ -377,6 +418,17 @@ def scan_target(
                 )
             )
             continue
-        entries.append(TargetScanEntry(column=col, status="ok", result=result))
+        # For "reverse" the reverse profile IS the primary result; for "forward"/
+        # "both" the forward profile is primary and the reverse (if any) rides
+        # alongside for the shape-comparison section.
+        primary = reverse if direction == "reverse" else forward
+        entries.append(
+            TargetScanEntry(
+                column=col,
+                status="ok",
+                result=primary,
+                reverse_result=reverse if direction == "both" else None,
+            )
+        )
 
-    return CorrSleuthTargetReport(target=target, entries=entries)
+    return CorrSleuthTargetReport(target=target, entries=entries, direction=direction)

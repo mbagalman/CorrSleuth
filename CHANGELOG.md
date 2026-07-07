@@ -253,6 +253,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enrichment of the internal `CleanPair` in `profile_pair`.
 
 ### Added
+- **Bidirectional scan** (`scan_target(..., direction=...)`, default `"forward"`,
+  unchanged). CorrSleuth's shape diagnostics describe `E[y | x]`, so a scan of
+  `profile_pair(candidate, target)` characterizes the *predictive* direction —
+  but when data is engineered as `candidate = f(target)` (steps, saturation,
+  sigmoids, sinusoids, heteroscedasticity), the shape only shows in the reverse
+  orientation. `"reverse"` profiles `profile_pair(target, candidate)`
+  (`E[candidate | target]`), and `"both"` profiles both — keeping the forward
+  profile as primary, attaching the reverse shape (`reverse_pattern` /
+  `reverse_mean_shape` / `reverse_dependence_type` in `to_frame()`), and adding a
+  "Shape differs by direction" section that flags candidates whose reverse shape
+  is a structured nonlinearity while their forward shape is not — the
+  `candidate = f(target)` signature. The primary association metrics
+  (Pearson/Spearman/Kendall/dCor/MI) are symmetric and identical either way; only
+  the shape diagnostics are directional, so the reverse view re-describes shape,
+  it does not find new relationships. `"both"` costs two `profile_pair` calls per
+  candidate.
 - **Regression-influence diagnostics** (`compute_influence` in
   `corrsleuth/metrics/influence.py`, no new dependency): row-level Cook's
   distance on the `y ~ x` fit, exposed as `max_cook_distance` and
