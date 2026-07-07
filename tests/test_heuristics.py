@@ -112,24 +112,30 @@ def test_offset_circle_still_reads_nonmonotonic_dependence(center, seed):
     )
 
 
-def test_sinusoidal_resolves_to_nonmonotonic_dependence_in_every_mode():
+@pytest.mark.parametrize("mode", ["lite", "deep"])
+def test_sinusoidal_resolves_to_nonmonotonic_dependence_in_every_mode(mode):
     # A ~2.5-cycle sinusoid: Pearson/Spearman weak, distance correlation only
     # marginally above its floor, sq_corr blind to it. The bin-mean reversal
     # count jointly with the bin lack-of-fit gain (the lite-computable
     # oscillation route) is what labels it — previously lite and deep mode
     # read this as weak_or_no_relationship, actively underselling a strong
     # deterministic function.
-    for mode in ("lite", "deep"):
-        df = make_relationship("sinusoidal", n=500, noise=0.1, random_state=42)
-        res = profile_pair(df, "x", "y", mode=mode)
-        assert res.pattern == "nonmonotonic_dependence"
-        assert res.diagnostics.dependence_type == "oscillating"
-        assert res.diagnostics.bin_reversal_count >= 2
-        assert res.diagnostics.bin_lof_r2_gain > 0.3
-        # The label now states the dependence, so the deep-mode "xi is high
-        # but the label may understate dependence" warning has nothing to
-        # correct and must not fire.
-        assert not any("may understate" in w for w in res.warnings)
+    if mode == "deep":
+        # deep is a strict superset of standard and needs the [standard] extras;
+        # skip it (keeping the lite assertion) when they are not installed, so
+        # the lite CI job still exercises the lite oscillation route.
+        pytest.importorskip("dcor")
+        pytest.importorskip("sklearn")
+    df = make_relationship("sinusoidal", n=500, noise=0.1, random_state=42)
+    res = profile_pair(df, "x", "y", mode=mode)
+    assert res.pattern == "nonmonotonic_dependence"
+    assert res.diagnostics.dependence_type == "oscillating"
+    assert res.diagnostics.bin_reversal_count >= 2
+    assert res.diagnostics.bin_lof_r2_gain > 0.3
+    # The label now states the dependence, so the deep-mode "xi is high but the
+    # label may understate dependence" warning has nothing to correct and must
+    # not fire.
+    assert not any("may understate" in w for w in res.warnings)
 
 
 @pytest.mark.parametrize("seed", range(10))
