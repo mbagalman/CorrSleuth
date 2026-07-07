@@ -28,6 +28,7 @@ from corrsleuth.metrics import (
     compute_segmentation,
     compute_spearman,
     compute_squared_correlation,
+    compute_squared_correlation_robust,
     compute_winsorized_pearson,
 )
 from corrsleuth.result import CorrSleuthResult, MetricDiagnostics
@@ -92,6 +93,7 @@ def _build_diagnostics(
     bowtie_result = heteroscedasticity.get("bowtie_ratio")
     segmentation = segmentation or {}
     segment_gain_result = segmentation.get("segment_gain")
+    segment_stepness_result = segmentation.get("segment_stepness")
     breakpoint_result = segmentation.get("breakpoint_x")
     # The breakpoint location is only meaningful — and only reported — when the
     # mean reads as a step/threshold; for a smooth curve the "break" is an
@@ -119,6 +121,9 @@ def _build_diagnostics(
         gq_ratio=gq_result.value if gq_result else None,
         bowtie_ratio=bowtie_result.value if bowtie_result else None,
         segment_gain=segment_gain_result.value if segment_gain_result else None,
+        segment_stepness=segment_stepness_result.value
+        if segment_stepness_result
+        else None,
         breakpoint_x=breakpoint_result.value
         if (report_breakpoint and breakpoint_result)
         else None,
@@ -160,8 +165,10 @@ def profile_pair(
         ``"lite"`` computes Pearson, Spearman, and Kendall tau-b.
         ``"standard"`` additionally computes distance correlation and mutual
         information; requires the ``corrsleuth[standard]`` extras.
-        ``"deep"`` adds lightweight robust correlation diagnostics without
-        requiring optional dependencies.
+        ``"deep"`` is a strict superset of ``"standard"`` — it computes
+        everything standard does *plus* robust correlation diagnostics and
+        Chatterjee's xi — and therefore also requires the ``corrsleuth[standard]``
+        extras.
     missing : {"pairwise", "listwise", "raise"}, default "pairwise"
         Missing-value policy. ``"pairwise"`` drops rows missing in ``x`` or
         ``y`` only. ``"listwise"`` drops rows missing in *any* column of
@@ -222,13 +229,23 @@ def profile_pair(
         the rows used, missing values when ``missing="raise"``, or fewer than
         two valid observations after applying the missing-value policy).
     OptionalDependencyError
-        If ``mode="standard"`` and the ``corrsleuth[standard]`` extras
-        (``dcor``, ``scikit-learn``) are not installed.
+        If ``mode`` is ``"standard"`` or ``"deep"`` and the
+        ``corrsleuth[standard]`` extras (``dcor``, ``scikit-learn``) are not
+        installed.
     """
     if mode not in ("lite", "standard", "deep"):
         raise InputError(
             f"Unknown mode: '{mode}'. Supported modes are 'lite', 'standard', and 'deep'."
         )
+    if max_n_for_dcor is not None and (
+        isinstance(max_n_for_dcor, bool)
+        or not isinstance(max_n_for_dcor, int)
+        or max_n_for_dcor < 1
+    ):
+        # Validate here rather than let a negative value reach rng.choice(n, -1)
+        # in optional.py, which raises a bare numpy ValueError outside the
+        # MetricComputationError wrapper (C4 #3).
+        raise InputError("max_n_for_dcor must be a positive integer or None.")
 
     # 1. Validation
     pair = validate_pair(data, x, y, missing=missing)
@@ -240,7 +257,11 @@ def profile_pair(
         "kendall_tau_b": compute_kendall(pair),
     }
 
-    if mode == "standard":
+    # Distance correlation and mutual information are computed in both standard
+    # and deep mode -- deep is a strict superset of standard (it adds robust
+    # correlations and Chatterjee's xi on top). Passing mode through means both
+    # raise OptionalDependencyError when the [standard] extras are missing.
+    if mode in ("standard", "deep"):
         metrics_map["distance_correlation"] = compute_distance_correlation(
             pair,
             mode=mode,
@@ -260,6 +281,10 @@ def profile_pair(
     # bp_pvalue, gq_ratio, bowtie_ratio).
     bin_lof = compute_bin_lof(pair)
     sq_corr = compute_squared_correlation(pair)
+    # Leave-the-top-out companion: the classifier gates the sq_corr routes on it
+    # so a heavy-tailed variable's few extreme squared values cannot manufacture a
+    # magnitude-linked label (cascade-only, like bin_lof_r2_gain_robust).
+    sq_corr_robust = compute_squared_correlation_robust(pair)
     heteroscedasticity = compute_heteroscedasticity(pair)
     segmentation = compute_segmentation(pair)
     influence = compute_influence(pair)
@@ -320,8 +345,10 @@ def profile_pair(
         # chatterjee_xi has its own (lower) min-n threshold than the robust
         # correlations, so it can produce a value even when the robust metrics
         # above are not computable. Both directions are computed because the
-        # statistic is asymmetric — for target scans, callers usually want the
-        # reverse direction (candidate -> target).
+        # statistic is asymmetric. scan_target profiles each pair as
+        # profile_pair(data, candidate, target), so the *forward* direction is
+        # candidate -> target -- usually the one callers want; the reverse is
+        # target -> candidate.
         metrics_map["chatterjee_xi"] = compute_chatterjee_xi(
             pair, random_state=random_state
         )
@@ -339,6 +366,7 @@ def profile_pair(
         **metrics_map,
         **bin_lof,
         "sq_corr": sq_corr,
+        "sq_corr_robust": sq_corr_robust,
         **heteroscedasticity,
         **segmentation,
         **influence,

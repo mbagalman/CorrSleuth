@@ -10,15 +10,18 @@ Plotting is delegated to :mod:`corrsleuth.scan.plot`.
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Sequence
 from typing import Any
 
 import pandas as pd
 
 from corrsleuth.exceptions import InputError
+from corrsleuth.result import MetricDiagnostics
 from corrsleuth.scan.core import TargetScanEntry, metrics_map
 from corrsleuth.utils.markdown import (
     escape_markdown_cell,
+    escape_markdown_code_span,
     format_markdown_value,
     markdown_table,
 )
@@ -76,7 +79,9 @@ _RELIABILITY_WARNING_KEYWORDS: tuple[str, ...] = (
 _SUMMARY_CAVEAT_BODY = (
     "Pairwise association does not imply causation or predictive "
     "usefulness by itself. Always inspect the diagnostic plots and validate "
-    "with proper analysis."
+    "with proper analysis. This scan applies no multiple-testing correction, "
+    "so with many candidates some patterns will appear by chance — treat the "
+    "rankings as hypothesis-generating."
 )
 _SUMMARY_CAVEAT = f"Caveat: {_SUMMARY_CAVEAT_BODY}"
 
@@ -106,12 +111,19 @@ class CorrSleuthTargetReport:
 
         The frame always includes the documented static columns (``variable``,
         ``target``, ``status``, ``error_type``, ``error_message``, ``pattern``,
-        ``disagreement_score``, ``warnings``, ``recommendations``) plus the
-        lite metric columns (``metric_pearson``, ``metric_spearman``,
-        ``metric_kendall_tau_b``). Additional metric columns are appended when
-        any successful row produced them. Skipped/errored rows leave the
-        result-dependent fields NaN and populate ``error_type`` /
-        ``error_message`` instead.
+        ``disagreement_score``, ``warnings``, ``recommendations``), the lite
+        metric columns (``metric_pearson``, ``metric_spearman``,
+        ``metric_kendall_tau_b``), and one ``diagnostic_<field>`` column for every
+        field on :class:`~corrsleuth.result.MetricDiagnostics` — the numeric
+        diagnostics *and* the five secondary axes (``diagnostic_mean_shape``,
+        ``diagnostic_variance_shape``, ``diagnostic_dependence_type``,
+        ``diagnostic_outlier_sensitivity``, ``diagnostic_functional_direction``),
+        mirroring :meth:`CorrSleuthResult.to_frame`. Extra ``metric_*`` columns
+        are appended when any successful row produced them (standard/deep
+        metrics). When bootstrapping was requested, ``pattern_stability`` /
+        ``stability_label`` / ``stability_metric_set`` columns are added.
+        Skipped/errored rows leave the result-dependent fields NaN and populate
+        ``error_type`` / ``error_message`` instead.
         """
         metric_columns: list[str] = list(_DEFAULT_METRIC_COLUMNS)
         for entry in self.successes:
@@ -119,7 +131,30 @@ class CorrSleuthTargetReport:
                 col = f"metric_{metric_name}"
                 if col not in metric_columns:
                     metric_columns.append(col)
-        all_columns = list(_STATIC_FRAME_COLUMNS) + metric_columns
+
+        # One column per MetricDiagnostics field: a stable set, since every
+        # profiled pair computes the same diagnostics regardless of mode.
+        diagnostic_columns = [
+            f"diagnostic_{field.name}"
+            for field in dataclasses.fields(MetricDiagnostics)
+        ]
+
+        include_stability = any(
+            e.result is not None and e.result.bootstrap_stability is not None
+            for e in self.entries
+        )
+        stability_columns = (
+            ["pattern_stability", "stability_label", "stability_metric_set"]
+            if include_stability
+            else []
+        )
+
+        all_columns = (
+            list(_STATIC_FRAME_COLUMNS)
+            + metric_columns
+            + diagnostic_columns
+            + stability_columns
+        )
 
         rows: list[dict[str, Any]] = []
         for entry in self.entries:
@@ -139,6 +174,13 @@ class CorrSleuthTargetReport:
                 )
                 for _, metric_row in res.metrics.iterrows():
                     row[f"metric_{metric_row['metric']}"] = metric_row["value"]
+                for key, value in res.diagnostics.to_dict().items():
+                    row[f"diagnostic_{key}"] = value
+                if include_stability and res.bootstrap_stability is not None:
+                    stability = res.bootstrap_stability
+                    row["pattern_stability"] = stability.pattern_stability
+                    row["stability_label"] = stability.stability_label
+                    row["stability_metric_set"] = stability.metric_set
             rows.append(row)
         return pd.DataFrame(rows, columns=all_columns)
 
@@ -248,7 +290,7 @@ class CorrSleuthTargetReport:
             raise InputError("top_n must be a positive integer.")
 
         lines = [
-            f"# CorrSleuth Target Report: `{self.target}`",
+            f"# CorrSleuth Target Report: `{escape_markdown_code_span(self.target)}`",
             "",
             "## Overview",
             markdown_table(
@@ -350,8 +392,9 @@ class CorrSleuthTargetReport:
         """Return variables where Pearson may understate the relationship.
 
         The ranking is directional: a variable is included only when rank-based
-        metrics or standard-mode nonmonotonic evidence exceed Pearson by more
-        than ``threshold``. This keeps outlier/leverage cases, where Pearson is
+        metrics, distance-correlation nonmonotonic evidence, or the lite-computable
+        ``sq_corr`` (magnitude/radial dependence) exceed Pearson by more than
+        ``threshold``. This keeps outlier/leverage cases, where Pearson is
         stronger than rank metrics, out of the ranking.
 
         Parameters
@@ -385,6 +428,7 @@ class CorrSleuthTargetReport:
             "spearman_excess_over_pearson",
             "kendall_excess_over_pearson",
             "nonmonotonic_gap",
+            "sq_corr_excess_over_pearson",
             "disagreement_score",
             "metric_pearson",
             "metric_spearman",
@@ -418,6 +462,9 @@ class CorrSleuthTargetReport:
                         "kendall_excess_over_pearson"
                     ],
                     "nonmonotonic_gap": components["nonmonotonic_gap"],
+                    "sq_corr_excess_over_pearson": components[
+                        "sq_corr_excess_over_pearson"
+                    ],
                     "disagreement_score": entry.result_data.disagreement_score,
                     "metric_pearson": metrics.get("pearson"),
                     "metric_spearman": metrics.get("spearman"),
@@ -507,12 +554,37 @@ class CorrSleuthTargetReport:
             max(0.0, nonmonotonic_gap) if nonmonotonic_gap is not None else 0.0
         )
 
-        score = max(spearman_gap, kendall_gap, nonmonotonic_contribution)
+        # sq_corr is lite-computable (no mode gate), so a lite scan can label a
+        # pair nonmonotonic via magnitude/radial dependence with no dcor. Its
+        # excess over |Pearson| is on the same correlation scale as the rank gaps,
+        # so a magnitude-linked pair now surfaces under "Pearson may underrate"
+        # rather than only in its pattern section (C6 #6). A clean linear pair has
+        # |sq_corr| ~= |Pearson| (the squares track together), so this adds ~0
+        # there — no false surfacing.
+        #
+        # Only count it when the diagnostics actually concluded genuine
+        # magnitude/radial dependence: ``dependence_type`` in
+        # {magnitude_linked, closed_loop_or_multivalued} — which (post-robust-gate,
+        # see classifier._dependence_type_axis) means the sq_corr signal survived
+        # dropping the few most extreme points. Otherwise a heavy-tailed-Y artifact
+        # (raw sq_corr over the bar but robust-collapsed, so the cascade already
+        # calls it weak_or_no_relationship) would be promoted here on the exact
+        # signal the robust gate exists to suppress — the ranking must use the same
+        # robust evidence as the cascade.
+        dep_type = entry.result_data.diagnostics.dependence_type
+        sq_corr_gap = (
+            cls._positive_abs_gap(entry.result_data.diagnostics.sq_corr, abs_p)
+            if dep_type in ("magnitude_linked", "closed_loop_or_multivalued")
+            else 0.0
+        )
+
+        score = max(spearman_gap, kendall_gap, nonmonotonic_contribution, sq_corr_gap)
         return {
             "score": score,
             "spearman_excess_over_pearson": spearman_gap,
             "kendall_excess_over_pearson": kendall_gap,
             "nonmonotonic_gap": nonmonotonic_gap,
+            "sq_corr_excess_over_pearson": sq_corr_gap,
         }
 
     @classmethod

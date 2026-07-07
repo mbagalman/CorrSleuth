@@ -713,7 +713,7 @@ Completion notes:
 
 - Added `mode="deep"` to `profile_pair()`.
 - Deep mode computes the lite metrics plus four no-new-dependency robust correlation diagnostics: `pearson_trimmed_1pct`, `pearson_winsorized_1pct`, `biweight_midcorrelation`, and `pearson_median_clipped_20pct`.
-- Deep mode intentionally does not compute Distance Correlation or Mutual Information; those remain `mode="standard"` diagnostics behind the `[standard]` extras.
+- Deep mode intentionally does not compute Distance Correlation or Mutual Information; those remain `mode="standard"` diagnostics behind the `[standard]` extras. *(Superseded pre-0.2.0: `deep` is now a strict superset of `standard` and computes those metrics too, so it also requires the `[standard]` extras — see the CHANGELOG.)*
 - Target scans can forward `mode="deep"`, and `plot_top(sort_by=...)` accepts the robust metric names.
 - Deep mode emits one consolidated warning when sample size is too small for robust diagnostics; individual robust metrics return `None` without duplicating that warning.
 - `metric_pearson_trimmed_1pct` reuses the same 1% trim-sensitivity value exposed as `result.diagnostics.pearson_trimmed`.

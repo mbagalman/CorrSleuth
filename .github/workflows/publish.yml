@@ -25,6 +25,21 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Fail fast if the release tag and the packaged version disagree, so a
+      # release tagged v0.3.0 while __init__ still says 0.2.0 cannot publish the
+      # wrong version under the wrong release page (C8 #1). Reads __version__ from
+      # source (no install needed) and expects the tag to be "v<version>".
+      - name: Verify release tag matches package version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION=$(python -c "import re, pathlib; print(re.search(r'''__version__\s*=\s*['\"]([^'\"]+)['\"]''', pathlib.Path('corrsleuth/__init__.py').read_text()).group(1))")
+          echo "Package version: $VERSION | Release tag: $TAG"
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "::error::Release tag '$TAG' does not match package version 'v$VERSION'. Update corrsleuth/__init__.py or retag."
+            exit 1
+          fi
+
       - name: Install build tooling
         run: pip install build twine
 

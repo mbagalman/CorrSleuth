@@ -19,7 +19,8 @@ metrics leave open (see docs/shape-diagnostics-design.md):
   from a single bend (a U-shape: exactly one) — the classifier only trusts the
   count when ``bin_lof_r2_gain`` also shows substantial bin structure, since
   pure noise produces many spurious reversals with near-zero gain.
-- :func:`compute_squared_correlation` — the correlation between X² and Y²,
+- :func:`compute_squared_correlation` — the correlation between the squared
+  mean-centered X and Y (``corr((X−x̄)², (Y−ȳ)²)``),
   used to catch dependence that shows up in magnitude but not in the raw
   signed values (e.g. points scattered around a circle, where X and Y are
   strongly dependent but Pearson/Spearman/distance correlation on the raw
@@ -32,6 +33,8 @@ metrics leave open (see docs/shape-diagnostics-design.md):
 """
 
 from __future__ import annotations
+
+import warnings
 
 import numpy as np
 import scipy.stats as stats
@@ -68,11 +71,47 @@ _MIN_N_FOR_BIN_LOF = _MIN_BINS * _TARGET_POINTS_PER_BIN
 #: exists) never confirms a turn.
 _BIN_REVERSAL_HYSTERESIS_FRACTION = 0.15
 
-_BIN_LOF_NAMES = ("bin_lof_r2_gain", "bin_reversal_count")
+_BIN_LOF_NAMES = ("bin_lof_r2_gain", "bin_reversal_count", "bin_lof_r2_gain_robust")
 
 
 def _bin_lof_no_value() -> dict[str, MetricResult]:
     return {name: MetricResult.no_value(name) for name in _BIN_LOF_NAMES}
+
+
+def _adjusted_bin_gain(
+    xs: np.ndarray, ys: np.ndarray, n_bins: int
+) -> tuple[float, np.ndarray] | None:
+    """Df-adjusted bin-lack-of-fit gain for pre-sorted ``(xs, ys)`` split into
+    ``n_bins`` equal-frequency bins, plus the per-bin means.
+
+    ``adjusted R^2 = 1 - (SS_res / (n - p)) / (SS_tot / (n - 1))``; the gain is
+    the k-bin mean model's adjusted R^2 minus the straight-line fit's, so the
+    extra parameters a line lacks earn no free credit (see ``compute_bin_lof``).
+    Returns ``None`` for a degenerate split (a bin under 2 points, or zero total
+    variance). Shared by the primary gain and the leave-one-bin-out jackknife."""
+    n = xs.shape[0]
+    bin_indices = np.array_split(np.arange(n), n_bins)
+    if any(len(idx) < 2 for idx in bin_indices):
+        return None
+    ss_tot = float(np.sum((ys - ys.mean()) ** 2))
+    if ss_tot == 0.0:
+        return None
+    bin_means = np.array([ys[idx].mean() for idx in bin_indices])
+    y_bin_pred = np.empty_like(ys)
+    for mean, idx in zip(bin_means, bin_indices, strict=True):
+        y_bin_pred[idx] = mean
+    ss_res_bins = float(np.sum((ys - y_bin_pred) ** 2))
+    try:
+        slope, intercept = np.polyfit(xs, ys, 1)
+    except np.linalg.LinAlgError:
+        # A degenerate (e.g. constant-x) subset has no line to fit — can happen
+        # to a leave-one-bin-out subset when nearly all X ties sit in one bin.
+        # Report it as unevaluable so the jackknife simply skips this drop.
+        return None
+    ss_res_linear = float(np.sum((ys - (slope * xs + intercept)) ** 2))
+    adj_r2_bins = 1.0 - (ss_res_bins / (n - n_bins)) / (ss_tot / (n - 1))
+    adj_r2_linear = 1.0 - (ss_res_linear / (n - 2)) / (ss_tot / (n - 1))
+    return adj_r2_bins - adj_r2_linear, bin_means
 
 
 def _turning_point_count(means: np.ndarray, hysteresis: float) -> int:
@@ -112,12 +151,16 @@ def compute_bin_lof(pair: CleanPair) -> dict[str, MetricResult]:
     Sorts by X, splits into equal-frequency bins, and returns two
     :class:`MetricResult` entries computed from the same bins:
 
-    - ``bin_lof_r2_gain`` — bin-mean-model R² minus linear-fit R², a
-      lack-of-fit test for curvature. A positive gain means the data has
-      structure (a curve, a step, a bend) a straight line does not capture —
-      the bin model can only do better than or as well as the line, so this is
-      bounded below by (slightly negative, from finite-sample noise) and
-      unbounded above up to ``1 - r2_linear``.
+    - ``bin_lof_r2_gain`` — the **degrees-of-freedom-adjusted** bin-mean-model R²
+      minus the linear-fit adjusted R², a lack-of-fit test for curvature. Each
+      model's residual is penalized by its own parameter count (``k`` bin means
+      vs. 2 line coefficients), so the extra bins a straight line lacks earn no
+      free credit: under no curvature the gain sits at ~0, and only genuine
+      curvature (a curve, a step, a bend the line cannot capture) pushes it
+      clearly positive. A plain (unadjusted) R² difference instead carries a
+      positive null bias of ~``(k-2)/(n-1)`` that mislabels ordinary noisy-linear
+      data as curved — see the calibration sweep in
+      ``validation/bin_lof_sweep.py``.
     - ``bin_reversal_count`` — how many times the sequence of bin means changes
       direction, counted with range-scaled hysteresis
       (:data:`_BIN_REVERSAL_HYSTERESIS_FRACTION`) so noise wiggle is not
@@ -127,10 +170,21 @@ def compute_bin_lof(pair: CleanPair) -> dict[str, MetricResult]:
       produces many "reversals" with near-zero gain, so the classifier gates
       the count on the gain (see ``OSCILLATION_BIN_LOF_FLOOR`` in
       ``heuristics/classifier.py``).
+    - ``bin_lof_r2_gain_robust`` — the leave-one-bin-out **minimum** of the gain:
+      the smallest gain obtained by dropping any single bin's rows and refitting.
+      It measures how much of the bin structure survives removing its most
+      load-bearing bin. Equal to ``bin_lof_r2_gain`` when the structure is spread
+      across bins (a genuine oscillation), but far lower when a lone extreme Y in
+      one bin manufactures the gain (a heavy-tailed-Y artifact on an otherwise
+      structureless predictor). The oscillation and no-trend-curvature gates read
+      this value, so a single dominating bin cannot trip them.
 
-    Returns both as ``None`` (``MetricResult.no_value``) for constant inputs,
-    ``n_used`` below :data:`_MIN_N_FOR_BIN_LOF`, or a degenerate bin split
-    (fewer than 2 points in some bin, which can happen with heavy ties in X).
+    Returns all three as ``None`` (``MetricResult.no_value``) for constant inputs
+    or ``n_used`` below :data:`_MIN_N_FOR_BIN_LOF`. The per-bin ``< 2`` check in
+    :func:`_adjusted_bin_gain` is a defensive guard, not a ties guard: binning is
+    by sorted *position* (``np.array_split``), so ties in X degrade bin *means*
+    but never bin *sizes* — with ``n >= _MIN_N_FOR_BIN_LOF`` and at most
+    :data:`_MAX_BINS` bins every bin already holds ``>= 2`` rows.
     """
     if pair.x_is_constant or pair.y_is_constant:
         return _bin_lof_no_value()
@@ -149,23 +203,39 @@ def compute_bin_lof(pair: CleanPair) -> dict[str, MetricResult]:
 
         n_bins = int(np.clip(n // _TARGET_POINTS_PER_BIN, _MIN_BINS, _MAX_BINS))
         bin_indices = np.array_split(np.arange(n), n_bins)
-        if any(len(idx) < 2 for idx in bin_indices):
+
+        # The df-adjusted gain penalizes each model's residual by its own
+        # parameter count, so the k-bin mean model earns no free credit for the
+        # degrees of freedom a straight line lacks (the unadjusted gain carries a
+        # ~(k-2)/(n-1) positive null bias that mislabels noisy-linear data as
+        # curved). See docs/shape-diagnostics-design.md and the calibration sweep
+        # in validation/bin_lof_sweep.py.
+        primary = _adjusted_bin_gain(xs, ys, n_bins)
+        if primary is None:
             return _bin_lof_no_value()
+        bin_lof_gain, bin_means = primary
 
-        ss_tot = float(np.sum((ys - ys.mean()) ** 2))
-        if ss_tot == 0.0:
-            return _bin_lof_no_value()
-
-        y_bin_pred = np.empty_like(ys)
-        bin_means = np.empty(n_bins)
-        for i, idx in enumerate(bin_indices):
-            bin_means[i] = ys[idx].mean()
-            y_bin_pred[idx] = bin_means[i]
-        r2_bins = 1.0 - float(np.sum((ys - y_bin_pred) ** 2)) / ss_tot
-
-        slope, intercept = np.polyfit(xs, ys, 1)
-        y_linear_pred = slope * xs + intercept
-        r2_linear = 1.0 - float(np.sum((ys - y_linear_pred) ** 2)) / ss_tot
+        # Leave-one-bin-out robustness. A single extreme Y pulls its bin's mean
+        # far out, inflating BOTH the gain and the reversal count on a predictor
+        # that has no real structure (most visible when Y is heavy-tailed -- in a
+        # scan, Y is the target). Recompute the gain with each single bin's rows
+        # removed and keep the minimum: how little of the bin structure survives
+        # dropping its most load-bearing bin. A genuine oscillation is spread
+        # across many bins and barely moves; a one-bin artifact collapses. The
+        # oscillation/no-trend-curvature gates (OSCILLATION_BIN_LOF_FLOOR in
+        # heuristics/classifier.py) test this robust gain, not the raw one, so
+        # they are not fooled by a lone dominating bin. The raw gain still drives
+        # the curvature route (BIN_LOF_R2_GAIN_THRESHOLD), which is gated on a
+        # strong rank trend and where curvature legitimately concentrates in the
+        # extreme bins -- so its calibration is untouched.
+        robust_gain = bin_lof_gain
+        for j in range(n_bins):
+            keep = np.concatenate([bin_indices[i] for i in range(n_bins) if i != j])
+            dropped = _adjusted_bin_gain(xs[keep], ys[keep], n_bins - 1)
+            # Skip unevaluable (degenerate) or NaN drops so a single bad subset
+            # cannot poison the min (and a NaN primary gain stays NaN).
+            if dropped is not None and dropped[0] == dropped[0]:
+                robust_gain = min(robust_gain, dropped[0])
 
         means_range = float(bin_means.max() - bin_means.min())
         if means_range <= 0.0:
@@ -181,45 +251,136 @@ def compute_bin_lof(pair: CleanPair) -> dict[str, MetricResult]:
 
     return {
         "bin_lof_r2_gain": MetricResult(
-            name="bin_lof_r2_gain", value=float(r2_bins - r2_linear), available=True
+            name="bin_lof_r2_gain", value=float(bin_lof_gain), available=True
         ),
         "bin_reversal_count": MetricResult(
             name="bin_reversal_count", value=float(reversals), available=True
         ),
+        "bin_lof_r2_gain_robust": MetricResult(
+            name="bin_lof_r2_gain_robust", value=float(robust_gain), available=True
+        ),
     }
 
 
+def _squared_correlation(x2: np.ndarray, y2: np.ndarray) -> float | None:
+    """Signed Pearson correlation of two (already squared-centered) arrays, or
+    ``None`` when either is (near-)constant. Shared by the raw and robust sq_corr.
+
+    The robust variant recomputes this on subsets with the most extreme points
+    removed, which can leave a (near-)constant column scipy's own guard flags with
+    a warning and a NaN — treated here as "no value", not surfaced to the user."""
+    if np.std(x2) == 0.0 or np.std(y2) == 0.0:
+        return None
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        r, _ = stats.pearsonr(x2, y2)
+    if not np.isfinite(r):
+        return None
+    return float(r)
+
+
 def compute_squared_correlation(pair: CleanPair) -> MetricResult:
-    """Pearson correlation between X² and Y².
+    """Pearson correlation between the squared **mean-centered** X and Y.
 
     Catches dependence carried in magnitude rather than sign or rank — e.g.
-    points scattered around a circle (X² + Y² ≈ const), where knowing X
-    constrains |Y| but not sign(Y), so Pearson/Spearman/distance correlation
-    on the raw values are all near zero while ``corr(X², Y²)`` is strongly
-    (typically negatively) correlated.
+    points scattered around a circle ((X−x̄)² + (Y−ȳ)² ≈ const), where knowing X
+    constrains |Y−ȳ| but not sign(Y−ȳ), so Pearson/Spearman/distance correlation
+    on the raw values are all near zero while ``corr((X−x̄)², (Y−ȳ)²)`` is
+    strongly (typically negatively) correlated.
 
-    Returns ``None`` (``MetricResult.no_value``) for constant inputs, or when
-    X² or Y² is itself constant (e.g. X is symmetric two-valued data).
+    The centering is essential: squaring is not translation-invariant, so
+    ``corr(X², Y²)`` on raw (uncentered) values collapses toward ``corr(X, Y)``
+    for data far from the origin — a circle centered at (5, 5) would read ~0 and
+    be mislabeled "no relationship". Centering first makes the diagnostic depend
+    only on the *shape*, not on where it sits in the plane; for origin-centered
+    data it is identical to the uncentered form, so the calibration is unchanged.
+
+    Returns ``None`` (``MetricResult.no_value``) for constant inputs, or when the
+    centered square of either variable is itself constant (e.g. X is symmetric
+    two-valued data).
     """
     name = "sq_corr"
 
     if pair.x_is_constant or pair.y_is_constant:
         return MetricResult.no_value(name)
 
-    x2 = pair.x.to_numpy() ** 2
-    y2 = pair.y.to_numpy() ** 2
-
-    if np.std(x2) == 0.0 or np.std(y2) == 0.0:
-        return MetricResult.no_value(name)
+    x = pair.x.to_numpy()
+    y = pair.y.to_numpy()
+    x2 = (x - x.mean()) ** 2
+    y2 = (y - y.mean()) ** 2
 
     try:
-        r, _ = stats.pearsonr(x2, y2)
+        r = _squared_correlation(x2, y2)
     except (ValueError, RuntimeError, FloatingPointError) as e:
         raise MetricComputationError(
             f"Failed to compute {name}: {type(e).__name__}: {e}"
         ) from e
 
-    return MetricResult(name=name, value=float(r), available=True)
+    if r is None:
+        return MetricResult.no_value(name)
+    return MetricResult(name=name, value=r, available=True)
+
+
+#: Points removed (the most extreme in either squared variable) when computing
+#: the robust sq_corr. A heavy-tailed variable manufactures a spurious sq_corr
+#: with a handful of extreme squared values; removing the top few collapses it,
+#: while a genuine magnitude link is spread over many points and barely moves.
+#: Three balances the two (see validation/sq_corr_sweep.py).
+_SQ_CORR_ROBUST_DROP = 3
+
+
+def compute_squared_correlation_robust(pair: CleanPair) -> MetricResult:
+    """Leave-the-top-out robustness companion to :func:`compute_squared_correlation`.
+
+    Reports the smallest ``|corr((X−x̄)², (Y−ȳ)²)|`` obtained across the full data
+    and after removing up to :data:`_SQ_CORR_ROBUST_DROP` of the points most
+    extreme in *either* squared variable. A genuine magnitude link (a circle, a
+    one-sided U-shape) is carried by many points, so it barely moves; a
+    heavy-tailed variable's spurious sq_corr is carried by a few extreme values
+    and collapses. The classifier requires this to clear ``SQ_CORR_ROBUST_FLOOR``
+    before trusting sq_corr, so a handful of dominating points cannot manufacture
+    a magnitude-linked label (see heuristics/classifier.py).
+
+    ``None`` (``MetricResult.no_value``) whenever the raw sq_corr is (constant
+    inputs / constant centered squares).
+    """
+    name = "sq_corr_robust"
+
+    if pair.x_is_constant or pair.y_is_constant:
+        return MetricResult.no_value(name)
+
+    x = pair.x.to_numpy()
+    y = pair.y.to_numpy()
+    x2 = (x - x.mean()) ** 2
+    y2 = (y - y.mean()) ** 2
+
+    base = _squared_correlation(x2, y2)
+    if base is None:
+        return MetricResult.no_value(name)
+
+    try:
+        # Rank each point by how extreme it is in *either* squared variable, drop
+        # the top-j (j = 1..K), and recompute. The minimum |corr| — including the
+        # full-data value — is how much of the magnitude signal survives removing
+        # the most extreme few points.
+        extremity = np.maximum(stats.rankdata(x2), stats.rankdata(y2))
+        order = np.argsort(extremity)[::-1]
+        n = x2.shape[0]
+        worst = abs(base)
+        for j in range(1, _SQ_CORR_ROBUST_DROP + 1):
+            if n - j < 2:
+                break
+            keep = np.ones(n, dtype=bool)
+            keep[order[:j]] = False
+            r = _squared_correlation(x2[keep], y2[keep])
+            if r is not None:
+                worst = min(worst, abs(r))
+    except (ValueError, RuntimeError, FloatingPointError) as e:
+        raise MetricComputationError(
+            f"Failed to compute {name}: {type(e).__name__}: {e}"
+        ) from e
+
+    return MetricResult(name=name, value=float(worst), available=True)
 
 
 #: Minimum rows before the single-breakpoint search runs. Mirrors the bin
@@ -294,10 +455,20 @@ def compute_segmentation(pair: CleanPair) -> dict[str, MetricResult]:
     y = pair.y.to_numpy()
     n = x.shape[0]
 
+    # Mean-center before forming the cumulative sums of squares/products. The
+    # closed-form residual identities (``syy - sy**2 / m`` and friends) subtract
+    # two large near-equal quantities when x/y sit far from zero, so a large
+    # offset swamps the residual in floating point (catastrophic cancellation).
+    # Centering is a pure shift: it leaves every residual — and therefore
+    # ``segment_gain``/``segment_stepness`` — unchanged, while ``breakpoint_x``
+    # is an x-location, so the mean is added back at the end.
+    x_mean = float(np.mean(x))
+    y_mean = float(np.mean(y))
+
     try:
         order = np.argsort(x, kind="mergesort")
-        xs = x[order].astype(float)
-        ys = y[order].astype(float)
+        xs = x[order].astype(float) - x_mean
+        ys = y[order].astype(float) - y_mean
 
         # Running sums (index i holds the sum over the first i rows).
         cx = np.concatenate([[0.0], np.cumsum(xs)])
@@ -349,7 +520,7 @@ def compute_segmentation(pair: CleanPair) -> dict[str, MetricResult]:
         segment_gain = r2_two_line - r2_line
         step_gain = r2_two_mean - r2_line
         stepness = step_gain / segment_gain if segment_gain > 1e-6 else 0.0
-        breakpoint_x = 0.5 * (xs[best_mean_k - 1] + xs[best_mean_k])
+        breakpoint_x = 0.5 * (xs[best_mean_k - 1] + xs[best_mean_k]) + x_mean
     except (ValueError, RuntimeError, FloatingPointError) as e:
         raise MetricComputationError(
             f"Failed to compute segmentation: {type(e).__name__}: {e}"

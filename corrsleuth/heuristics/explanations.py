@@ -1,15 +1,13 @@
+from typing import TYPE_CHECKING
+
 import pandas as pd
+
+if TYPE_CHECKING:
+    from corrsleuth.result import MetricDiagnostics
 
 _CAVEAT = (
     "Do not interpret this association causally without proper design or controls."
 )
-
-#: Magnitude both Pearson and Spearman must reach before opposite signs are
-#: described as a *direction conflict* (rather than Pearson simply dominating a
-#: near-zero rank metric). Mirrors ``classifier.CONFLICTING_SIGN_THRESHOLD``;
-#: duplicated here because importing it would create a circular import
-#: (classifier imports ``generate_recommendations`` from this module).
-_SIGN_CONFLICT_MIN_MAGNITUDE = 0.3
 
 _EXPLANATIONS = {
     "not_computable": "The metrics could not be computed. This usually happens when one or both variables are entirely constant, or there are no valid overlapping data points.",
@@ -75,7 +73,80 @@ def _fmt(value: float | None) -> str:
     return f"{value:.3f}"
 
 
-def _metric_context(pattern: str, metrics: pd.DataFrame | None) -> list[str]:
+def _nonmonotonic_context(
+    pearson: float,
+    spearman: float,
+    dcor: float | None,
+    diagnostics: "MetricDiagnostics | None",
+) -> list[str]:
+    """Describe *why* a pair reads as nonmonotonic, by the route that fired.
+
+    The label has three routes (distance correlation, the squared-value
+    correlation ``sq_corr``, and the bin-reversal oscillation gate), so crediting
+    distance correlation unconditionally is wrong: for a circle dCor sits ~0.2
+    (below its floor) and the label is driven by ``sq_corr`` instead, and in
+    ``lite``/``deep`` mode dCor may be absent entirely while ``sq_corr`` or the
+    oscillation gate fires. The secondary ``dependence_type`` axis already
+    records which mechanism fired, so key off it — this keeps the explanation
+    consistent with the axis and quotes the evidence that actually matched.
+    """
+    base = f"Pearson ({_fmt(pearson)}) and Spearman ({_fmt(spearman)}) are weak"
+
+    if diagnostics is None:
+        dep_type = sq_corr = reversals = bin_lof = None
+    else:
+        dep_type = diagnostics.dependence_type
+        sq_corr = diagnostics.sq_corr
+        reversals = diagnostics.bin_reversal_count
+        bin_lof = diagnostics.bin_lof_r2_gain
+
+    if dep_type == "oscillating" and reversals is not None:
+        detail = (
+            f"the binned conditional mean reverses direction {int(reversals)} "
+            "times with substantial bin structure"
+        )
+        if bin_lof is not None:
+            detail += f" (lack-of-fit gain {_fmt(bin_lof)})"
+        return [
+            f"{base}, but {detail} — evidence of an oscillating or periodic "
+            "relationship that a simple increasing/decreasing summary misses."
+        ]
+    if dep_type == "closed_loop_or_multivalued":
+        num = (
+            f" (squared-value correlation {_fmt(sq_corr)})"
+            if sq_corr is not None
+            else ""
+        )
+        return [
+            f"{base}, but the variables trace a closed loop{num} — neither is a "
+            "function of the other, as with points scattered around a ring, a "
+            "dependence the monotone metrics cannot see."
+        ]
+    if dep_type == "magnitude_linked" and sq_corr is not None:
+        return [
+            f"{base}, but the correlation of the mean-centered squared values "
+            f"({_fmt(sq_corr)}) is strong — the variables are linked through "
+            "magnitude, a nonmonotonic pattern the linear and rank metrics miss."
+        ]
+    if dcor is not None:
+        return [
+            f"{base}, while distance correlation ({_fmt(dcor)}) is higher; that "
+            "disagreement is evidence consistent with dependence that is not "
+            "simply increasing or decreasing."
+        ]
+    # Defensive fallback: each genuine route sets one of the branches above once
+    # the diagnostics are present; this covers a result assembled without them.
+    return [
+        f"{base}, yet the pair reads as nonmonotonic — inspect the scatter plot "
+        "for U-shaped, cyclical, or radial structure the monotone metrics miss."
+    ]
+
+
+def _metric_context(
+    pattern: str,
+    metrics: pd.DataFrame | None,
+    diagnostics: "MetricDiagnostics | None" = None,
+) -> list[str]:
     values = _metric_map(metrics)
     if not values:
         return []
@@ -112,25 +183,12 @@ def _metric_context(pattern: str, metrics: pd.DataFrame | None) -> list[str]:
             )
         return context
 
-    if pattern == "nonmonotonic_dependence" and abs_p is not None and abs_s is not None:
-        if dcor is not None:
-            return [
-                (
-                    f"Pearson ({_fmt(pearson)}) and Spearman ({_fmt(spearman)}) "
-                    f"are weak, while distance correlation ({_fmt(dcor)}) is higher; "
-                    "that disagreement is evidence consistent with dependence that is not simply increasing or decreasing."
-                )
-            ]
-        # Defensive fallback: the nonmonotonic_dependence label can only be
-        # assigned when distance correlation is available, so this branch is not
-        # expected to render for a genuine result — it guards against being
-        # called with a dcor-less metric set.
-        return [
-            (
-                f"Pearson ({_fmt(pearson)}) and Spearman ({_fmt(spearman)}) "
-                "are weak, and standard-mode nonlinear metrics are unavailable to further check for nonmonotonic dependence."
-            )
-        ]
+    if (
+        pattern == "nonmonotonic_dependence"
+        and pearson is not None
+        and spearman is not None
+    ):
+        return _nonmonotonic_context(pearson, spearman, dcor, diagnostics)
 
     if (
         pattern == "possible_outlier_or_leverage"
@@ -143,18 +201,27 @@ def _metric_context(pattern: str, metrics: pd.DataFrame | None) -> list[str]:
         #    (leverage flips the linear sign relative to the monotone trend);
         #  - magnitude dominance: Pearson is much larger than the rank metrics in
         #    the same direction (leverage inflates the linear correlation).
+        # Read the sign-conflict magnitude bar from the live classifier constant
+        # (lazy import breaks the module cycle: classifier imports this module),
+        # so a user overriding CONFLICTING_SIGN_THRESHOLD gets a consistent
+        # branch here rather than a hard-coded duplicate.
+        from corrsleuth.heuristics import classifier
+
         if (
             pearson * spearman < 0
-            and abs(pearson) >= _SIGN_CONFLICT_MIN_MAGNITUDE
-            and abs(spearman) >= _SIGN_CONFLICT_MIN_MAGNITUDE
+            and abs(pearson) >= classifier.CONFLICTING_SIGN_THRESHOLD
+            and abs(spearman) >= classifier.CONFLICTING_SIGN_THRESHOLD
         ):
+            # Stated from the metrics alone: this label is also reachable via the
+            # "sensitivity could not be computed" flag, where the trim/robust
+            # check never produced a verdict — so the explanation must not assert
+            # that it did. The opposite-sign shape is itself the leverage signature.
             return [
                 (
                     f"Pearson ({_fmt(pearson)}) and the rank metrics (Spearman "
                     f"{_fmt(spearman)}, Kendall tau-b {_fmt(kendall)}) point in "
-                    "opposite directions; the trim/robust check indicates a few "
-                    "high-leverage points are driving the linear correlation "
-                    "against the monotone trend."
+                    "opposite directions — a signature of high-leverage points "
+                    "driving the linear correlation against the monotone trend."
                 )
             ]
         # Phrased in terms of rank-based metrics generally (not just Spearman):
@@ -191,10 +258,11 @@ def generate_explanation(
     pattern: str,
     metrics: pd.DataFrame | None = None,
     include_caveat: bool = True,
+    diagnostics: "MetricDiagnostics | None" = None,
 ) -> str:
     exp = _EXPLANATIONS.get(pattern, _EXPLANATIONS["mixed_or_ambiguous"])
 
-    context_sentences = _metric_context(pattern, metrics)
+    context_sentences = _metric_context(pattern, metrics, diagnostics)
     if context_sentences:
         exp += " " + " ".join(context_sentences)
 

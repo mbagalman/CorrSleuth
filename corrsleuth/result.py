@@ -5,6 +5,7 @@ import pandas as pd
 
 from corrsleuth.utils.markdown import (
     escape_markdown_cell,
+    escape_markdown_code_span,
     format_markdown_value,
     markdown_table,
 )
@@ -60,14 +61,19 @@ class MetricDiagnostics:
     lack-of-fit test's R² gain over a linear fit; ``bin_reversal_count``, how
     many times the sequence of bin means changes direction — 0 for a monotone
     trend, 1 for a single bend, 2+ for an oscillation; ``sq_corr``, the
-    correlation between X² and Y²) — see ``corrsleuth/metrics/shape.py`` — and the
+    correlation between the squared mean-centered X and Y) — see
+    ``corrsleuth/metrics/shape.py`` — and the
     heteroscedasticity diagnostics (``bp_pvalue``, the Breusch-Pagan p-value;
     ``gq_ratio``, the Goldfeld-Quandt high-vs-low-x residual variance ratio;
     ``bowtie_ratio``, the edge-thirds-vs-middle-third residual variance ratio) —
     see ``corrsleuth/metrics/variance.py`` — the segmentation diagnostics
     (``segment_gain``, the R² gain of the best single-breakpoint two-line fit
-    over one line; ``breakpoint_x``, the x-location of a detected step, reported
-    only when ``mean_shape`` reads as a step/threshold) — and the influence
+    over one line; ``segment_stepness``, the fraction of that gain a two-*level*
+    (flat-segment) model already captures — ``≈ 1`` for a step/threshold jump,
+    ``≤ 0`` for a smooth bend, and the number behind the ``mean_shape``
+    step-vs-smooth call; ``breakpoint_x``, the x-location of a detected step,
+    reported only when ``mean_shape`` reads as a step/threshold) — and the
+    influence
     diagnostics (``max_cook_distance``, the largest Cook's distance;
     ``n_influential_points``, how many rows exceed the influence cutoff) — see
     ``corrsleuth/metrics/influence.py``. Gap, shape, variance, segmentation, and
@@ -100,6 +106,7 @@ class MetricDiagnostics:
     gq_ratio: float | None = None
     bowtie_ratio: float | None = None
     segment_gain: float | None = None
+    segment_stepness: float | None = None
     breakpoint_x: float | None = None
     max_cook_distance: float | None = None
     n_influential_points: int | None = None
@@ -156,6 +163,7 @@ class CorrSleuthResult:
             gq_ratio=None,
             bowtie_ratio=None,
             segment_gain=None,
+            segment_stepness=None,
             breakpoint_x=None,
             max_cook_distance=None,
             n_influential_points=None,
@@ -211,33 +219,46 @@ class CorrSleuthResult:
             val_str = self._format_value(row["value"])
             lines.append(f"  {row['metric'].ljust(25)}: {val_str}")
 
+        diag = self.diagnostics
+        # (label, formatted-value) pairs, laid out with one ljust width shared by
+        # every row so the colons align even for the longest label — building the
+        # rows programmatically also keeps ``pearson_trimmed`` (the level Pearson
+        # moved to) beside its delta on this surface, not only in to_dict/to_frame.
+        diag_rows = [
+            ("disagreement_score", self._format_value(diag.disagreement_score)),
+            ("rank_linear_gap", self._format_value(diag.rank_linear_gap)),
+            (
+                "pearson_spearman_signed_gap",
+                self._format_value(diag.pearson_spearman_signed_gap),
+            ),
+            ("nonmonotonic_gap", self._format_value(diag.nonmonotonic_gap)),
+            ("pearson_kendall_gap", self._format_value(diag.pearson_kendall_gap)),
+            ("pearson_trimmed", self._format_value(diag.pearson_trimmed)),
+            ("pearson_trim_delta", self._format_value(diag.pearson_trim_delta)),
+            ("bin_lof_r2_gain", self._format_value(diag.bin_lof_r2_gain)),
+            ("bin_reversal_count", self._format_count(diag.bin_reversal_count)),
+            ("sq_corr", self._format_value(diag.sq_corr)),
+            ("bp_pvalue", self._format_value(diag.bp_pvalue)),
+            ("gq_ratio", self._format_value(diag.gq_ratio)),
+            ("bowtie_ratio", self._format_value(diag.bowtie_ratio)),
+            ("segment_gain", self._format_value(diag.segment_gain)),
+            ("segment_stepness", self._format_value(diag.segment_stepness)),
+            ("breakpoint_x", self._format_value(diag.breakpoint_x)),
+            ("max_cook_distance", self._format_value(diag.max_cook_distance)),
+            ("n_influential_points", self._format_count(diag.n_influential_points)),
+        ]
+        diag_width = max(len(label) for label, _ in diag_rows)
+        lines.extend(["", "Diagnostics:"])
+        lines.extend(f"  {label.ljust(diag_width)}: {val}" for label, val in diag_rows)
         lines.extend(
             [
                 "",
-                "Diagnostics:",
-                f"  disagreement_score       : {self._format_value(self.diagnostics.disagreement_score)}",
-                f"  rank_linear_gap          : {self._format_value(self.diagnostics.rank_linear_gap)}",
-                f"  pearson_spearman_signed_gap : {self._format_value(self.diagnostics.pearson_spearman_signed_gap)}",
-                f"  nonmonotonic_gap         : {self._format_value(self.diagnostics.nonmonotonic_gap)}",
-                f"  pearson_kendall_gap      : {self._format_value(self.diagnostics.pearson_kendall_gap)}",
-                f"  pearson_trim_delta       : {self._format_value(self.diagnostics.pearson_trim_delta)}",
-                f"  bin_lof_r2_gain          : {self._format_value(self.diagnostics.bin_lof_r2_gain)}",
-                f"  bin_reversal_count       : {self._format_count(self.diagnostics.bin_reversal_count)}",
-                f"  sq_corr                  : {self._format_value(self.diagnostics.sq_corr)}",
-                f"  bp_pvalue                : {self._format_value(self.diagnostics.bp_pvalue)}",
-                f"  gq_ratio                 : {self._format_value(self.diagnostics.gq_ratio)}",
-                f"  bowtie_ratio             : {self._format_value(self.diagnostics.bowtie_ratio)}",
-                f"  segment_gain             : {self._format_value(self.diagnostics.segment_gain)}",
-                f"  breakpoint_x             : {self._format_value(self.diagnostics.breakpoint_x)}",
-                f"  max_cook_distance        : {self._format_value(self.diagnostics.max_cook_distance)}",
-                f"  n_influential_points     : {self._format_count(self.diagnostics.n_influential_points)}",
-                "",
                 "Relationship axes:",
-                f"  mean_shape           : {self._format_axis(self.diagnostics.mean_shape)}",
-                f"  variance_shape       : {self._format_axis(self.diagnostics.variance_shape)}",
-                f"  dependence_type      : {self._format_axis(self.diagnostics.dependence_type)}",
-                f"  outlier_sensitivity  : {self._format_axis(self.diagnostics.outlier_sensitivity)}",
-                f"  functional_direction : {self._format_axis(self.diagnostics.functional_direction)}",
+                f"  mean_shape           : {self._format_axis(diag.mean_shape)}",
+                f"  variance_shape       : {self._format_axis(diag.variance_shape)}",
+                f"  dependence_type      : {self._format_axis(diag.dependence_type)}",
+                f"  outlier_sensitivity  : {self._format_axis(diag.outlier_sensitivity)}",
+                f"  functional_direction : {self._format_axis(diag.functional_direction)}",
             ]
         )
 
@@ -263,7 +284,7 @@ class CorrSleuthResult:
                         f"({stability.stability_label}, {stability.metric_set}, "
                         f"n={int(stability.n_iterations)}/{int(stability.n_bootstrap)})"
                     ),
-                    f"  label_counts: {stability.bootstrap_label_counts}",
+                    f"  label_counts: {self._format_label_counts(stability.bootstrap_label_counts)}",
                 ]
             )
 
@@ -294,7 +315,10 @@ class CorrSleuthResult:
         from corrsleuth.heuristics.explanations import generate_explanation
 
         explanation = generate_explanation(
-            self.pattern, metrics=self.metrics, include_caveat=include_caveat
+            self.pattern,
+            metrics=self.metrics,
+            include_caveat=include_caveat,
+            diagnostics=self.diagnostics,
         )
         if self.bootstrap_stability is not None:
             stability = self.bootstrap_stability
@@ -305,7 +329,11 @@ class CorrSleuthResult:
             )
             from corrsleuth.heuristics import STANDARD_ONLY_LABELS
 
-            if self.pattern in STANDARD_ONLY_LABELS and stability.metric_set == "lite":
+            # Gate on whether dcor was actually in the replicate cascade — not on
+            # the metric_set string — so this matches the warnings list exactly
+            # even for an explicit subset like bootstrap_metrics=["pearson"]
+            # (metric_set="pearson" but dcor still absent). See C5 #2.
+            if self.pattern in STANDARD_ONLY_LABELS and not stability.dcor_in_cascade:
                 explanation += (
                     f" Because stability used lite metrics, it may not fully test a "
                     f"standard-mode {self.pattern} label (this can be conservative "
@@ -349,7 +377,9 @@ class CorrSleuthResult:
             include_caveat = self._include_caveat
 
         lines = [
-            f"# CorrSleuth Pair Report: `{self.x_name}` vs `{self.y_name}`",
+            f"# CorrSleuth Pair Report: "
+            f"`{escape_markdown_code_span(self.x_name)}` vs "
+            f"`{escape_markdown_code_span(self.y_name)}`",
             "",
             f"**Primary pattern:** `{self.pattern}`",
             "",
@@ -389,6 +419,10 @@ class CorrSleuthResult:
                         format_markdown_value(self.diagnostics.pearson_kendall_gap),
                     ],
                     [
+                        "pearson_trimmed",
+                        format_markdown_value(self.diagnostics.pearson_trimmed),
+                    ],
+                    [
                         "pearson_trim_delta",
                         format_markdown_value(self.diagnostics.pearson_trim_delta),
                     ],
@@ -419,6 +453,10 @@ class CorrSleuthResult:
                     [
                         "segment_gain",
                         format_markdown_value(self.diagnostics.segment_gain),
+                    ],
+                    [
+                        "segment_stepness",
+                        format_markdown_value(self.diagnostics.segment_stepness),
                     ],
                     [
                         "breakpoint_x",

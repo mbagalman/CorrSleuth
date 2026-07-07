@@ -16,6 +16,7 @@ from .shape import (
     compute_bin_lof,
     compute_segmentation,
     compute_squared_correlation,
+    compute_squared_correlation_robust,
 )
 from .variance import compute_heteroscedasticity, compute_heteroscedasticity_excluding
 
@@ -35,6 +36,7 @@ __all__ = [
     "compute_chatterjee_xi_reverse",
     "compute_bin_lof",
     "compute_squared_correlation",
+    "compute_squared_correlation_robust",
     "compute_segmentation",
     "compute_heteroscedasticity",
     "compute_heteroscedasticity_excluding",

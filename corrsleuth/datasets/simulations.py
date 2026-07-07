@@ -32,7 +32,13 @@ def make_relationship(
     - shape_type (str): The type of relationship to generate.
     - n (int): Number of observations. Must be an integer >= 2. Default is 500.
     - noise (float): Amount of random noise to add. Must be a non-negative
-      number. Default is 0.1.
+      number. Default is 0.1. **Its scale is shape-specific** — absolute sd for
+      the linear/u_shape/sinusoidal/threshold_step/monotonic_log shapes,
+      signal-relative sd for the exponential/logarithmic shapes, radius-relative
+      jitter for `circular`, a spread-slope scale for the heteroscedastic/bowtie
+      shapes, and an additive sd bump for `independent` (sd = 1 + noise). So the
+      same `noise` value is not comparable across shapes; see the per-branch
+      source comments.
     - random_state (int, numpy.random.Generator, or None): Seed or generator
       for reproducibility. Default is None (nondeterministic).
 
@@ -103,7 +109,8 @@ def make_relationship(
         # Points scattered around a ring: X and Y are dependent (X^2 + Y^2 is
         # approximately constant) but Pearson, Spearman, and distance
         # correlation on the raw values are all near zero — only sq_corr
-        # (corr(X^2, Y^2)) reveals it. See docs/shape-diagnostics-design.md.
+        # (the correlation of the mean-centered squares) reveals it. See
+        # docs/shape-diagnostics-design.md.
         theta = rng.uniform(0, 2 * np.pi, size=n)
         radius = 5.0 * (1 + rng.normal(0, noise, size=n))
         x = radius * np.cos(theta)

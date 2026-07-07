@@ -117,12 +117,12 @@ def build_scan_figure(
         result = entry.result_data
         # candidates were filtered on both clean series being present.
         assert result._clean_x is not None and result._clean_y is not None
-        # scan_target() calls profile_pair(data, target, col), so
-        # _clean_x holds the target's data and _clean_y holds the
-        # candidate's. EDA convention puts the candidate (predictor) on x
-        # and the target on y, so swap here.
-        target_data = result._clean_x.to_numpy()
-        candidate_data = result._clean_y.to_numpy()
+        # scan_target() calls profile_pair(data, candidate, target), so
+        # _clean_x already holds the candidate (predictor) and _clean_y the
+        # target — exactly the EDA convention (predictor on x, target on y),
+        # so no swap is needed.
+        candidate_data = result._clean_x.to_numpy()
+        target_data = result._clean_y.to_numpy()
         n_pts = len(candidate_data)
 
         if n_pts > 5000:

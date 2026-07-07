@@ -113,15 +113,46 @@ def plot_pair(result, show: bool = False):
     # 5. Text Summary Panel
     ax_text.axis("off")
 
-    y_pos = 0.97
-    line_height = 0.055
+    diagnostic_rows = [
+        ("Disagreement", result.diagnostics.disagreement_score),
+        ("Rank-linear gap", result.diagnostics.rank_linear_gap),
+        ("Nonmonotonic gap", result.diagnostics.nonmonotonic_gap),
+        ("Trim delta", result.diagnostics.pearson_trim_delta),
+    ]
+    n_warning_lines = min(len(result.warnings), 3) if result.warnings else 1
+
+    # Scale the line height (and, proportionally, the font sizes) to the number
+    # of rows so the panel fits between `top` and `bottom` instead of walking
+    # `y_pos` off the bottom of the axes — deep mode's 9-metric block otherwise
+    # pushes the warnings, the load-bearing caveats, below the panel (C7 #2).
+    # The three 0.4-line section gaps are folded in as ~1.2 lines.
+    total_lines = (
+        3  # Primary Pattern header + pattern + n_used
+        + 1
+        + len(result.metrics)  # Metrics header + rows
+        + 1
+        + len(diagnostic_rows)  # Diagnostics header + rows
+        + 1
+        + n_warning_lines  # Warnings header + body
+        + 1.2  # three 0.4-line section gaps
+    )
+    top, bottom = 0.97, 0.02
+    line_height = min(0.055, (top - bottom) / total_lines)
+    # At the default line height fonts are unchanged (fs_scale == 1); when the
+    # panel has to shrink, sizes scale with it but never below a legible floor.
+    fs_scale = min(1.0, line_height / 0.055)
+
+    def _fs(base: float) -> float:
+        return max(7.0, base * fs_scale)
+
+    y_pos = top
 
     y_pos = _add_text(
         ax_text,
         y_pos,
         "Primary Pattern",
         fontweight="bold",
-        fontsize=11,
+        fontsize=_fs(11),
         line_height=line_height,
     )
     y_pos = _add_text(
@@ -129,7 +160,7 @@ def plot_pair(result, show: bool = False):
         y_pos,
         result.pattern,
         x_pos=0.05,
-        fontsize=10,
+        fontsize=_fs(10),
         color="firebrick",
         line_height=line_height,
     )
@@ -138,7 +169,7 @@ def plot_pair(result, show: bool = False):
         y_pos,
         f"n_used: {n}",
         x_pos=0.05,
-        fontsize=9,
+        fontsize=_fs(9),
         color="dimgray",
         line_height=line_height,
     )
@@ -149,15 +180,15 @@ def plot_pair(result, show: bool = False):
         y_pos,
         "Metrics",
         fontweight="bold",
-        fontsize=11,
+        fontsize=_fs(11),
         line_height=line_height,
     )
 
     for _, row in result.metrics.iterrows():
         m_name = row["metric"].replace("_", " ").title()
         m_val = _format_value(row["value"])
-        ax_text.text(0.05, y_pos, f"{m_name}:", fontsize=10)
-        ax_text.text(0.5, y_pos, m_val, fontsize=10, fontweight="bold")
+        ax_text.text(0.05, y_pos, f"{m_name}:", fontsize=_fs(10))
+        ax_text.text(0.5, y_pos, m_val, fontsize=_fs(10), fontweight="bold")
         y_pos -= line_height
 
     y_pos -= line_height * 0.4
@@ -166,29 +197,30 @@ def plot_pair(result, show: bool = False):
         y_pos,
         "Diagnostics",
         fontweight="bold",
-        fontsize=11,
+        fontsize=_fs(11),
         line_height=line_height,
     )
-    diagnostic_rows = [
-        ("Disagreement", result.diagnostics.disagreement_score),
-        ("Rank-linear gap", result.diagnostics.rank_linear_gap),
-        ("Nonmonotonic gap", result.diagnostics.nonmonotonic_gap),
-        ("Trim delta", result.diagnostics.pearson_trim_delta),
-    ]
     for label, value in diagnostic_rows:
-        ax_text.text(0.05, y_pos, f"{label}:", fontsize=9)
-        ax_text.text(0.55, y_pos, _format_value(value), fontsize=9, fontweight="bold")
+        ax_text.text(0.05, y_pos, f"{label}:", fontsize=_fs(9))
+        ax_text.text(
+            0.55, y_pos, _format_value(value), fontsize=_fs(9), fontweight="bold"
+        )
         y_pos -= line_height
 
     y_pos -= line_height * 0.4
 
     if result.warnings:
         ax_text.text(
-            0.0, y_pos, "Warnings", fontweight="bold", fontsize=11, color="darkorange"
+            0.0,
+            y_pos,
+            "Warnings",
+            fontweight="bold",
+            fontsize=_fs(11),
+            color="darkorange",
         )
         y_pos -= line_height
         for w in result.warnings[:3]:  # Show max 3 warnings to avoid overflow
-            ax_text.text(0.05, y_pos, f"- {w}", fontsize=9, wrap=True)
+            ax_text.text(0.05, y_pos, f"- {w}", fontsize=_fs(9), wrap=True)
             y_pos -= line_height
     else:
         y_pos = _add_text(
@@ -196,7 +228,7 @@ def plot_pair(result, show: bool = False):
             y_pos,
             "Warnings",
             fontweight="bold",
-            fontsize=11,
+            fontsize=_fs(11),
             color="darkorange",
             line_height=line_height,
         )
@@ -205,7 +237,7 @@ def plot_pair(result, show: bool = False):
             y_pos,
             "None",
             x_pos=0.05,
-            fontsize=9,
+            fontsize=_fs(9),
             color="dimgray",
             line_height=line_height,
         )
