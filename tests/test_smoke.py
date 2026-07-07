@@ -62,6 +62,8 @@ def test_profile_pair_end_to_end_renders_every_surface():
 
 
 def test_profile_pair_deep_mode_adds_chatterjee_xi():
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
     df = _demo_frame()
     metrics = set(
         cs.profile_pair(df, "u_shaped", "target", mode="deep").metrics["metric"]

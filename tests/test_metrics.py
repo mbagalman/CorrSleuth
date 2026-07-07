@@ -7,6 +7,11 @@ import pytest
 from corrsleuth.api import profile_pair
 from corrsleuth.datasets import make_relationship
 from corrsleuth.exceptions import MetricComputationError, OptionalDependencyError
+from corrsleuth.heuristics.classifier import (
+    OSCILLATION_BIN_LOF_FLOOR,
+    SQ_CORR_ROBUST_FLOOR,
+    SQ_CORR_THRESHOLD,
+)
 from corrsleuth.metrics import (
     compute_bin_lof,
     compute_biweight_midcorrelation,
@@ -24,6 +29,7 @@ from corrsleuth.metrics import (
     compute_segmentation,
     compute_spearman,
     compute_squared_correlation,
+    compute_squared_correlation_robust,
     compute_trimmed_pearson,
     compute_winsorized_pearson,
 )
@@ -127,6 +133,46 @@ def test_mutual_information_missing_dependency_returns_unavailable_in_lite_mode(
     assert result.value is None
 
 
+def test_lite_profile_with_standard_bootstrap_metrics_names_bootstrap_metrics(
+    monkeypatch,
+):
+    """A lite-mode profile that opts into standard bootstrap metrics without the
+    extras must fail with a message naming *bootstrap_metrics*, not "standard
+    mode" — the profile mode is lite (C4 #5)."""
+    _hide_module(monkeypatch, "dcor")
+    df = make_relationship("linear_positive", n=80, random_state=42)
+
+    with pytest.raises(OptionalDependencyError, match="bootstrap_metrics"):
+        profile_pair(
+            df, "x", "y", mode="lite", bootstrap=5, bootstrap_metrics="standard"
+        )
+
+
+def test_assess_outlier_sensitivity_treats_non_finite_baseline_as_unavailable():
+    """A NaN/inf baseline Pearson must yield status 'unavailable', not 'stable':
+    'stable' is an affirmative all-clear that would block the leverage label on no
+    real evidence (C3 #3)."""
+    from corrsleuth.metrics.robust import assess_outlier_sensitivity
+
+    df = make_relationship("linear_positive", n=80, random_state=42)
+    pair = validate_pair(df, "x", "y")
+
+    assert assess_outlier_sensitivity(pair, float("nan")).status == "unavailable"
+    assert assess_outlier_sensitivity(pair, float("inf")).status == "unavailable"
+    # A finite baseline still resolves normally.
+    assert assess_outlier_sensitivity(pair, 0.9).status in ("stable", "sensitive")
+
+
+def test_deep_mode_requires_standard_extras_and_names_deep(monkeypatch):
+    """deep is a superset of standard, so it also requires the [standard] extras
+    and raises OptionalDependencyError — with a message naming *deep* mode, not
+    standard — when they are missing."""
+    _hide_module(monkeypatch, "dcor")
+    df = pd.DataFrame({"x": range(60), "y": range(60)})
+    with pytest.raises(OptionalDependencyError, match="deep mode"):
+        profile_pair(df, "x", "y", mode="deep")
+
+
 def test_standard_mode_small_sample_returns_low_power_result():
     pytest.importorskip("dcor")
     pytest.importorskip("sklearn")
@@ -157,7 +203,9 @@ def test_compute_pearson_wraps_unexpected_failures_as_metric_error(monkeypatch):
         compute_pearson(pair)
 
 
-def test_deep_mode_adds_robust_metrics_without_standard_dependencies():
+def test_deep_mode_is_a_superset_of_standard_plus_robust_and_xi():
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
     df = pd.DataFrame({"x": range(80), "y": range(80)})
 
     lite = profile_pair(df, "x", "y", mode="lite")
@@ -171,13 +219,18 @@ def test_deep_mode_adds_robust_metrics_without_standard_dependencies():
         "biweight_midcorrelation",
         "pearson_median_clipped_20pct",
     }
+    # deep is a strict superset of standard: the standard metrics (distance
+    # correlation, mutual information) plus the robust family and Chatterjee's xi.
     assert robust_metrics.isdisjoint(lite_metrics)
     assert robust_metrics <= deep_metrics
-    assert "distance_correlation" not in deep_metrics
-    assert "mutual_information" not in deep_metrics
+    assert {"chatterjee_xi", "chatterjee_xi_reverse"} <= deep_metrics
+    assert "distance_correlation" in deep_metrics
+    assert "mutual_information" in deep_metrics
 
 
 def test_deep_mode_emits_one_small_sample_robust_warning():
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
     df = pd.DataFrame({"x": range(40), "y": range(40)})
 
     result = profile_pair(df, "x", "y", mode="deep")
@@ -205,6 +258,8 @@ def test_robust_metrics_are_near_pearson_for_clean_linear_data():
 
 
 def test_outlier_driven_data_shows_meaningful_pearson_robust_gap():
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
     rng = np.random.default_rng(0)
     n = 200
     x = rng.normal(0, 0.1, size=n)
@@ -225,6 +280,64 @@ def test_outlier_driven_data_shows_meaningful_pearson_robust_gap():
     ):
         assert metrics[metric_name] < 0.50
         assert metrics["pearson"] - metrics[metric_name] > 0.40
+
+
+def _canonical_bicor(x, y):
+    """Textbook biweight midcorrelation (Langfelder & Horvath 2012): the Tukey
+    rejection indicator is applied *per variable* — an x-outlier zeroes only its
+    x-weight, keeping every point in all three sums. A different code path than
+    metrics/robust.py."""
+    from scipy import stats
+
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    mx, my = np.median(x), np.median(y)
+    madx = stats.median_abs_deviation(x, scale=1.0)
+    mady = stats.median_abs_deviation(y, scale=1.0)
+    ux = (x - mx) / (9.0 * madx)
+    uy = (y - my) / (9.0 * mady)
+    wx = np.where(np.abs(ux) < 1, (x - mx) * (1 - ux**2) ** 2, 0.0)
+    wy = np.where(np.abs(uy) < 1, (y - my) * (1 - uy**2) ** 2, 0.0)
+    return float(np.sum(wx * wy) / np.sqrt(np.sum(wx**2) * np.sum(wy**2)))
+
+
+def _joint_mask_bicor(x, y):
+    """The former (incorrect) implementation: a single joint mask drops the whole
+    row whenever *either* variable rejects it."""
+    from scipy import stats
+
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    mx, my = np.median(x), np.median(y)
+    madx = stats.median_abs_deviation(x, scale=1.0)
+    mady = stats.median_abs_deviation(y, scale=1.0)
+    ux = (x - mx) / (9.0 * madx)
+    uy = (y - my) / (9.0 * mady)
+    mask = (np.abs(ux) < 1) & (np.abs(uy) < 1)
+    xc = (x[mask] - mx) * (1 - ux[mask] ** 2) ** 2
+    yc = (y[mask] - my) * (1 - uy[mask] ** 2) ** 2
+    return float(np.sum(xc * yc) / np.sqrt(np.sum(xc**2) * np.sum(yc**2)))
+
+
+def test_biweight_midcorrelation_matches_canonical_per_variable_oracle():
+    rng = np.random.default_rng(7)
+    n = 120
+    x = rng.normal(0.0, 1.0, size=n)
+    y = 0.8 * x + rng.normal(0.0, 0.4, size=n)
+    # One-sided contamination: points extreme in x but near the y-median, and
+    # vice versa. A joint mask discards them entirely; the canonical estimator
+    # keeps each in the non-outlying variable's scale.
+    x[0], y[0] = 40.0, 0.0
+    x[1], y[1] = -40.0, 0.1
+    x[2], y[2] = 0.0, 40.0
+    x[3], y[3] = 0.05, -40.0
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    result = compute_biweight_midcorrelation(pair)
+
+    assert result.value == pytest.approx(_canonical_bicor(x, y), abs=1e-12)
+    # And the fix genuinely changed behavior: the old joint-mask value differs.
+    assert abs(result.value - _joint_mask_bicor(x, y)) > 1e-4
 
 
 def test_robust_metrics_return_none_when_mad_or_bend_scale_is_zero():
@@ -258,6 +371,8 @@ def test_chatterjee_xi_high_for_clean_linear_data():
 
 def test_chatterjee_xi_detects_u_shape_that_pearson_misses():
     """For Y = X^2, Pearson and Spearman are near zero but xi(X->Y) is high."""
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
     rng = np.random.default_rng(0)
     n = 500
     x = rng.uniform(-3, 3, size=n)
@@ -276,6 +391,8 @@ def test_chatterjee_xi_is_asymmetric_for_many_to_one_relationship():
     """Y = X^2 maps two X values to the same Y, so X is not a function of Y.
 
     xi(X -> Y) should be much higher than xi(Y -> X)."""
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
     rng = np.random.default_rng(0)
     n = 500
     x = rng.uniform(-3, 3, size=n)
@@ -311,6 +428,9 @@ def _reference_tie_corrected_xi(x, y):
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     n = len(x)
+    # Breaks x-ties by y — the exact leak the production code's seeded random
+    # tie-break avoids. Fine here ONLY because every caller passes a continuous,
+    # tie-free x; do NOT reuse this oracle with a tied sort variable.
     order = np.lexsort((y, x))
     ys = y[order]
     r = np.array([np.sum(ys <= v) for v in ys], dtype=float)
@@ -368,6 +488,8 @@ def test_chatterjee_xi_returns_none_with_warning_below_min_n():
 
 
 def test_chatterjee_xi_only_appears_in_deep_mode():
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
     rng = np.random.default_rng(0)
     df = pd.DataFrame({"x": rng.uniform(size=80), "y": rng.uniform(size=80)})
 
@@ -430,6 +552,8 @@ def test_chatterjee_xi_is_reproducible_for_a_fixed_seed():
 def test_chatterjee_xi_exposes_both_directions_in_a_single_deep_call():
     """For Y = X^2 the forward direction should be high (Y is a function of X)
     and the reverse direction should be lower (X is not a function of Y)."""
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
     rng = np.random.default_rng(0)
     n = 500
     x = rng.uniform(-3, 3, size=n)
@@ -446,12 +570,13 @@ def test_chatterjee_xi_exposes_both_directions_in_a_single_deep_call():
 
 
 def _reference_bin_lof_r2_gain(x, y, target_per_bin=10, min_bins=5, max_bins=20):
-    """Independent reimplementation of the equal-frequency-bin lack-of-fit
-    test, used as an oracle below. Uses an explicit per-bin loop for the bin
-    R^2 (rather than the vectorized ``array_split`` + broadcast approach in
-    ``metrics/shape.py``) and the R^2-equals-squared-Pearson-r identity for
-    the linear R^2 (rather than an explicit polyfit residual sum), so the two
-    implementations share only the bin-split rule, not the arithmetic path."""
+    """Independent reimplementation of the df-adjusted equal-frequency-bin
+    lack-of-fit test, used as an oracle below. Uses an explicit per-bin loop for
+    the bin residual SS (rather than the vectorized ``array_split`` + broadcast
+    approach in ``metrics/shape.py``) and the R^2-equals-squared-Pearson-r
+    identity to derive the linear residual SS (rather than an explicit polyfit
+    residual sum), so the two implementations share only the bin-split rule and
+    the adjusted-R^2 formula, not the arithmetic path."""
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     n = len(x)
@@ -462,12 +587,15 @@ def _reference_bin_lof_r2_gain(x, y, target_per_bin=10, min_bins=5, max_bins=20)
     bins = np.array_split(np.arange(n), n_bins)
     ss_tot = float(np.sum((ys - ys.mean()) ** 2))
     ss_res_bins = sum(float(np.sum((ys[b] - ys[b].mean()) ** 2)) for b in bins)
-    r2_bins = 1.0 - ss_res_bins / ss_tot
     from scipy.stats import pearsonr
 
     r_lin, _ = pearsonr(xs, ys)
-    r2_linear = r_lin**2
-    return r2_bins - r2_linear
+    ss_res_linear = ss_tot * (1.0 - r_lin**2)
+    # Adjusted R^2 per model: 1 - (SS_res / (n - p)) / (SS_tot / (n - 1)),
+    # p = n_bins for the bin model, 2 for the line.
+    adj_r2_bins = 1.0 - (ss_res_bins / (n - n_bins)) / (ss_tot / (n - 1))
+    adj_r2_linear = 1.0 - (ss_res_linear / (n - 2)) / (ss_tot / (n - 1))
+    return adj_r2_bins - adj_r2_linear
 
 
 def test_bin_lof_r2_gain_matches_reference_on_curved_data():
@@ -566,6 +694,35 @@ def test_bin_reversal_count_separates_oscillation_from_single_bend():
     assert compute_bin_lof(linear)["bin_reversal_count"].value == 0
 
 
+def test_bin_lof_robust_gain_collapses_for_heavy_tailed_y_artifact():
+    """The leave-one-bin-out gain (``bin_lof_r2_gain_robust``) tracks the raw
+    gain for a genuine oscillation but collapses when a lone extreme Y in one
+    bin manufactures the gain — the heavy-tailed-Y artifact FU-U guards against."""
+    # Genuine sinusoid: gain is spread across bins, so dropping any one barely
+    # dents it -- the robust gain stays close to the raw gain and well above the
+    # oscillation floor.
+    rng = np.random.default_rng(0)
+    x_sin = rng.uniform(-np.pi, np.pi, size=200)
+    y_sin = np.sin(1.5 * x_sin) + rng.normal(0, 0.3, size=200)
+    sine = compute_bin_lof(
+        validate_pair(pd.DataFrame({"x": x_sin, "y": y_sin}), "x", "y")
+    )
+    raw = sine["bin_lof_r2_gain"].value
+    robust = sine["bin_lof_r2_gain_robust"].value
+    assert robust > OSCILLATION_BIN_LOF_FLOOR
+    assert robust > raw - 0.1  # barely moves
+
+    # Heavy-tailed target vs an independent predictor, on a seed whose unlucky
+    # draw pushes the raw gain over the 0.15 oscillation floor. The robust gain
+    # collapses far below it: the "structure" was one outlier-dominated bin.
+    rng = np.random.default_rng(387)
+    x_ht = rng.normal(size=100)
+    y_ht = np.exp(rng.uniform(0.1, 10, size=100))
+    ht = compute_bin_lof(validate_pair(pd.DataFrame({"x": x_ht, "y": y_ht}), "x", "y"))
+    assert ht["bin_lof_r2_gain"].value > OSCILLATION_BIN_LOF_FLOOR
+    assert ht["bin_lof_r2_gain_robust"].value < OSCILLATION_BIN_LOF_FLOOR
+
+
 def test_bin_reversal_count_known_zigzag_is_exact():
     """Known-answer check: a noiseless triangle wave whose bin means form an
     exact up-down-up-down zigzag must count exactly 3 reversals (4 legs)."""
@@ -579,19 +736,23 @@ def test_bin_reversal_count_known_zigzag_is_exact():
     assert result["bin_lof_r2_gain"].value > 0.3
 
 
-def test_bin_reversal_count_noise_has_many_reversals_but_tiny_gain():
+@pytest.mark.parametrize("n", [100, 500])
+def test_bin_reversal_count_noise_has_many_reversals_but_tiny_gain(n):
     """The reversal count alone must never be trusted: pure noise reverses
-    direction constantly, but its bin-fit gain is near zero — the joint gate
-    (see OSCILLATION_BIN_LOF_FLOOR) is what separates it from a sinusoid."""
+    direction constantly, but its df-adjusted bin-fit gain stays near zero and
+    well below the oscillation floor — the joint gate (OSCILLATION_BIN_LOF_FLOOR)
+    is what separates it from a sinusoid. Checked at n=100 too, where the
+    unadjusted statistic's null bias was largest."""
     rng = np.random.default_rng(0)
-    n = 500
     x = rng.uniform(-3, 3, size=n)
     y = rng.normal(0, 1, size=n)
     pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
 
     result = compute_bin_lof(pair)
     assert result["bin_reversal_count"].value >= 2  # noise wiggles a lot
-    assert result["bin_lof_r2_gain"].value < 0.3  # ... but explains nothing
+    assert (
+        result["bin_lof_r2_gain"].value < OSCILLATION_BIN_LOF_FLOOR
+    )  # explains nothing
 
 
 def test_squared_correlation_strongly_negative_for_circular_data():
@@ -637,6 +798,43 @@ def test_squared_correlation_returns_none_when_squared_x_is_constant():
     pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
 
     result = compute_squared_correlation(pair)
+    assert result.value is None
+    assert result.available is True
+
+
+def test_squared_correlation_robust_collapses_for_heavy_tailed_artifact():
+    """The robust sq_corr (drop the few most extreme points, take the min |corr|)
+    tracks the raw value for a genuine magnitude link but collapses when a
+    heavy-tailed variable manufactures the raw sq_corr with a handful of extreme
+    squared values — the FU-V artifact."""
+    # Genuine U-shape: the magnitude link is spread over many points, so dropping
+    # the extreme few barely dents it — robust stays above the classifier floor.
+    rng = np.random.default_rng(0)
+    x = rng.uniform(-3, 3, size=400)
+    df = pd.DataFrame({"x": x, "y": x**2 + rng.normal(0, 0.3, size=400)})
+    pair = validate_pair(df, "x", "y")
+    raw = abs(compute_squared_correlation(pair).value)
+    robust = compute_squared_correlation_robust(pair).value
+    assert raw > SQ_CORR_THRESHOLD
+    assert robust > SQ_CORR_ROBUST_FLOOR
+    assert robust > raw - 0.15  # barely moves
+
+    # Heavy-tailed target vs an independent predictor, seed 574: the raw sq_corr
+    # clears the 0.35 threshold but is carried by a few extreme values, so the
+    # robust value collapses below the floor.
+    rng = np.random.default_rng(574)
+    x_ht = rng.normal(size=100)
+    y_ht = np.exp(rng.uniform(0.1, 10, size=100))
+    ht = validate_pair(pd.DataFrame({"x": x_ht, "y": y_ht}), "x", "y")
+    assert abs(compute_squared_correlation(ht).value) > SQ_CORR_THRESHOLD
+    assert compute_squared_correlation_robust(ht).value < SQ_CORR_ROBUST_FLOOR
+
+
+def test_squared_correlation_robust_returns_none_for_constant_input():
+    df = pd.DataFrame({"x": [1.0] * 50, "y": list(range(50))})
+    pair = validate_pair(df, "x", "y")
+    result = compute_squared_correlation_robust(pair)
+    assert result.name == "sq_corr_robust"
     assert result.value is None
     assert result.available is True
 
@@ -909,6 +1107,36 @@ def test_segmentation_stepness_separates_step_from_smooth():
     )
     # Sloped segments: flattening them is strictly worse, so stepness <= 0.
     assert smooth["segment_stepness"].value < 0.5
+
+
+def test_segmentation_is_numerically_stable_under_large_offset():
+    rng = np.random.default_rng(1)
+    n = 300
+    x = rng.uniform(-3, 3, size=n)
+    y = np.where(x > 0, 1.0, -1.0) + rng.normal(0, 0.1, size=n)
+
+    base = compute_segmentation(validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y"))
+
+    # A large common offset makes the raw sums of squares (~offset**2) dwarf the
+    # residuals (~1). Without mean-centering the prefix-sum identities lose the
+    # signal to catastrophic cancellation; with it, the shape statistics are
+    # invariant and the breakpoint simply tracks the shift.
+    offset = 1e8
+    shifted = compute_segmentation(
+        validate_pair(pd.DataFrame({"x": x + offset, "y": y + offset}), "x", "y")
+    )
+
+    assert shifted["segment_gain"].value == pytest.approx(
+        base["segment_gain"].value, rel=1e-6, abs=1e-9
+    )
+    assert shifted["segment_stepness"].value == pytest.approx(
+        base["segment_stepness"].value, rel=1e-6, abs=1e-9
+    )
+    assert shifted["breakpoint_x"].value == pytest.approx(
+        base["breakpoint_x"].value + offset, rel=1e-12
+    )
+    # Sanity: the offset case still reads as a clean step, not numerical mush.
+    assert shifted["segment_stepness"].value > 0.8
 
 
 def test_segmentation_returns_none_below_min_n():

@@ -106,9 +106,10 @@ alongside the existing Spearman-Pearson gap rule.
 
 ### 2. Squared correlation (`sq_corr`)
 
-`corr(X², Y²)` — catches dependence carried in magnitude rather than sign or
-rank. For a circular relationship (`X² + Y² ≈ const`), knowing `X` constrains
-`|Y|` but not `sign(Y)`, so Pearson/Spearman/distance correlation on the raw
+`corr((X−x̄)², (Y−ȳ)²)` (the correlation of the *mean-centered* squares) —
+catches dependence carried in magnitude rather than sign or rank. For a circular
+relationship (`(X−x̄)² + (Y−ȳ)² ≈ const`), knowing `X` constrains `|Y−ȳ|` but not
+`sign(Y−ȳ)`, so Pearson/Spearman/distance correlation on the raw
 values are all near zero while `sq_corr` is strongly (typically negatively)
 correlated.
 
@@ -145,6 +146,24 @@ alongside the existing distance-correlation rule, and into the ceiling check
 for `weak_or_no_relationship` (mirroring the existing distance-correlation
 ceiling, so a moderate `sq_corr` also falls through to `mixed_or_ambiguous`
 rather than "no relationship").
+
+**Amendment — robustness to a heavy-tailed variable (FU-V).** The same
+pre-release scan work that hardened `bin_lof_r2_gain` (see §4) surfaced a sibling
+blind spot here: when a variable is **heavy-tailed** (in a scan, the *target*), a
+handful of extreme `(Y−ȳ)²` values can dominate the Pearson correlation of the
+squares and push a raw `|sq_corr|` over 0.35 on a predictor that is *independent*
+of the target. The `sq_corr` routes now additionally require a **leave-the-top-out
+robust value** (`sq_corr_robust` — the smallest `|sq_corr|` after dropping the few
+points most extreme in either squared variable) to clear an **asymmetric, lower**
+floor (`SQ_CORR_ROBUST_FLOOR = 0.20`). A genuine magnitude link (circle, U-shape)
+is carried by many points and barely moves; the artifact collapses. Unlike the
+bin-LoF oscillation gate — where a genuine oscillation is spread across bins and
+the artifact fully separates — a U-shape's magnitude signal *concentrates in the
+same extreme points* the artifact does, so full separation is impossible: the
+floor is tuned (`validation/sq_corr_sweep.py`) to preserve essentially all
+genuine detections while removing the large majority of artifacts, and a rare
+artifact whose *bulk* correlation survives the drop (indistinguishable from a weak
+real link) remains. The raw `sq_corr` metric and its 0.35 threshold are unchanged.
 
 ### 3. Mutual information as a cascade signal
 
@@ -232,15 +251,26 @@ detector shipped as `bin_reversal_count` (computed by `compute_bin_lof` in
 
 - *"Reversal count alone is not trustworthy"* — confirmed, and resolved by the
   joint gate this section anticipated: the count only fires alongside
-  `bin_lof_r2_gain > OSCILLATION_BIN_LOF_FLOOR` (0.3, deliberately far above
-  the 0.05 curvature threshold). On genuinely blind test data, pure noise
-  measured *more* raw reversals than a real 2.5-cycle sinusoid (16 vs. 4) with
-  a bin-fit gain 15× smaller (0.057 vs. 0.826) — the floor, not the count, is
-  what excludes noise. The count itself also got more robust than the sketch
+  `bin_lof_r2_gain > OSCILLATION_BIN_LOF_FLOOR` (0.15, above the 0.05 curvature
+  threshold). On genuinely blind test data, pure noise measured *more* raw
+  reversals than a real 2.5-cycle sinusoid (16 vs. 4) with a much smaller
+  bin-fit gain — the floor, not the count, is what excludes noise. The count itself also got more robust than the sketch
   here: turning points are confirmed with hysteresis (a reversal counts only
   after the bin means move ≥ 15% of their range back from the last extreme),
   which a comparison sweep showed eliminates the false "oscillating" reads a
   per-step de-noising filter still allowed on noisy single-bend shapes.
+  One residual blind spot surfaced later (during the pre-release scan-orientation
+  fix): when the target *Y* is heavy-tailed — the common case in a scan — a lone
+  extreme Y in one bin can pull that bin's mean far enough to push the raw gain
+  over the 0.15 floor with ≥ 2 reversals, faking an oscillation on an
+  *independent* predictor. The gate now also requires a **leave-one-bin-out
+  robust gain** (`bin_lof_r2_gain_robust`, the smallest gain obtained by dropping
+  any single bin) to clear the floor. A genuine oscillation is spread across many
+  bins and barely moves (sinusoid robust gain ≥ 0.17 across the sweep); the
+  artifact collapses (≤ 0.10). The raw gain still drives the rank-trend-gated
+  *curvature* route, where curvature legitimately concentrates in the extreme
+  bins, so that calibration is untouched — see the heavy-tailed-Y section of
+  `validation/bin_lof_sweep.py`.
 - *"No single-dataset validation of margins"* — resolved by a 2,080-run sweep
   (13 shapes × 4 sample sizes × 4 noise levels × 10 seeds, plus a sinusoid
   grid over 6 cycle counts): zero false positives among the negative controls,
@@ -264,6 +294,27 @@ sampled range gives it a substantial net linear component (integer cycle
 counts measured |ρ| up to ~0.49) still fails the rule's monotone ceiling
 (`p, s < 0.25`) and falls to `mixed_or_ambiguous` — the oscillation route
 deliberately reuses the existing rule-4 gate rather than loosening it.
+
+**Amendment — degrees-of-freedom bias in `bin_lof_r2_gain` (pre-0.2.0 fix).**
+The statistic originally shipped as a *plain* R² difference (`R²_bins −
+R²_linear`). That gives the many-parameter bin model free credit for degrees of
+freedom the straight line lacks, so under no curvature the gain has a positive
+expectation ≈ `(k−2)/(n−1)` — above the 0.05 curvature threshold for n below
+~400. The original validation sweep never caught this because it used only the
+bundled `make_relationship` shapes, whose "linear" cases sit at ρ ≈ 0.87+ even
+at maximum noise; it never exercised the moderate-ρ (~0.5–0.7) regime where the
+bias bites, so ~25% of plain bivariate-normal pairs at ρ=0.6, n=100 were
+mislabeled `monotonic_nonlinear`, and the majority of noise pairs reported
+`mean_shape = "curved"`. The fix makes both models' R² **degrees-of-freedom
+adjusted** (`1 − (SS_res/(n−p)) / (SS_tot/(n−1))`), which zeroes the null
+expectation at any n while leaving real curvature essentially untouched. The
+calibration sweep is now a committed, re-runnable script,
+[`validation/bin_lof_sweep.py`](../validation/bin_lof_sweep.py), extended with a
+bivariate-normal family at ρ∈{0.4,0.5,0.6,0.7} — the blind spot that let the
+bias ship. `BIN_LOF_R2_GAIN_THRESHOLD` stayed at 0.05 (the adjusted statistic
+gives ~0 false positives on the moderate-ρ family there); `OSCILLATION_BIN_LOF_FLOOR`
+dropped 0.30 → 0.15, because the adjustment shifts a sinusoid's small-n gain
+down and the old floor would otherwise miss ~13% of sinusoids.
 
 ## Recommendation
 

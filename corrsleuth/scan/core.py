@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 import pandas as pd
 
 from corrsleuth.api import profile_pair
-from corrsleuth.exceptions import InputError
+from corrsleuth.exceptions import InputError, OptionalDependencyError
 from corrsleuth.result import CorrSleuthResult
 from corrsleuth.validation.input import is_real_numeric_dtype, real_numeric_problem
 
@@ -24,6 +24,19 @@ if TYPE_CHECKING:
     from corrsleuth.scan.report import CorrSleuthTargetReport
 
 _VALID_ERRORS_POLICIES = ("warn", "raise")
+
+#: Exception types that are systemic (configuration-level), never a per-column
+#: data condition: a missing optional dependency (``mode="standard"``/``"deep"``
+#: without the extras) or a bad/misspelled ``profile_pair`` keyword. These are
+#: propagated even under ``errors="warn"`` so one config mistake surfaces as a
+#: single actionable error instead of N identical per-column "error" entries
+#: wrapping a scan that "completes" with zero successes.
+#:
+#: ``InputError`` is deliberately excluded: ``validate_pair`` raises it *per
+#: column* for genuine data problems (all-NaN/constant columns), which
+#: ``errors="warn"`` must keep capturing, and a config ``InputError`` (e.g. a bad
+#: kwarg value) is not reliably distinguishable from a data one.
+_CONFIG_CLASS_EXCEPTIONS = (OptionalDependencyError, TypeError)
 
 
 @dataclass
@@ -223,10 +236,18 @@ def scan_target(
     errors : {"warn", "raise"}, default "warn"
         ``"warn"`` captures per-column ``profile_pair`` exceptions as
         ``error`` entries so the scan continues. ``"raise"`` propagates the
-        first exception.
+        first exception. Systemic, configuration-level failures — a missing
+        optional dependency (``OptionalDependencyError`` from ``mode="standard"``
+        / ``"deep"`` without the extras) or a misspelled ``profile_pair`` keyword
+        (``TypeError``) — are propagated even under ``"warn"``, so one config
+        mistake surfaces once rather than as N identical errors. Genuine
+        per-column data failures (e.g. an all-NaN or constant column, which raise
+        ``InputError``) remain captured.
     max_pairs : int, optional
         Cap on the number of columns profiled. Applied after ``columns=``.
-        Must be a positive integer when provided.
+        Must be a positive integer when provided. Columns beyond the cap are
+        recorded as ``skipped`` entries (``error_type="MaxPairsExceeded"``) so
+        the report reflects that coverage was truncated.
     sample_size : int, optional
         If set and ``len(data) > sample_size``, downsample once with
         ``random_state`` before scanning. Skipped/errored entries still reflect
@@ -243,6 +264,12 @@ def scan_target(
 
     Notes
     -----
+    **No multiple-testing correction.** The scan profiles every candidate
+    independently and applies no family-wise or FDR adjustment, so across many
+    columns some variables will surface in the pattern/underrate sections purely
+    by chance. Treat the rankings as *hypothesis-generating*, not as confirmed
+    findings, and validate promising candidates with a targeted analysis.
+
     The scan is **sequential**: columns are profiled one at a time. This is fine
     for typical EDA, but for very wide DataFrames (hundreds/thousands of
     columns) combined with ``mode="deep"`` or ``bootstrap=...`` it can be slow.
@@ -296,21 +323,48 @@ def scan_target(
         data = data.sample(n=sample_size, random_state=random_state)
 
     candidates, pre_skipped = _resolve_candidate_columns(data, target, columns)
-    if max_pairs is not None:
+    if max_pairs is not None and len(candidates) > max_pairs:
+        # Record the columns dropped by the cap as explicit skips rather than
+        # letting them vanish — otherwise summary() reports "profiled: N,
+        # skipped: 0" on a wider frame as if coverage were complete, and *which*
+        # columns were dropped (data-order-dependent) goes unrecorded.
+        for col in candidates[max_pairs:]:
+            pre_skipped.append(
+                TargetScanEntry(
+                    column=col,
+                    status="skipped",
+                    error_type="MaxPairsExceeded",
+                    error_message=(
+                        f"Not profiled: candidate count exceeded max_pairs={max_pairs}."
+                    ),
+                )
+            )
         candidates = candidates[:max_pairs]
 
     entries: list[TargetScanEntry] = list(pre_skipped)
     for col in _iter_with_progress(candidates, progress):
         try:
+            # Profile with the *candidate* as x and the target as y. The
+            # direction-sensitive diagnostics (bin lack-of-fit, variance shape,
+            # segmentation/breakpoint_x, Cook's influence, and forward
+            # Chatterjee's xi) then describe E[target | candidate] -- the
+            # feature-screening question ("does this predictor drive the
+            # target?"). Symmetric metrics (Pearson/Spearman/Kendall/dCor/MI/
+            # sq_corr) are unaffected by the argument order.
             result = profile_pair(
                 data,
-                target,
                 col,
+                target,
                 mode=mode,
                 missing=missing,
                 random_state=random_state,
                 **profile_pair_kwargs,
             )
+        except _CONFIG_CLASS_EXCEPTIONS:
+            # Systemic, not per-column (see _CONFIG_CLASS_EXCEPTIONS): propagate
+            # regardless of the errors policy so the actionable install/config
+            # hint is not buried under N identical entries and zero successes.
+            raise
         except Exception as exc:
             if errors == "raise":
                 raise

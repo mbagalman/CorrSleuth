@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 import pandas as pd
 
-from corrsleuth.exceptions import InputError
+from corrsleuth.exceptions import InputError, OptionalDependencyError
 from corrsleuth.heuristics import STANDARD_ONLY_LABELS, apply_heuristics
 from corrsleuth.metrics.core import compute_kendall, compute_pearson, compute_spearman
 from corrsleuth.metrics.optional import (
@@ -15,6 +15,7 @@ from corrsleuth.metrics.robust import assess_outlier_sensitivity
 from corrsleuth.metrics.shape import (
     compute_bin_lof,
     compute_squared_correlation,
+    compute_squared_correlation_robust,
 )
 from corrsleuth.validation.input import (
     LOW_N_THRESHOLD,
@@ -66,6 +67,12 @@ class BootstrapStability:
     metric_set: str
     n_bootstrap: int
     n_iterations: int
+    #: Whether distance correlation was in the replicate cascade. This — not the
+    #: ``metric_set`` string label — is the correct signal for the standard-only
+    #: caveat: an explicit subset like ``bootstrap_metrics=["pearson"]`` leaves
+    #: ``metric_set="pearson"`` yet still omits dcor, so both the warnings list
+    #: and ``explain()`` gate the caveat on this bool so they never disagree.
+    dcor_in_cascade: bool = True
 
     def to_dict(self) -> dict:
         """Return the stability fields as a plain dict (for serialization/export)."""
@@ -96,7 +103,10 @@ def _resolve_bootstrap_metrics(
             "bootstrap_metrics must be 'lite', 'standard', or a sequence of metric names."
         )
 
-    requested = tuple(bootstrap_metrics)
+    # Dedupe an explicit sequence (order-preserving) so ["pearson", "pearson"]
+    # does not produce two identical interval rows — the records loop iterates
+    # this tuple directly (C4 #4).
+    requested = tuple(dict.fromkeys(bootstrap_metrics))
     supported = set(_STANDARD_BOOTSTRAP_METRICS)
     unsupported = sorted(set(requested) - supported)
     if unsupported:
@@ -231,8 +241,37 @@ def _validate_bootstrap_inputs(
     metric_names = _resolve_bootstrap_metrics(bootstrap_metrics)
     if not metric_names:
         raise InputError("bootstrap_metrics must include at least one metric.")
+    _check_bootstrap_metric_dependencies(metric_names)
     metric_set = _metric_set_label(bootstrap_metrics, metric_names)
     return metric_names, metric_set
+
+
+def _check_bootstrap_metric_dependencies(metric_names: Sequence[str]) -> None:
+    """Fail fast with a message that names ``bootstrap_metrics`` when a requested
+    bootstrap metric needs the ``[standard]`` extras.
+
+    The per-replicate calls run with ``mode="standard"`` internally, so their raw
+    "… is required for standard mode" error would misdirect a user whose *profile*
+    mode is lite — the standard-ness came from ``bootstrap_metrics`` (C4 #5). This
+    pre-check surfaces the accurate cause before any replicate runs."""
+    if "distance_correlation" in metric_names:
+        try:
+            import dcor  # noqa: F401
+        except ImportError:
+            raise OptionalDependencyError(
+                "bootstrap_metrics includes 'distance_correlation', which requires "
+                "the corrsleuth[standard] extras (dcor). Run "
+                "`pip install corrsleuth[standard]`."
+            ) from None
+    if "mutual_information" in metric_names:
+        try:
+            from sklearn.feature_selection import mutual_info_regression  # noqa: F401
+        except ImportError:
+            raise OptionalDependencyError(
+                "bootstrap_metrics includes 'mutual_information', which requires the "
+                "corrsleuth[standard] extras (scikit-learn). Run "
+                "`pip install corrsleuth[standard]`."
+            ) from None
 
 
 def _stability_label(pattern_stability: float) -> str:
@@ -363,11 +402,15 @@ def compute_bootstrap(
         # — otherwise a replicate could never reproduce a label that only the
         # bin-lof/reversal/sq_corr routes (not distance correlation or the
         # rank-linear gap) can assign, understating pattern_stability for
-        # exactly the labels these diagnostics exist to fix.
+        # exactly the labels these diagnostics exist to fix. sq_corr_robust is
+        # required alongside sq_corr: the classifier gates the magnitude-linked
+        # route on both, so omitting it would make every replicate fail that
+        # gate and collapse pattern_stability to 0 for a sq_corr-driven label.
         cascade_sample_metrics = {
             **sample_metrics,
             **compute_bin_lof(sample_pair),
             "sq_corr": compute_squared_correlation(sample_pair),
+            "sq_corr_robust": compute_squared_correlation_robust(sample_pair),
         }
         heuristic = apply_heuristics(
             cascade_sample_metrics,
@@ -431,6 +474,7 @@ def compute_bootstrap(
             if n_iterations
             else 0.0
         )
+        dcor_in_cascade = "distance_correlation" in cascade_metrics
         stability = BootstrapStability(
             pattern_stability=float(pattern_stability),
             bootstrap_label_counts=label_counts,
@@ -438,6 +482,7 @@ def compute_bootstrap(
             metric_set=metric_set,
             n_bootstrap=bootstrap,
             n_iterations=n_iterations,
+            dcor_in_cascade=dcor_in_cascade,
         )
 
         # A standard-only label (e.g. nonmonotonic_dependence) can be reached
@@ -449,10 +494,7 @@ def compute_bootstrap(
         # been fully testable on lite metrics. Distinguishing which route
         # produced the label is out of scope for now (see
         # docs/shape-diagnostics-design.md).
-        if (
-            original_pattern in STANDARD_ONLY_LABELS
-            and "distance_correlation" not in cascade_metrics
-        ):
+        if original_pattern in STANDARD_ONLY_LABELS and not dcor_in_cascade:
             pair.warnings.append(
                 f"Pattern stability used lite bootstrap metrics, so it may not "
                 f"fully test a standard-mode {original_pattern} label (this can "

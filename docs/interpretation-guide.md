@@ -81,7 +81,7 @@ signs, both at least moderate): that is a leverage signature, so it is routed to
    stronger than the rank metrics, and a trimmed-Pearson sensitivity check
    says Pearson is leverage-driven (or sensitivity could not be computed).
 4. `nonmonotonic_dependence` — when Pearson and Spearman are weak and either
-   distance correlation is high (`mode="standard"`) or `|corr(X², Y²)|` is
+   distance correlation is high (`mode="standard"`) or `|corr((X−x̄)², (Y−ȳ)²)|` is
    high (`sq_corr`, no mode gate).
 5. `monotonic_nonlinear` — when Spearman is meaningfully stronger than
    Pearson, or the bin lack-of-fit diagnostic (`bin_lof_r2_gain`, no mode
@@ -197,8 +197,8 @@ gate flags it. Check `dependence_type` for which kind it is.
 
 **Typical metric pattern.** `|pearson| < 0.25`, `|spearman| < 0.25`, and any
 of three routes: `distance_correlation > 0.35` (`mode="standard"` only);
-`|corr(X², Y²)| > 0.35` (`sq_corr`, no mode gate — computed in every mode);
-or `bin_reversal_count ≥ 2` together with `bin_lof_r2_gain > 0.3` (the
+`|corr((X−x̄)², (Y−ȳ)²)| > 0.35` (`sq_corr`, no mode gate — computed in every mode);
+or `bin_reversal_count ≥ 2` together with `bin_lof_r2_gain > 0.15` (the
 oscillation gate, also no mode gate — see
 [shape-diagnostics-design.md](shape-diagnostics-design.md)). The second route
 exists because distance correlation itself is structurally capped around ~0.2
@@ -463,8 +463,12 @@ Notes on the less-obvious values:
   (a gradual bend — exponential, logarithmic, power) versus `step_or_threshold`
   (a jump between two near-flat levels). The two are told apart by a
   single-breakpoint search: a step's segments are flat, so a two-*level* model
-  fits as well as a two-*line* one; a smooth curve's segments are sloped. For a
-  `step_or_threshold`, `breakpoint_x` (on `result.diagnostics`) reports roughly
+  fits as well as a two-*line* one; a smooth curve's segments are sloped. The raw
+  number behind that call, `segment_stepness` (on `result.diagnostics`), is the
+  fraction of the single-breakpoint fit gain the two-*level* model already
+  captures — `≈ 1` for a clean step, `≤ 0` for a smooth or piecewise bend — so a
+  reader can see how step-like the jump is rather than only the coarse label. For
+  a `step_or_threshold`, `breakpoint_x` (on `result.diagnostics`) reports roughly
   where the jump sits; for a smooth curve no breakpoint is reported (the split
   would be an artifact). A monotone *piecewise-linear* kink is not reliably
   separable from a smooth bend over a finite range, so it currently reads as
@@ -512,7 +516,7 @@ Notes on the less-obvious values:
   |X| and |Y| move together (from `sq_corr`). A U-shape is the canonical case.
 - **`dependence_type = oscillating`** — the bin means of Y|X change direction
   two or more times with substantial bin structure (`bin_reversal_count ≥ 2`
-  and `bin_lof_r2_gain > 0.3` on `result.diagnostics`). A sinusoid is the
+  and `bin_lof_r2_gain > 0.15` on `result.diagnostics`). A sinusoid is the
   canonical case. Reported in preference to the generic `nonmonotone` (which a
   sinusoid would also qualify for via distance correlation in
   `mode="standard"`) because the practical advice differs: look for
@@ -526,6 +530,12 @@ Notes on the less-obvious values:
 - **`functional_direction`** comes from Chatterjee's ξ, so it is populated only
   in `mode="deep"` (`None` otherwise). `y_of_x` means Y is a (noisy) function
   of X but not the reverse — the signature of a one-way mapping like Y = X².
+  `neither_direction` is reserved for pairs that genuinely lack a functional
+  direction (a circle: dependence exists, but neither variable is a function of
+  the other). A strong *monotone* pair whose ξ merely sits below the 0.35 bar
+  reports `None`, not `neither_direction` — ξ is only ≈ 0.30 at ρ = 0.7 for a
+  bivariate normal, so an obviously functional noisy-linear pair would otherwise
+  be mislabeled as having no direction.
 - **`outlier_sensitivity`** refines the trim-sensitivity verdict with row-level
   Cook's distance (`metrics/influence.py`): `single_point_driven` when one row
   dominates the fit, `high_leverage_cluster` when several do, `low` when none.
@@ -704,13 +714,16 @@ is reliable.
 |------|---------------|---------------------|-------------|
 | `lite` (default) | Pearson, Spearman, Kendall tau-b | None | Fast pairwise screening; safe to run on wide DataFrames. |
 | `standard` | + Distance correlation, mutual information | `corrsleuth[standard]` (`dcor`, `scikit-learn`) | When you need to detect nonmonotonic dependence. |
-| `deep` | + Robust Pearson variants, Chatterjee's ξ (both directions) | None | When you need leverage diagnostics or asymmetric functional dependence. |
+| `deep` | + Everything in `standard`, plus robust Pearson variants and Chatterjee's ξ (both directions) | `corrsleuth[standard]` (`dcor`, `scikit-learn`) | When you need the full metric set plus leverage diagnostics or asymmetric functional dependence. |
 
 Notes:
 
-- `mode="deep"` does **not** include the `standard` metrics. It is the
-  no-new-dependency tier for analysts who want richer diagnostics
-  without the extras.
+- `mode="deep"` is a **strict superset of `standard`**: it computes everything
+  standard does (distance correlation, mutual information) *plus* the robust
+  Pearson variants and Chatterjee's ξ. It therefore also requires the
+  `corrsleuth[standard]` extras and raises `OptionalDependencyError` (naming
+  *deep* mode) when `dcor`/`scikit-learn` are missing — run
+  `pip install corrsleuth[standard]`.
 - Deep mode's robust diagnostics need `n_used >= 50`; below that they
   return `None` with a single consolidated warning. Chatterjee's ξ has
   a lower floor of `n_used >= 20`.
@@ -722,7 +735,7 @@ Notes:
   (`max_n_for_dcor=20000`). The downsample is seeded for reproducibility.
 - The shape diagnostics (`bin_lof_r2_gain`, `bin_reversal_count`, `sq_corr` —
   see [shape-diagnostics-design.md](shape-diagnostics-design.md);
-  `segment_gain`, `breakpoint_x`), the heteroscedasticity diagnostics (`bp_pvalue`,
+  `segment_gain`, `segment_stepness`, `breakpoint_x`), the heteroscedasticity diagnostics (`bp_pvalue`,
   `gq_ratio`, `bowtie_ratio`), and the influence diagnostics (`max_cook_distance`,
   `n_influential_points`) run in every mode, including `lite`. They feed the
   `monotonic_nonlinear` / `nonmonotonic_dependence` labels and the secondary
@@ -740,7 +753,9 @@ Notes:
 If you are not sure which mode to use: start with `lite`. Move to
 `standard` when an analyst suspects nonmonotonic structure that the lite
 metrics aren't catching. Use `deep` when leverage or asymmetric
-dependence is the question, and you don't want to install extras.
+dependence is the question and you want the fullest set of diagnostics —
+it includes everything `standard` computes, so it needs the same
+`corrsleuth[standard]` extras.
 
 ## Further Reading
 

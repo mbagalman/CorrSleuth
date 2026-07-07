@@ -130,13 +130,15 @@ def compute_chatterjee_xi_reverse(
     Mirrors :func:`compute_chatterjee_xi` with the roles of ``X`` and ``Y``
     swapped, so this measures whether ``X`` is a (noisy) function of ``Y``.
     For target scans (where ``profile_pair`` is invoked as
-    ``profile_pair(data, target, candidate)``) this is the candidate→target
-    direction — the one feature-engineering users typically want when
-    prioritizing predictors against a target.
+    ``profile_pair(data, candidate, target)``) this is the target→candidate
+    direction; the candidate→target direction feature-engineering users usually
+    want when prioritizing predictors is the *forward*
+    :func:`compute_chatterjee_xi`.
 
     ``Y`` is the sort key here, so its ties are broken with the seeded random
     permutation (see :func:`compute_chatterjee_xi`); this is what keeps
-    ``xi(Y -> X)`` calibrated when the target is discrete or low-cardinality.
+    ``xi(Y -> X)`` calibrated when the sort variable is discrete or
+    low-cardinality.
 
     Returns ``None`` for constant inputs or when ``n_used`` is below the
     small-sample guard. The small-sample warning is emitted by

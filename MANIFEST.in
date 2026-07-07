@@ -4,4 +4,5 @@
 # broken suite. distutils' legacy defaults would otherwise auto-include
 # tests/test*.py without the fixture subdirectories.
 prune tests
+prune validation
 include CHANGELOG.md

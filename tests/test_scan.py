@@ -1,3 +1,5 @@
+import sys
+
 import matplotlib
 
 matplotlib.use("Agg")  # noqa: E402  (must be set before pyplot import)
@@ -6,8 +8,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from corrsleuth import scan_target
-from corrsleuth.exceptions import InputError
+from corrsleuth import profile_pair, scan_target
+from corrsleuth.exceptions import InputError, OptionalDependencyError
 from corrsleuth.result import CorrSleuthResult, MetricDiagnostics
 from corrsleuth.scan import CorrSleuthTargetReport, TargetScanEntry
 
@@ -23,6 +25,39 @@ def _build_clean_df(n: int = 60, random_state: int = 42) -> pd.DataFrame:
             "label": ["a", "b"] * (n // 2),
         }
     )
+
+
+@pytest.mark.parametrize("shape", ["sinusoid", "step"])
+def test_scan_labels_match_candidate_to_target_orientation(shape):
+    """Regression lock for the scan orientation BLOCKER (FU-C).
+
+    ``scan_target`` must profile each pair as ``profile_pair(candidate, target)``
+    so the direction-sensitive diagnostics condition on the *candidate* — the
+    feature that drives the target. Before the flip, a target that is a
+    non-invertible function of the candidate (a sinusoid or a step) had its bin
+    means averaged over the candidate's branches and was mislabeled
+    ``weak_or_no_relationship``. The scan entry's label must now match a direct
+    ``profile_pair(candidate, target)`` call, and a step's ``breakpoint_x`` must
+    land near the true cut in *candidate* units (it was in target units before)."""
+    rng = np.random.default_rng(0)
+    n = 400
+    cand = rng.uniform(0, 3 * np.pi, size=n)
+    if shape == "sinusoid":
+        target = np.sin(cand) + rng.normal(0, 0.1, size=n)
+    else:  # step at candidate ≈ π
+        target = np.where(cand > np.pi, 1.0, -1.0) + rng.normal(0, 0.1, size=n)
+    df = pd.DataFrame({"target": target, "cand": cand})
+
+    entry = next(e for e in scan_target(df, "target").successes if e.column == "cand")
+    direct = profile_pair(df, "cand", "target", mode="lite")
+    assert entry.result_data.pattern == direct.pattern
+
+    if shape == "sinusoid":
+        assert entry.result_data.pattern == "nonmonotonic_dependence"
+    else:
+        assert entry.result_data.pattern == "monotonic_nonlinear"
+        bp = entry.result_data.diagnostics.breakpoint_x
+        assert bp is not None and abs(bp - np.pi) < 1.0, f"breakpoint_x={bp}"
 
 
 def test_scan_target_profiles_numeric_columns_excluding_target():
@@ -56,6 +91,55 @@ def test_scan_target_to_frame_has_one_row_per_entry_with_required_fields():
     ):
         assert col in frame.columns, f"missing column: {col}"
     assert (frame["target"] == "target").all()
+
+
+def test_scan_to_frame_surfaces_diagnostics_and_stability_columns():
+    """The scan frame exposes every MetricDiagnostics field as a diagnostic_*
+    column (including the five secondary axes) and, when bootstrap is requested,
+    the stability columns — mirroring CorrSleuthResult.to_frame (FU-F / Chunk 6
+    #2, which found the scan frame dropped the entire diagnostics layer)."""
+    rng = np.random.default_rng(0)
+    n = 200
+    x = rng.normal(size=n)
+    df = pd.DataFrame(
+        {
+            "target": x,
+            "curve": x**3 + rng.normal(0, 0.1, size=n),
+            "noise": rng.normal(size=n),
+        }
+    )
+    frame = scan_target(df, "target", bootstrap=20, random_state=0).to_frame()
+
+    for axis in (
+        "mean_shape",
+        "variance_shape",
+        "dependence_type",
+        "outlier_sensitivity",
+        "functional_direction",
+    ):
+        assert f"diagnostic_{axis}" in frame.columns
+    for col in (
+        "diagnostic_bin_lof_r2_gain",
+        "diagnostic_n_influential_points",
+        "diagnostic_disagreement_score",
+    ):
+        assert col in frame.columns
+    for col in ("pattern_stability", "stability_label", "stability_metric_set"):
+        assert col in frame.columns
+
+    curve = frame[frame["variable"] == "curve"].iloc[0]
+    assert 0.0 <= float(curve["pattern_stability"]) <= 1.0
+
+
+def test_scan_to_frame_omits_stability_columns_without_bootstrap():
+    """Stability columns are added only when bootstrapping was requested; the
+    diagnostic_* columns are always present."""
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame({"target": rng.normal(size=80), "a": rng.normal(size=80)})
+    frame = scan_target(df, "target").to_frame()
+
+    assert "pattern_stability" not in frame.columns
+    assert any(c.startswith("diagnostic_") for c in frame.columns)
 
 
 def test_scan_target_skipped_entries_for_non_numeric_in_explicit_columns():
@@ -103,6 +187,43 @@ def test_scan_target_errors_raise_propagates_first_failure():
         scan_target(df, "target", errors="raise")
 
 
+def test_scan_target_reraises_missing_optional_dependency_under_warn(monkeypatch):
+    """A missing optional dependency is systemic — it fails identically for every
+    column — so ``errors="warn"`` must surface it once, not bury N identical
+    ``OptionalDependencyError`` entries under a zero-success scan (C6 #4)."""
+    # Simulate dcor not installed so standard mode cannot compute distance corr.
+    for mod in list(sys.modules):
+        if mod == "dcor" or mod.startswith("dcor."):
+            monkeypatch.setitem(sys.modules, mod, None)
+    monkeypatch.setitem(sys.modules, "dcor", None)
+
+    df = _build_clean_df()
+    with pytest.raises(OptionalDependencyError):
+        scan_target(df, "target", mode="standard", errors="warn")
+
+
+def test_scan_target_reraises_unknown_kwarg_typeerror_under_warn():
+    """A misspelled ``profile_pair`` keyword is a config mistake, not per-column
+    data — it must propagate even under ``errors="warn"`` (C6 #4)."""
+    df = _build_clean_df()
+    with pytest.raises(TypeError):
+        scan_target(df, "target", errors="warn", not_a_real_kwarg=123)
+
+
+def test_scan_target_warn_still_captures_per_column_data_errors():
+    """The narrowed config-class set must not swallow genuine per-column data
+    failures: an all-NaN column (``InputError`` from validate_pair) is still
+    captured under ``errors="warn"`` while its neighbors profile fine."""
+    df = _build_clean_df()
+    df["bad"] = np.nan
+    report = scan_target(df, "target", errors="warn")
+
+    bad_entry = next(e for e in report.entries if e.column == "bad")
+    assert bad_entry.status == "error"
+    assert bad_entry.error_type == "InputError"
+    assert any(e.status == "ok" for e in report.entries)
+
+
 def test_scan_target_max_pairs_caps_candidate_count():
     rng = np.random.default_rng(0)
     df = pd.DataFrame({"target": rng.normal(size=40)})
@@ -114,6 +235,41 @@ def test_scan_target_max_pairs_caps_candidate_count():
     assert len(profiled_columns) == 2
     # Order preserved from DataFrame column order
     assert profiled_columns == ["col_0", "col_1"]
+
+
+def test_scan_target_max_pairs_records_dropped_columns_as_skips():
+    """Columns beyond the cap must not silently vanish (C6 #5) — they are
+    recorded as ``MaxPairsExceeded`` skips so coverage reads honestly."""
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame({"target": rng.normal(size=40)})
+    for i in range(5):
+        df[f"col_{i}"] = rng.normal(size=40)
+
+    report = scan_target(df, "target", max_pairs=2)
+
+    dropped = [e for e in report.entries if e.error_type == "MaxPairsExceeded"]
+    assert [e.column for e in dropped] == ["col_2", "col_3", "col_4"]
+    assert all(e.status == "skipped" for e in dropped)
+    # The coverage counters no longer read as if the scan were complete.
+    assert "skipped  : 3" in report.summary()
+    # And the dropped columns each get a row in the frame.
+    frame = report.to_frame()
+    assert set(frame.loc[frame["error_type"] == "MaxPairsExceeded", "variable"]) == {
+        "col_2",
+        "col_3",
+        "col_4",
+    }
+
+
+def test_scan_target_max_pairs_at_or_above_candidate_count_adds_no_skips():
+    """No spurious skip entries when the cap is not actually binding."""
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame({"target": rng.normal(size=40)})
+    for i in range(3):
+        df[f"col_{i}"] = rng.normal(size=40)
+
+    report = scan_target(df, "target", max_pairs=3)
+    assert not any(e.error_type == "MaxPairsExceeded" for e in report.entries)
 
 
 def test_scan_target_rejects_invalid_max_pairs():
@@ -277,14 +433,35 @@ def test_scan_target_summary_can_suppress_caveat():
     assert "Caveat:" not in report.summary(include_caveat=False)
 
 
+def test_scan_target_caveat_warns_about_multiple_testing():
+    """The scan applies no multiple-testing correction; both rendered caveats and
+    the docstring must say so (C6 #3) — otherwise a wide noise scan reads as if
+    its by-chance hits were findings."""
+    df = _build_clean_df()
+    report = scan_target(df, "target")
+
+    summary = report.summary()
+    markdown = report.to_markdown()
+    for surface in (summary, markdown):
+        assert "multiple-testing" in surface
+        assert "hypothesis-generating" in surface
+
+    assert "multiple-testing" in scan_target.__doc__
+
+
 def test_target_report_to_markdown_includes_grouped_sections():
     rng = np.random.default_rng(0)
     n = 200
-    target = np.exp(rng.uniform(0.1, 10, size=n))
+    # Light-tailed target keeps an independent predictor ('noise') correctly weak:
+    # a heavy-tailed target can trip the bin-LoF oscillation gate on independent
+    # noise via a few extreme Y values (tracked as the heavy-tail robustness
+    # finding, FU-U). 'steep_curve' is a strong monotonic nonlinearity, so it
+    # lands in both the monotonic-nonlinear and the Pearson-underrate sections.
+    target = rng.normal(size=n)
     df = pd.DataFrame(
         {
             "target": target,
-            "log_shape": np.log(target) + rng.normal(0, 0.1, size=n),
+            "steep_curve": np.exp(2.0 * target) + rng.normal(0, 0.1, size=n),
             "linear_match": target + rng.normal(0, 0.1, size=n),
             "noise": rng.normal(0, 1, size=n),
             "label": ["a", "b"] * (n // 2),
@@ -292,7 +469,7 @@ def test_target_report_to_markdown_includes_grouped_sections():
     )
 
     report = scan_target(
-        df, "target", columns=["log_shape", "linear_match", "noise", "label"]
+        df, "target", columns=["steep_curve", "linear_match", "noise", "label"]
     )
     markdown = report.to_markdown(top_n=2)
 
@@ -308,7 +485,7 @@ def test_target_report_to_markdown_includes_grouped_sections():
         "| Variable | Pattern | Pearson | Spearman | Disagreement | Warnings |"
         in markdown
     )
-    assert "log\\_shape" in markdown
+    assert "steep\\_curve" in markdown
     assert "label" in markdown
     assert "## Caveat" in markdown
     assert "Pairwise association does not imply causation" in markdown
@@ -423,10 +600,14 @@ def test_scan_summary_includes_pattern_sections_when_present():
     # Use a target derived from x to make monotonic_log appear as monotonic_nonlinear
     rng = np.random.default_rng(0)
     n = 200
-    x = np.exp(rng.uniform(0.1, 10, size=n))
+    # Moderately skewed target (~5x), not the extreme exp(uniform(0.1, 10)) ~75x
+    # tail that can trip the bin-LoF oscillation gate on independent noise
+    # (tracked as the heavy-tail robustness finding, FU-U). Still makes log_shape
+    # monotonic_nonlinear while noise stays weak.
+    x = np.exp(rng.uniform(0.1, 4, size=n))
     df = pd.DataFrame(
         {
-            "target": x,  # heavily skewed target
+            "target": x,  # skewed target
             "log_shape": np.log(x)
             + rng.normal(0, 0.1, size=n),  # monotonic_nonlinear (rank >> linear)
             "linear_match": x + rng.normal(0, 0.1, size=n),  # near_linear with x itself
@@ -619,6 +800,58 @@ def test_pearson_underrated_ranks_nonlinear_above_noise():
     assert "noise" not in set(ranked["variable"])
 
 
+def test_pearson_underrated_surfaces_lite_magnitude_linked_via_sq_corr():
+    """A lite scan (no dcor) must still surface a magnitude-linked column — one
+    the target depends on nonmonotonically — under 'Pearson may underrate', on the
+    strength of sq_corr alone (C6 #6). Before the fix only rank/dcor gaps counted,
+    so a U-shape (weak Pearson AND weak Spearman) never surfaced."""
+    rng = np.random.default_rng(0)
+    n = 400
+    mag = rng.uniform(-3, 3, size=n)
+    df = pd.DataFrame(
+        {
+            "target": mag**2 + rng.normal(0, 0.3, size=n),  # U-shape in mag
+            "mag": mag,
+            "linear": None,  # placeholder replaced below
+        }
+    )
+    df["linear"] = df["target"] + rng.normal(0, 0.2, size=n)
+
+    ranked = scan_target(df, "target").pearson_underrated()  # lite mode: no dcor
+
+    assert "mag" in set(ranked["variable"])
+    mag_row = ranked[ranked["variable"] == "mag"].iloc[0]
+    # It surfaced on sq_corr, not the rank gaps (Spearman is ~0 for a U-shape).
+    assert mag_row["sq_corr_excess_over_pearson"] > 0.20
+    assert mag_row["spearman_excess_over_pearson"] < 0.20
+    # The clean linear column is not falsely surfaced (|sq_corr| ~= |Pearson|).
+    assert "linear" not in set(ranked["variable"])
+
+
+def test_pearson_underrated_excludes_heavy_tail_sq_corr_artifact():
+    """The underrate ranking must use the same robust evidence as the cascade: a
+    heavy-tailed target vs an independent predictor whose *raw* sq_corr clears the
+    0.35 bar but whose *robust* sq_corr collapses (so the cascade correctly calls
+    it weak_or_no_relationship, dependence_type None) must NOT be promoted under
+    'Pearson may underrate' — the exact artifact the FU-V robust gate suppresses."""
+    rng = np.random.default_rng(574)
+    noise = rng.normal(size=100)  # candidate drawn first (the seed-574 pair)
+    target = np.exp(rng.uniform(0.1, 10, size=100))
+    df = pd.DataFrame({"noise": noise, "target": target})
+
+    report = scan_target(df, "target", mode="lite")
+    entry = next(e for e in report.successes if e.column == "noise")
+
+    # Preconditions: the raw artifact is present, but the cascade already rejects it.
+    assert abs(entry.result_data.diagnostics.sq_corr) > 0.35
+    assert entry.result_data.pattern == "weak_or_no_relationship"
+    assert entry.result_data.diagnostics.dependence_type is None
+
+    # The fix: it is not surfaced in the ranking (before, it appeared at ~0.32).
+    ranked = report.pearson_underrated()
+    assert "noise" not in set(ranked["variable"])
+
+
 def test_pearson_underrated_includes_metric_and_gap_columns():
     rng = np.random.default_rng(0)
     n = 300
@@ -639,6 +872,7 @@ def test_pearson_underrated_includes_metric_and_gap_columns():
         "spearman_excess_over_pearson",
         "kendall_excess_over_pearson",
         "nonmonotonic_gap",
+        "sq_corr_excess_over_pearson",
         "disagreement_score",
         "metric_pearson",
         "metric_spearman",
@@ -712,6 +946,7 @@ def test_pearson_underrated_empty_report_keeps_documented_schema():
         "spearman_excess_over_pearson",
         "kendall_excess_over_pearson",
         "nonmonotonic_gap",
+        "sq_corr_excess_over_pearson",
         "disagreement_score",
         "metric_pearson",
         "metric_spearman",
@@ -731,8 +966,8 @@ def _underrated_entry(column: str, pearson: float, spearman: float) -> TargetSca
         }
     )
     result = CorrSleuthResult(
-        x_name="target",
-        y_name=column,
+        x_name=column,
+        y_name="target",
         metrics=metrics,
         pattern="monotonic_nonlinear",
         warnings=[],

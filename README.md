@@ -52,8 +52,10 @@ Install with `standard` mode to include Distance Correlation and Mutual Informat
 pip install corrsleuth[standard]
 ```
 
-`mode="deep"` uses the base installation and adds lightweight robust
-correlation diagnostics; it does not require extra dependencies.
+`mode="deep"` is a **superset** of `standard` — it computes everything standard
+does (Distance Correlation, Mutual Information) plus robust correlation
+diagnostics and Chatterjee's ξ — so it also requires the `standard` extra
+(`pip install corrsleuth[standard]`).
 
 For a progress bar during `scan_target(progress=True)`, install the optional
 `progress` extra:
@@ -86,9 +88,9 @@ result.plot(show=True)    # a 1x3 diagnostic figure (scatter, ranks, summary)
 ```
 
 `profile_pair()` works on the base install. Pass `mode="standard"` to add
-nonlinear metrics (Distance Correlation, Mutual Information; requires the
-`[standard]` extra) or `mode="deep"` for robust diagnostics that need no extra
-dependencies.
+nonlinear metrics (Distance Correlation, Mutual Information) or `mode="deep"` for
+those plus robust diagnostics and Chatterjee's ξ. Both `standard` and `deep`
+require the `[standard]` extra.
 
 **No dataset handy?** CorrSleuth ships a simulator so you can try it immediately:
 
@@ -130,35 +132,35 @@ CorrSleuth includes a relationship simulator that generates common patterns.
 
 ### 1. Near Linear
 ```python
-df = make_relationship("linear_positive")
+df = make_relationship("linear_positive", random_state=42)
 result = cs.profile_pair(df, "x", "y")
 # Pattern: near_linear
 ```
 
 ### 2. Monotonic Nonlinear
 ```python
-df = make_relationship("monotonic_log")
+df = make_relationship("monotonic_log", random_state=42)
 result = cs.profile_pair(df, "x", "y")
 # Pattern: monotonic_nonlinear
 ```
 
 ### 3. Nonmonotonic Dependence
 ```python
-df = make_relationship("u_shape")
+df = make_relationship("u_shape", random_state=42)
 result = cs.profile_pair(df, "x", "y", mode="standard")
 # Pattern: nonmonotonic_dependence
 ```
 
 ### 4. Outlier Driven
 ```python
-df = make_relationship("outlier_driven")
+df = make_relationship("outlier_driven", random_state=42)
 result = cs.profile_pair(df, "x", "y")
 # Pattern: possible_outlier_or_leverage
 ```
 
 ### 5. Independent
 ```python
-df = make_relationship("independent")
+df = make_relationship("independent", random_state=42)
 result = cs.profile_pair(df, "x", "y")
 # Pattern: weak_or_no_relationship
 ```
@@ -197,9 +199,10 @@ In scope:
 - Scanning every numeric column against a single target with `scan_target()`.
 - Lite metrics: Pearson, Spearman, and Kendall tau-b.
 - Standard metrics: Distance Correlation and Mutual Information.
-- Deep metrics: lightweight robust correlation diagnostics.
+- Deep metrics: the standard metrics plus robust correlation diagnostics and
+  Chatterjee's ξ (a superset of `standard`; requires the `[standard]` extra).
 - Heuristic diagnostic labels, warnings, recommendations, and diagnostic plots.
-- Deterministic simulated relationships through `make_relationship()`.
+- Reproducible-when-seeded (`random_state=`) simulated relationships through `make_relationship()`.
 
 Out of scope for now:
 - Categorical or mixed-type variables.
@@ -235,23 +238,27 @@ For Distance Correlation, CorrSleuth downsamples to 20,000 rows by default when 
 
 ## Deep Mode
 
-`mode="deep"` adds robust correlation diagnostics while keeping the base
-installation lightweight:
+`mode="deep"` is a strict superset of `standard`: it computes Distance
+Correlation and Mutual Information **and** adds robust correlation diagnostics
+and Chatterjee's ξ. Because it includes the standard metrics, it requires the
+`corrsleuth[standard]` extra (`dcor`, `scikit-learn`) and raises
+`OptionalDependencyError` if they are missing. On top of the standard metrics it
+adds:
 
 - `pearson_trimmed_1pct`: Pearson after dropping rows outside the 1st/99th percentile range of either variable.
 - `pearson_winsorized_1pct`: Pearson after clipping both variables at their 1st/99th percentiles.
 - `biweight_midcorrelation`: A median/MAD-based robust correlation.
 - `pearson_median_clipped_20pct`: Pearson after clipping deviations around each median at the 80th percentile.
 - `chatterjee_xi`: Chatterjee's coefficient of correlation, an *asymmetric* measure that captures whether `Y` is a (noisy) function of `X`. Values sit near 0 under independence and approach 1 for strong functional dependence; finite-sample estimates can be slightly negative. Detects U-shape and other dependencies that Pearson and Spearman miss.
-- `chatterjee_xi_reverse`: Same statistic in the opposite direction (`ξ(Y → X)`). For target scans this is the candidate→target direction, which is usually the one feature-engineering users want.
+- `chatterjee_xi_reverse`: Same statistic in the opposite direction (`ξ(Y → X)`). For target scans this is the target→candidate direction; the candidate→target direction feature-engineering users usually want is the forward `chatterjee_xi`.
 
 These are robustness and dependence diagnostics, not definitive replacements
 for Pearson or visual inspection. The robust correlations are most useful when
 Pearson is strong but rank metrics or plots suggest leverage-sensitive
 behavior. Chatterjee's ξ is most useful for surfacing functional dependence
-that the linear/rank pair miss. Deep mode does not compute Distance
-Correlation or Mutual Information; use `mode="standard"` for those nonlinear
-dependence metrics. The label cascade does not consult ξ, so a strongly
+that the linear/rank pair miss. Deep mode also computes Distance Correlation and
+Mutual Information (it is a superset of `standard`), so a deep profile carries
+the full metric set. The label cascade does not consult ξ, so a strongly
 nonmonotonic pair keeps its lite-style label in deep mode — but when ξ
 exceeds 0.35 and the label is `weak_or_no_relationship` or
 `mixed_or_ambiguous`, CorrSleuth emits a warning so the dependence is not
@@ -262,9 +269,11 @@ sensitivity calculation so users see one consistent trim value.
 `chatterjee_xi` is reported as `ξ(pair.x → pair.y)`, so for a profile
 called as `profile_pair(df, "x", "y")` the value answers "is `y` a function
 of `x`?". `chatterjee_xi_reverse` reports the same statistic with the
-arguments swapped (`ξ(pair.y → pair.x)`), so target scans get both the
-target→candidate direction (`chatterjee_xi`) and the candidate→target
-direction (`chatterjee_xi_reverse`) without an extra call. The metric
+arguments swapped (`ξ(pair.y → pair.x)`). Because `scan_target` profiles each
+pair as `profile_pair(data, candidate, target)`, a scan gets both the
+candidate→target direction (`chatterjee_xi` — usually the one feature-engineering
+users want) and the target→candidate direction (`chatterjee_xi_reverse`) without
+an extra call. The metric
 converges slowly on small samples and returns `None` with a warning when
 `n_used < 20`. It uses the tie-corrected estimator from Chatterjee (2020), so it
 stays well-calibrated when `Y` is discrete or low-cardinality. Ties in the sort

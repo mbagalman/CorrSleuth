@@ -81,6 +81,50 @@ def test_explain_nonmonotonic_dependence_references_standard_metric_gap():
     assert "distance correlation (0.470) is higher" in explanation
 
 
+def _noisy_circle(seed: int = 0, n: int = 500) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    theta = rng.uniform(0, 2 * np.pi, size=n)
+    radius = 5.0 * (1 + rng.normal(0, 0.05, size=n))
+    return pd.DataFrame({"x": radius * np.cos(theta), "y": radius * np.sin(theta)})
+
+
+def test_explain_lite_circle_credits_squared_value_not_missing_metrics():
+    """A circle labeled nonmonotonic via sq_corr in lite mode must explain the
+    magnitude/squared-value evidence — the old text fell back to 'standard
+    metrics unavailable', giving no positive evidence for a real label (FU-E)."""
+    res = profile_pair(_noisy_circle(), "x", "y", mode="lite")
+    assert res.pattern == "nonmonotonic_dependence"
+    explanation = res.explain(include_caveat=False)
+    assert "squared" in explanation.lower()
+    assert "unavailable" not in explanation.lower()
+
+
+def test_explain_standard_circle_does_not_credit_sub_threshold_dcor():
+    """A circle's distance correlation sits ~0.2 (below its floor) and does NOT
+    drive the label — sq_corr does. The explanation must not credit that
+    sub-threshold dcor as the evidence (the old code always did)."""
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
+    res = profile_pair(_noisy_circle(), "x", "y", mode="standard")
+    assert res.pattern == "nonmonotonic_dependence"
+    explanation = res.explain(include_caveat=False)
+    assert "distance correlation" not in explanation.lower()
+    assert "squared" in explanation.lower()
+
+
+def test_explain_sinusoid_describes_oscillation():
+    """A sinusoid labeled nonmonotonic via the oscillation gate must explain the
+    reversing bin means, not distance correlation or magnitude."""
+    rng = np.random.default_rng(0)
+    n = 500
+    x = rng.uniform(0, 5 * np.pi, size=n)
+    df = pd.DataFrame({"x": x, "y": np.sin(x) + rng.normal(0, 0.1, size=n)})
+    res = profile_pair(df, "x", "y", mode="lite")
+    assert res.pattern == "nonmonotonic_dependence"
+    explanation = res.explain(include_caveat=False)
+    assert "reverses direction" in explanation
+
+
 def test_explain_possible_outlier_or_leverage_references_rank_disagreement():
     res = _result_for_explanation(
         "possible_outlier_or_leverage",
@@ -108,6 +152,11 @@ def test_explain_possible_outlier_or_leverage_sign_conflict_describes_direction(
 
     assert "opposite directions" in explanation
     assert "much stronger" not in explanation
+    # Honesty (C1 #5): this label is also reachable when the trim/robust check
+    # could not run, so the explanation must not assert that a check produced a
+    # verdict — it states the sign conflict, which is the leverage signature.
+    assert "trim/robust check indicates" not in explanation
+    assert "signature of high-leverage points" in explanation
 
 
 def test_explain_weak_or_no_relationship_references_lite_metric_limits():
@@ -134,6 +183,19 @@ def test_summary():
     assert "disagreement_score" in summary_text
     assert "rank_linear_gap" in summary_text
     assert "nonmonotonic_gap" in summary_text
+    # pearson_trimmed (the level Pearson moved to) is shown beside its delta on the
+    # human-readable surfaces, not only in to_dict()/to_frame() (C5 #4).
+    assert "pearson_trimmed" in summary_text
+    assert "pearson\\_trimmed" in res.to_markdown()  # underscore escaped in markdown
+    # Diagnostics rows are colon-aligned to a shared width even for the longest
+    # label (pearson_spearman_signed_gap), so the ": " column lines up (C5 #5).
+    lines = summary_text.splitlines()
+    start = lines.index("Diagnostics:") + 1
+    end = lines.index("", start)
+    diag_lines = lines[start:end]
+    colon_cols = {ln.index(":") for ln in diag_lines}
+    assert len(colon_cols) == 1, diag_lines
+    assert any("pearson_spearman_signed_gap" in ln for ln in diag_lines)
     assert "Recommendations:" in summary_text
     assert "Caveat:" in summary_text
 
@@ -191,6 +253,22 @@ def test_pair_result_to_markdown_includes_core_sections():
     assert "## Recommendations" in markdown
     assert "## Caveat" in markdown
     assert "causally without proper design" in markdown
+
+
+def test_pair_result_to_markdown_title_neutralizes_hostile_column_names():
+    """A column name with a backtick or newline must not break out of the title's
+    code span or inject heading structure (C5 #3)."""
+    df = pd.DataFrame({"a`b\nc": [1.0, 2.0, 3.0, 4.0], "y": [2.0, 4.0, 5.0, 4.0]})
+    res = profile_pair(df, "a`b\nc", "y")
+
+    markdown = res.to_markdown()
+    title = markdown.splitlines()[0]
+
+    # The whole title is still a single heading line, and the backtick that would
+    # have closed the code span (and the newline that would have split the line)
+    # are gone, so nothing after the name is interpreted as markdown structure.
+    assert title == "# CorrSleuth Pair Report: `ab c` vs `y`"
+    assert "\n" not in title
 
 
 def test_pair_result_to_markdown_can_hide_caveat():
@@ -254,6 +332,28 @@ def test_plot_text_panel_includes_pattern_metrics_and_diagnostics():
     assert "Warnings" in rendered_text
 
 
+def test_plot_text_panel_stays_on_panel_for_deep_mode_many_metrics():
+    """The text panel must scale to fit its rows: deep mode's larger metrics
+    block previously walked y_pos below the axes, rendering the warnings (the
+    load-bearing caveats) off-panel (C7 #2)."""
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=120)
+    df = pd.DataFrame({"x": x, "y": x**2 + rng.normal(0, 0.3, size=120)})
+    res = profile_pair(df, "x", "y", mode="deep")
+
+    fig = res.plot(show=False)
+    text_panel = fig.axes[2]
+    y_positions = [text.get_position()[1] for text in text_panel.texts]
+
+    # Deep mode has many metric rows, and every line still lands inside the axes.
+    assert len(res.metrics) > 5
+    assert all(0.0 <= y <= 1.0 for y in y_positions)
+    # The warnings section header is present and on-panel (not clipped below).
+    assert "Warnings" in "\n".join(t.get_text() for t in text_panel.texts)
+
+
 def test_serialization():
     df = make_relationship("linear_positive", n=100)
     res = profile_pair(df, "x", "y")
@@ -281,6 +381,31 @@ def test_result_exposes_structured_diagnostics():
     assert res.diagnostics.pearson_kendall_gap == pytest.approx(0.0)
     assert res.diagnostics.nonmonotonic_gap is None
     assert res.diagnostics.disagreement_score == pytest.approx(res.disagreement_score)
+
+
+def test_segment_stepness_surfaced_on_diagnostics_and_frames():
+    """segment_stepness is the number behind the step-vs-smooth mean_shape call;
+    it must be exposed on result.diagnostics and in the serialized surfaces, not
+    just consumed internally (FU-I / Chunk 5 #1). A clean step reads ~1, a smooth
+    curve <= 0."""
+    step = make_relationship("threshold_step", n=500, noise=0.1, random_state=42)
+    res = profile_pair(step, "x", "y", mode="lite")
+
+    assert res.diagnostics.mean_shape == "step_or_threshold"
+    assert res.diagnostics.segment_stepness is not None
+    assert res.diagnostics.segment_stepness > 0.8
+    assert "segment_stepness" in res.to_dict()["diagnostics"]
+    assert "diagnostic_segment_stepness" in res.to_frame().columns
+    assert "segment_stepness" in res.summary()
+    assert "segment\\_stepness" in res.to_markdown()  # underscore escaped
+
+    smooth = make_relationship(
+        "exponential_monotonic", n=500, noise=0.1, random_state=42
+    )
+    smooth_stepness = profile_pair(
+        smooth, "x", "y", mode="lite"
+    ).diagnostics.segment_stepness
+    assert smooth_stepness is not None and smooth_stepness < 0.5
 
 
 def test_disagreement_score_zero_when_correlations_unavailable():
@@ -320,6 +445,8 @@ def test_serialization_includes_nested_and_flattened_diagnostics():
 def test_secondary_axes_surfaced_in_every_output_form():
     """The five secondary diagnostic axes appear on result.diagnostics and in
     every rendered/serialized surface (summary, markdown, to_dict, to_frame)."""
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
     df = make_relationship("circular", n=500, noise=0.1, random_state=42)
     res = profile_pair(df, "x", "y", mode="deep")
 
@@ -396,6 +523,11 @@ def test_bootstrap_intervals_are_deterministic_and_serialized():
     assert "Bootstrap intervals:" in summary
     assert "Pattern stability:" in summary
     assert "pearson" in summary
+    # label_counts render as sorted "label: n" pairs (via _format_label_counts),
+    # not a raw Python dict repr, matching to_markdown() (C5 #5).
+    label_counts_line = next(ln for ln in summary.splitlines() if "label_counts:" in ln)
+    assert "{" not in label_counts_line and "}" not in label_counts_line
+    assert "'" not in label_counts_line
 
     as_dict = res1.to_dict()
     assert as_dict["bootstrap_intervals"] is not None
@@ -467,6 +599,10 @@ def test_standard_bootstrap_metrics_require_explicit_opt_in():
         ({"bootstrap": 5, "bootstrap_metrics": []}, "at least one metric"),
         ({"bootstrap": 5, "bootstrap_metrics": ["pearson", "bogus"]}, "Unsupported"),
         ({"bootstrap": 5, "max_n_for_bootstrap": 0}, "positive integer"),
+        ({"max_n_for_dcor": -1}, "max_n_for_dcor must be a positive integer"),
+        ({"max_n_for_dcor": 0}, "max_n_for_dcor must be a positive integer"),
+        ({"max_n_for_dcor": True}, "max_n_for_dcor must be a positive integer"),
+        ({"max_n_for_dcor": 2.5}, "max_n_for_dcor must be a positive integer"),
     ],
 )
 def test_bootstrap_invalid_inputs_raise(kwargs, message):
@@ -474,6 +610,22 @@ def test_bootstrap_invalid_inputs_raise(kwargs, message):
 
     with pytest.raises(InputError, match=message):
         profile_pair(df, "x", "y", **kwargs)
+
+
+def test_bootstrap_metrics_explicit_duplicates_are_deduped():
+    """An explicit ``bootstrap_metrics`` sequence with a repeated name must not
+    produce duplicate interval rows (C4 #4)."""
+    df = make_relationship("linear_positive", n=80, random_state=42)
+
+    res = profile_pair(
+        df, "x", "y", bootstrap=5, bootstrap_metrics=["pearson", "pearson"]
+    )
+
+    assert res.bootstrap_intervals is not None
+    pearson_rows = res.bootstrap_intervals[
+        res.bootstrap_intervals["metric"] == "pearson"
+    ]
+    assert len(pearson_rows) == 1
 
 
 def test_bootstrap_sequence_metric_set_is_preserved():
@@ -576,6 +728,37 @@ def test_lite_pattern_stability_caveat_for_standard_nonmonotonic_label():
     assert res.pattern == "nonmonotonic_dependence"
     assert res.bootstrap_stability is not None
     assert res.bootstrap_stability.metric_set == "lite"
+    assert res.bootstrap_stability.dcor_in_cascade is False
+    assert any("may not fully test" in w for w in res.warnings)
+    assert "may not fully test" in res.explain(include_caveat=False)
+
+
+def test_standard_only_caveat_agrees_across_surfaces_for_explicit_subset():
+    """C5 #2: with an explicit bootstrap subset the metric_set label is not
+    'lite' (it names the subset), but dcor is still absent from the replicate
+    cascade. The warnings list and explain() must agree — both gate on
+    ``dcor_in_cascade``, not the metric_set string — so the caveat fires on both,
+    not just the warnings list."""
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
+    df = make_relationship("u_shape", n=120, random_state=42)
+
+    res = profile_pair(
+        df,
+        "x",
+        "y",
+        mode="standard",
+        bootstrap=10,
+        bootstrap_metrics=["pearson"],
+        random_state=123,
+    )
+
+    assert res.pattern == "nonmonotonic_dependence"
+    assert res.bootstrap_stability is not None
+    # The metric_set label is NOT "lite" here — the old gate would have missed it.
+    assert res.bootstrap_stability.metric_set == "pearson"
+    assert res.bootstrap_stability.dcor_in_cascade is False
+    # Both surfaces now carry the caveat, in agreement.
     assert any("may not fully test" in w for w in res.warnings)
     assert "may not fully test" in res.explain(include_caveat=False)
 
@@ -590,6 +773,8 @@ def test_bootstrap_stability_recomputes_trim_sensitivity_per_replicate():
     original profile proved Pearson trim-stable — collapsing pattern stability
     to ~0 against the real near_linear label. Trim sensitivity is now recomputed
     per replicate."""
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
     rng = np.random.default_rng(3)
     n = 300
     x = rng.standard_t(2.0, size=n)
@@ -613,6 +798,29 @@ def test_bootstrap_stability_recomputes_trim_sensitivity_per_replicate():
     # stability reflects the real label instead of collapsing to ~0.
     assert res.bootstrap_label_counts.get("possible_outlier_or_leverage", 0) == 0
     assert res.pattern_stability >= 0.5
+
+
+def test_bootstrap_stability_recomputes_sq_corr_robust_per_replicate():
+    """A lite ``nonmonotonic_dependence`` label assigned via the sq_corr route
+    must be reproducible by the bootstrap. The classifier gates that route on
+    *both* sq_corr and sq_corr_robust, so the per-replicate cascade has to compute
+    sq_corr_robust too — omitting it made every replicate fail the gate and
+    collapse pattern_stability to 0.0 with a `weak_or_no_relationship` count."""
+    rng = np.random.default_rng(1)
+    x = rng.uniform(-3, 3, size=400)
+    df = pd.DataFrame({"x": x, "y": x**2 + rng.normal(0, 0.4, size=400)})
+
+    res = profile_pair(df, "x", "y", mode="lite", bootstrap=30, random_state=7)
+
+    # A U-shape reaches nonmonotonic_dependence via sq_corr alone in lite mode.
+    assert res.pattern == "nonmonotonic_dependence"
+    assert res.diagnostics.dependence_type == "magnitude_linked"
+    # The label is stable — replicates reproduce it, not collapse to weak.
+    assert res.bootstrap_stability.pattern_stability >= 0.8
+    assert (
+        res.bootstrap_stability.bootstrap_label_counts.get("weak_or_no_relationship", 0)
+        <= 3
+    )
 
 
 def test_bootstrap_intervals_skipped_below_min_n_floor():

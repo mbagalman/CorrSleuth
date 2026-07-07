@@ -57,25 +57,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   midcorrelation (Wilcox; Langfelder & Horvath 2012). It previously used the
   normal-consistent MAD, which pushed the outlier-rejection cutoff out to ~13
   MADs and made the estimator less outlier-resistant than its name implies.
-  This changes the metric's numeric output for non-degenerate data.
+  It also applies the 9-MAD rejection indicator *per variable* (a point beyond
+  the cutoff in x has only its x-weight zeroed, still contributing its y-weight),
+  as the canonical estimator prescribes, rather than dropping the whole row
+  whenever either variable rejects it. This changes the metric's numeric output
+  for non-degenerate data.
 - **Smooth monotonic curves and step functions were mislabeled `near_linear`.**
   The cascade's only nonlinearity test — the Spearman-vs-Pearson gap — can stay
   small for exponential/logarithmic curves and step/threshold functions over an
   ordinary (non-rigged) X range, even though real curvature exists. A new
-  equal-frequency-bin lack-of-fit diagnostic (`bin_lof_r2_gain`, see
-  `corrsleuth/metrics/shape.py`) now provides an alternate route into
-  `monotonic_nonlinear` for these cases. No mode gate — runs in `lite` too.
+  degrees-of-freedom-adjusted equal-frequency-bin lack-of-fit diagnostic
+  (`bin_lof_r2_gain`, see `corrsleuth/metrics/shape.py`) now provides an
+  alternate route into `monotonic_nonlinear` for these cases. The df adjustment
+  keeps the gain's null expectation at ~0 regardless of `n`, so ordinary
+  noisy-linear data — including a bivariate normal at moderate ρ — is not read as
+  curved; the threshold-calibration sweep lives in `validation/bin_lof_sweep.py`.
+  No mode gate — runs in `lite` too.
 - **Circular/radial dependence was mislabeled `weak_or_no_relationship`.** A
   true circular relationship (points scattered around a ring) structurally
   caps distance correlation around dCor ≈ 0.2, even noiseless, so it never
   cleared the `nonmonotonic_dependence` floor. A new squared-value correlation
-  diagnostic (`sq_corr = corr(X², Y²)`, `corrsleuth/metrics/shape.py`) now
-  provides an alternate route into `nonmonotonic_dependence`, and into the
-  `weak_or_no_relationship` ceiling check, for this shape. No mode gate — as a
+  diagnostic (`sq_corr = corr((X−x̄)², (Y−ȳ)²)`, the correlation of the
+  mean-centered squares, `corrsleuth/metrics/shape.py`) now provides an alternate
+  route into `nonmonotonic_dependence`, and into the `weak_or_no_relationship`
+  ceiling check, for this shape. Centering before squaring makes it
+  translation-invariant, so it catches a ring wherever it is centered, not only
+  at the origin. No mode gate — as a
   side effect, classic U-shapes are now also detectable via `sq_corr` in
   `lite` and `deep` mode, not only `mode="standard"`.
+  The `sq_corr` routes additionally require a **leave-the-top-out robust value**
+  (`sq_corr_robust`, the smallest `|sq_corr|` after dropping the few points most
+  extreme in either squared variable) to clear an asymmetric lower floor
+  (`SQ_CORR_ROBUST_FLOOR = 0.20`): a heavy-tailed variable — in a scan, the
+  target — can manufacture a raw `|sq_corr|` over the threshold with a handful of
+  extreme squared values, mislabeling an independent predictor magnitude-linked.
+  The robust value collapses in that case; a genuine magnitude link is spread
+  over many points and keeps it high. The floor is lower than the raw threshold
+  because a genuine link, once firing, stays well above where an artifact
+  collapses — chosen (see `validation/sq_corr_sweep.py`) to preserve essentially
+  all circle/U-shape detections while removing the large majority of the
+  artifacts; a rare artifact whose *bulk* correlation survives the drop is
+  indistinguishable from a weak real link and remains.
   See `docs/shape-diagnostics-design.md` for the full investigation
   (including why a periodic/cyclical case is deliberately deferred).
+  `result.explain()` now describes the mechanism that actually fired — magnitude
+  (`sq_corr`), oscillation (the bin-reversal gate), a closed loop, or distance
+  correlation — instead of always crediting distance correlation, which for a
+  circle sits below its own floor and does not drive the label.
 - **Oscillating/periodic dependence was mislabeled `weak_or_no_relationship`
   outside `mode="standard"`.** A sinusoid over a few cycles keeps Pearson,
   Spearman, *and* the magnitude diagnostic `sq_corr` all near zero, and even
@@ -88,11 +116,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   range-scaled hysteresis so noise wiggle is not counted as a turn) now
   provides a third, lite-computable route into `nonmonotonic_dependence`:
   `bin_reversal_count >= OSCILLATION_MIN_REVERSALS` (2) jointly with
-  `bin_lof_r2_gain > OSCILLATION_BIN_LOF_FLOOR` (0.3). The joint gate is
+  `bin_lof_r2_gain > OSCILLATION_BIN_LOF_FLOOR` (0.15, calibrated for the
+  df-adjusted gain via `validation/bin_lof_sweep.py`). The joint gate is
   essential — pure noise produces *more* raw reversals than a real sinusoid
   (16 vs. 4 measured on blind test data) but a bin-fit gain ~15× smaller —
   and was validated over a 2,080-run sweep (13 shapes × sample sizes × noise
   levels × 10 seeds: zero false positives) before the thresholds were locked.
+  The oscillation gate additionally requires a **leave-one-bin-out robust gain**
+  (`bin_lof_r2_gain_robust`, the smallest gain obtained by dropping any single
+  bin) to clear the same floor: a genuine oscillation is spread across many bins
+  and barely moves, but a lone extreme Y in one bin — most likely when the
+  target is heavy-tailed, as in a scan — can push the raw gain over the floor
+  and manufacture a false oscillation on an independent predictor. The robust
+  gain collapses in that case, so it is not fooled; the raw gain still drives the
+  (rank-trend-gated) curvature route, where curvature legitimately concentrates
+  in the extreme bins, so its calibration is unchanged (verified by the
+  heavy-tailed-Y section added to `validation/bin_lof_sweep.py`).
   A new `dependence_type = "oscillating"` axis value distinguishes the
   cyclical case from a single-bend U-shape (which reads exactly 1 reversal),
   so the label says "real nonmonotonic dependence" and the axis says "look
@@ -124,6 +163,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   boolean Cook's-flagged-row mask for this purpose.
 
 ### Changed
+- **`mode="deep"` is now a strict superset of `mode="standard"` and requires the
+  `corrsleuth[standard]` extras** (breaking change). In 0.1.0, deep computed only
+  the robust-Pearson family and Chatterjee's ξ and ran on the base install. It
+  now *also* computes distance correlation and mutual information — so a deep
+  profile carries the full metric set — and therefore raises
+  `OptionalDependencyError` (naming *deep* mode) when `dcor`/`scikit-learn` are
+  absent, exactly as standard mode does. This removes a confusing gap where the
+  most thorough-sounding mode silently omitted the standard-mode metrics, and it
+  makes two previously-unreachable deep-mode signals live: a circle now reports
+  `dependence_type=closed_loop_or_multivalued` with
+  `functional_direction=neither_direction` alongside its distance correlation. If
+  you called `mode="deep"` on a base install, run
+  `pip install corrsleuth[standard]`.
 - Bootstrap **intervals** are now computed only when the *effective
   per-replicate size* is `>= 20` (i.e. `min(n_used, max_n_for_bootstrap)`), not
   just when `n_used >= 20`. Below that a percentile bootstrap is too unreliable
@@ -137,6 +189,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   full-sample label (e.g. `n=100, max_n_for_bootstrap=25` on strong linear data
   reported `pattern_stability=0.0`). Genuinely small samples (uncapped,
   `n_used < 30`) are unaffected and keep their stability signal.
+- `scan_target(errors="warn")` no longer swallows **systemic** failures. A
+  missing optional dependency (`OptionalDependencyError` from `mode="standard"`/
+  `"deep"` without the extras) or a misspelled `profile_pair` keyword
+  (`TypeError`) fails identically for every column, so it is now propagated even
+  under the default `errors="warn"` — surfacing one actionable error instead of a
+  scan that "completes" with N identical error entries and zero successes.
+  Genuine per-column data failures (e.g. an all-NaN or constant column, which
+  raise `InputError`) are still captured as `error` entries.
+- `scan_target(max_pairs=...)` now records the columns dropped by the cap as
+  `skipped` entries (`error_type="MaxPairsExceeded"`) instead of omitting them
+  entirely. Previously `summary()` read "profiled: N, skipped: 0" on a wider
+  DataFrame as if coverage were complete, hiding both that the scan was truncated
+  and *which* (data-order-dependent) columns were left unprofiled.
+- The target-scan caveat (`summary()`, `to_markdown()`, and the `scan_target`
+  docstring) now states that the scan applies **no multiple-testing correction**,
+  so across many candidates some patterns appear by chance and the rankings are
+  hypothesis-generating. A wide scan of noise previously decorated variables
+  across the pattern/underrate sections with no such warning at the point of use.
 - Documented that mutual information is reported as **raw, unnormalized** MI (in
   nats, `>= 0`, unbounded — not a 0–1 scale) in the `compute_mutual_information`
   docstring and the README, so its magnitude isn't misread as a correlation.
@@ -190,10 +260,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breakpoint localization** (`compute_segmentation` in
   `corrsleuth/metrics/shape.py`, no new dependency): a single-breakpoint search
   refines a curved *monotone* `mean_shape` into `smooth_curve` versus
-  `step_or_threshold`, and reports `breakpoint_x` (where a step sits) on
-  `result.diagnostics`. The two are told apart by whether a two-*level*
+  `step_or_threshold`, and reports `segment_gain`, `segment_stepness` (the
+  fraction of the fit gain a flat-segment model captures — the number behind the
+  step-vs-smooth call, `≈ 1` for a step and `≤ 0` for a smooth bend), and
+  `breakpoint_x` (where a step sits) on `result.diagnostics`. The two are told
+  apart by whether a two-*level*
   (flat-segment) model fits as well as a two-*line* model — a step's segments
-  are flat, a smooth curve's are sloped — computed with an O(n) prefix-sum scan.
+  are flat, a smooth curve's are sloped — computed with an O(n) prefix-sum scan
+  over mean-centered inputs (the centering keeps the closed-form residual
+  identities numerically stable when x/y sit far from zero).
   A `threshold_step` pair keeps its `monotonic_nonlinear` label but now reports
   `mean_shape=step_or_threshold` with the jump location; exponential/logarithmic
   curves report `smooth_curve` with no spurious breakpoint. Monotone
@@ -234,11 +309,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pair reports `dependence_type=closed_loop_or_multivalued` with
   `functional_direction=neither_direction` in deep mode. Surfaced in
   `summary()`, `to_markdown()`, `to_dict()`, and `to_frame()`. Each axis keeps
-  its underlying number alongside it.
+  its underlying number alongside it. `scan_target` profiles each pair as
+  `profile_pair(data, candidate, target)`, so these direction-sensitive axes and
+  `breakpoint_x` describe how the candidate drives the target — the
+  feature-screening question — with the panel plot drawn candidate-on-x to match,
+  and the forward `chatterjee_xi` giving the candidate→target direction.
+  `scan_target().to_frame()` exposes each pair's diagnostics as `diagnostic_*`
+  columns (the numeric diagnostics and the five axes), plus `pattern_stability` /
+  `stability_label` / `stability_metric_set` when bootstrapping was requested —
+  matching the per-pair `CorrSleuthResult.to_frame`.
 - `corrsleuth/metrics/shape.py`: two no-new-dependency shape diagnostics,
-  `bin_lof_r2_gain` (bin-mean-model R² minus linear-fit R², a classical
-  lack-of-fit test) and `sq_corr` (`corr(X², Y²)`), wired into the
-  `monotonic_nonlinear` and `nonmonotonic_dependence` cascade rules as
+  `bin_lof_r2_gain` (the degrees-of-freedom-adjusted bin-mean-model R² minus
+  linear-fit R², a classical lack-of-fit test) and `sq_corr`
+  (`corr((X−x̄)², (Y−ȳ)²)`, the correlation of the mean-centered squares), wired
+  into the `monotonic_nonlinear` and `nonmonotonic_dependence` cascade rules as
   additional constants `BIN_LOF_R2_GAIN_THRESHOLD` (0.05) and
   `SQ_CORR_THRESHOLD` (0.35). Diagnostic-only — surfaced on
   `result.diagnostics`, not in the metrics table.
@@ -298,9 +382,10 @@ Initial release.
 - Markdown / dict / DataFrame exports for results and target reports. The
   summary and Markdown reports include the signed Pearson–Spearman gap, which
   reveals sign disagreement that the absolute rank/linear gap hides.
-- `make_relationship()` deterministic relationship simulator, which validates
-  its inputs (`n` must be an integer ≥ 2, `noise` must be non-negative) and
-  raises `InputError` on bad arguments.
+- `make_relationship()` relationship simulator (reproducible when seeded with
+  `random_state=`; nondeterministic by default), which validates its inputs
+  (`n` must be an integer ≥ 2, `noise` must be non-negative) and raises
+  `InputError` on bad arguments.
 - Strict input validation with clear `InputError` messages: profiling a column
   against itself, duplicate column names, and non-positive `max_pairs` /
   `sample_size` values are rejected explicitly. Infinite values are rejected

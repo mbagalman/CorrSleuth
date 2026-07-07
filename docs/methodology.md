@@ -69,13 +69,13 @@ identical.
 
 ## 3. The association measures
 
-Measures are grouped into three **modes**. All modes compute the lite metrics;
-`standard` and `deep` are *separate* extensions aimed at different questions —
+Measures are grouped into three **modes**. All modes compute the lite metrics.
 `standard` adds distance correlation and mutual information (for non-monotone
-dependence), while `deep` adds the robust-Pearson family and Chatterjee's ξ (for
-leverage and asymmetric functional dependence) **without** the standard metrics.
-So `deep` is not a superset of `standard`; choose the extension that matches the
-question (or call `profile_pair` twice).
+dependence). `deep` is a **strict superset** of `standard` — it computes those
+same metrics **and** adds the robust-Pearson family and Chatterjee's ξ (for
+leverage and asymmetric functional dependence). Because `deep` includes the
+standard metrics, both `standard` and `deep` require the `corrsleuth[standard]`
+extras and raise `OptionalDependencyError` when they are missing.
 
 | Measure | Mode | Detects | Key assumptions / sensitivities |
 |---|---|---|---|
@@ -128,15 +128,19 @@ be the (signed) Pearson, Spearman, Kendall, and distance-correlation values.
 - `bin_lof_r2_gain`, `bin_reversal_count`, and `sq_corr` — three shape
   diagnostics (no mode gate; pure numpy/scipy) that feed the label cascade but
   are **not** included in the `disagreement_score` formula below.
-  `bin_lof_r2_gain` is the R² of an equal-frequency-bin model of Y|X minus the
-  R² of a linear fit — a classical lack-of-fit test (Neter, Kutner, Nachtsheim
-  & Wasserman) that catches smooth monotonic curvature and step/threshold
-  functions the rank-vs-linear gap misses. `bin_reversal_count`, computed from
+  `bin_lof_r2_gain` is the **degrees-of-freedom-adjusted** R² of an
+  equal-frequency-bin model of Y|X minus the adjusted R² of a linear fit — a
+  classical lack-of-fit test (Neter, Kutner, Nachtsheim & Wasserman) that
+  catches smooth monotonic curvature and step/threshold functions the
+  rank-vs-linear gap misses. The df adjustment matters: a plain R² difference
+  credits the many-parameter bin model for degrees of freedom the line lacks,
+  giving a positive null bias that reads ordinary noisy-linear data as curved. `bin_reversal_count`, computed from
   the same bins, is how many times the sequence of bin means changes direction
   (counted with hysteresis so noise wiggle is not a turn: 0 for a monotone
   trend, 1 for a single bend, 2+ for an oscillation) — meaningful only jointly
   with a high `bin_lof_r2_gain`, since pure noise reverses constantly with
-  near-zero gain. `sq_corr` is `corr(X², Y²)` — it catches dependence carried
+  near-zero gain. `sq_corr` is `corr((X−x̄)², (Y−ȳ)²)` (the correlation of the
+  mean-centered squares) — it catches dependence carried
   in magnitude rather than sign (e.g. points scattered around a circle), which
   distance correlation itself under-reads for that shape. See
   [shape-diagnostics-design.md](shape-diagnostics-design.md).
@@ -177,15 +181,18 @@ the defaults.
    `|p| − |k| > 0.25`) **or conflicts in sign** with Spearman (opposite signs,
    both absolute magnitudes `≥ 0.30`), **and** the trimmed-Pearson check says
    Pearson is
-   leverage-sensitive (or sensitivity could not be computed). This rule requires
-   *independent* leverage evidence — a gap alone is not enough.
+   leverage-sensitive (or sensitivity could not be computed). The rule looks for
+   *independent* leverage evidence beyond the gap — the trimmed-Pearson check
+   flagging sensitivity — but when that check cannot run it still routes here
+   (conservatively, since the strong-Pearson-plus-sign-conflict shape is itself a
+   leverage signature) rather than reading the pair as clean.
 4. **`nonmonotonic_dependence`** — `|p|` and `|s|` are both weak (`< 0.25`) while
    any of three routes fires: distance correlation is high (`> 0.35`,
-   `mode="standard"` only); `|corr(X², Y²)|` is high (`> 0.35`, `sq_corr`, no
+   `mode="standard"` only); `|corr((X−x̄)², (Y−ȳ)²)|` is high (`> 0.35`, `sq_corr`, no
    mode gate — added because a true circular/radial relationship structurally
    caps distance correlation around ~0.2, even noiseless); or the bin means
    reverse direction repeatedly with substantial bin structure
-   (`bin_reversal_count ≥ 2` **and** `bin_lof_r2_gain > 0.3`, no mode gate —
+   (`bin_reversal_count ≥ 2` **and** `bin_lof_r2_gain > 0.15`, no mode gate —
    added because an oscillating relationship like a sinusoid keeps distance
    correlation only marginally above its floor and has no magnitude signature
    for `sq_corr`; the joint gate is essential, as pure noise produces many
@@ -199,7 +206,7 @@ the defaults.
 6. **`near_linear`** — Pearson and Spearman are both strong (`|p| > 0.50` and
    `|s| > 0.50`) and close (`||p|−|s|| < 0.15`), without a sign conflict.
 7. **`weak_or_no_relationship`** — all available measures are small (`|p|, |s| <
-   0.20`, `dc < 0.20` when present, and `|corr(X², Y²)| < 0.20` when
+   0.20`, `dc < 0.20` when present, and `|corr((X−x̄)², (Y−ȳ)²)| < 0.20` when
    computable).
 8. **`mixed_or_ambiguous`** — fallback when none of the above matches.
 

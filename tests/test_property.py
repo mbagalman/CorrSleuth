@@ -17,7 +17,7 @@ under an ``importorskip`` guard.
 
 import numpy as np
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 from hypothesis.extra import numpy as npst
 
@@ -50,7 +50,7 @@ _TOL = 1e-9
 _SETTINGS = settings(
     max_examples=50,
     deadline=None,
-    suppress_health_check=[HealthCheck.too_slow],
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.filter_too_much],
 )
 
 _FINITE_FLOATS = st.floats(
@@ -157,6 +157,48 @@ def test_chatterjee_xi_forward_reverse_consistency(data):
     forward = compute_chatterjee_xi(_pair(x, y)).value
     reverse_on_swapped = compute_chatterjee_xi_reverse(_pair(y, x)).value
     assert _approx_equal(forward, reverse_on_swapped)
+
+
+@st.composite
+def _paired_moderate(draw, *, min_size=30, max_size=120):
+    """Like ``paired_xy`` but bounded to a moderate magnitude, so squaring stays
+    well-conditioned and the invariance below is not obscured by float error."""
+    n = draw(st.integers(min_value=min_size, max_value=max_size))
+    elems = st.floats(
+        allow_nan=False, allow_infinity=False, min_value=-1e3, max_value=1e3, width=64
+    )
+    x = draw(npst.arrays(np.float64, n, elements=elems))
+    y = draw(npst.arrays(np.float64, n, elements=elems))
+    return x, y
+
+
+_OFFSET = st.floats(
+    allow_nan=False, allow_infinity=False, min_value=-1e3, max_value=1e3, width=64
+)
+
+
+@_SETTINGS
+@given(data=_paired_moderate(), dx=_OFFSET, dy=_OFFSET)
+def test_squared_correlation_is_translation_invariant(data, dx, dy):
+    """sq_corr must depend only on the shape, not where it sits in the plane.
+
+    Squaring is not translation-invariant, so ``compute_squared_correlation``
+    centers X and Y first; shifting both by any finite offset must leave the
+    value unchanged (a circle at (5, 5) reads the same as one at the origin).
+    Before that fix, ``corr(X², Y²)`` on raw values collapsed toward
+    ``corr(X, Y)`` for off-origin data."""
+    from corrsleuth.metrics import compute_squared_correlation
+
+    x, y = data
+    # Well-conditioned inputs only. A value so tiny that a finite shift absorbs
+    # it (e.g. 1e-65 + 1.0 == 1.0, collapsing the column to a constant) leaves the
+    # diagnostic undefined on one side — a floating-point artifact, not a
+    # translation-variance — so require real spread in both variables.
+    assume((x.max() - x.min()) > 1e-3 and (y.max() - y.min()) > 1e-3)
+    base = compute_squared_correlation(_pair(x, y)).value
+    shifted = compute_squared_correlation(_pair(x + dx, y + dy)).value
+    assume(base is not None and shifted is not None)
+    assert shifted == pytest.approx(base, rel=1e-7, abs=1e-7)
 
 
 def test_distance_correlation_properties():

@@ -167,14 +167,19 @@ def _heteroscedasticity_from_arrays(
         # (middle fraction dropped), ratio of their residual variances.
         order = np.argsort(x, kind="mergesort")
         xs, ys = x[order], y[order]
+        # Goldfeld-Quandt fails *soft*: if the split is too small (n_group < 3, so
+        # < 1 residual d.o.f. per group) or a group is degenerate, report gq as
+        # no_value but still return the Breusch-Pagan p-value and the bowtie ratio.
+        # A failure in one variance metric must not discard the other two — they
+        # measure different things (a bowtie's gq reads ~1 by construction).
         n_group = (n - int(_GQ_DROP_FRACTION * n)) // 2
-        if n_group < 3:  # need >= 1 residual d.o.f. per group (n - 2 slope/intercept)
-            return _no_value_result()
-        gq_ratio = _group_variance_ratio(
-            xs[:n_group], ys[:n_group], xs[n - n_group :], ys[n - n_group :]
+        gq_ratio = (
+            _group_variance_ratio(
+                xs[:n_group], ys[:n_group], xs[n - n_group :], ys[n - n_group :]
+            )
+            if n_group >= 3
+            else None
         )
-        if gq_ratio is None:
-            return _no_value_result()
 
         # Bowtie (edge-vs-middle) ratio: split the x-sorted residuals from the
         # single global fit above into thirds, and compare the combined
@@ -195,7 +200,11 @@ def _heteroscedasticity_from_arrays(
 
     return {
         _BP_NAME: MetricResult(name=_BP_NAME, value=bp_pvalue, available=True),
-        _GQ_NAME: MetricResult(name=_GQ_NAME, value=gq_ratio, available=True),
+        _GQ_NAME: (
+            MetricResult(name=_GQ_NAME, value=gq_ratio, available=True)
+            if gq_ratio is not None
+            else MetricResult.no_value(_GQ_NAME)
+        ),
         _BOWTIE_NAME: (
             MetricResult(name=_BOWTIE_NAME, value=bowtie_ratio, available=True)
             if bowtie_ratio is not None

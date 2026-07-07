@@ -222,9 +222,11 @@ Conventions applied:
 
 1. **Default direction. Resolved during review** — both directions are now
    computed in deep mode. `chatterjee_xi` is `ξ(pair.x → pair.y)` and
-   `chatterjee_xi_reverse` is `ξ(pair.y → pair.x)`. For target scans, the
-   reverse direction is `ξ(candidate → target)` — the one feature-engineering
-   users typically want when prioritizing predictors. Both names are valid
+   `chatterjee_xi_reverse` is `ξ(pair.y → pair.x)`. Because `scan_target`
+   profiles each pair as `profile_pair(data, candidate, target)`, the *forward*
+   `chatterjee_xi` is `ξ(candidate → target)` — the one feature-engineering
+   users typically want when prioritizing predictors — and
+   `chatterjee_xi_reverse` is `ξ(target → candidate)`. Both names are valid
    `sort_by` keys for `report.plot_top()`.
 2. **Heuristic interaction. Substantially resolved, by a different route** —
    ξ itself still does not feed `apply_heuristics` (it remains

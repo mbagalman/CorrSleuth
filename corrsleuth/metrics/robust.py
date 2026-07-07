@@ -7,6 +7,7 @@ replace visual inspection or model validation.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -110,7 +111,15 @@ def assess_outlier_sensitivity(
     too few rows surviving the trim).
     """
     trimmed = compute_trimmed_pearson(pair)
-    if baseline_pearson is None or trimmed.value is None:
+    # A non-finite baseline is treated like None (→ "unavailable"): otherwise
+    # ``delta = abs(NaN − trimmed) = NaN`` and ``NaN > threshold`` is False, so
+    # the pair would fall through to "stable" — an affirmative all-clear that
+    # blocks the leverage label on no real evidence (C3 #3).
+    if (
+        baseline_pearson is None
+        or not math.isfinite(baseline_pearson)
+        or trimmed.value is None
+    ):
         return OutlierSensitivity(status="unavailable", trimmed=trimmed, delta=None)
     # Signed comparison: a sign flip after trimming (e.g. +0.55 -> -0.55) is the
     # most leverage-sensitive case there is; an abs-of-abs delta would score it
@@ -160,14 +169,19 @@ def compute_biweight_midcorrelation(pair: CleanPair) -> MetricResult:
 
     x_u = (x - x_median) / (9.0 * x_mad)
     y_u = (y - y_median) / (9.0 * y_mad)
-    mask = (np.abs(x_u) < 1) & (np.abs(y_u) < 1)
-    if mask.sum() < 2:
+    # Canonical biweight midcorrelation applies the rejection indicator
+    # *per variable*: a point beyond 9 MADs in x has its x-weight zeroed but
+    # still contributes its y-weight (and vice versa). Using a joint mask that
+    # drops the whole row whenever *either* variable rejects it is wrong — it
+    # discards good information in the non-outlying variable and shrinks the
+    # scale of the surviving column (Langfelder & Horvath 2012, eq. for bicor).
+    x_in = np.abs(x_u) < 1
+    y_in = np.abs(y_u) < 1
+    if x_in.sum() < 2 or y_in.sum() < 2:
         return MetricResult.no_value(name)
 
-    x_centered = x[mask] - x_median
-    y_centered = y[mask] - y_median
-    x_weighted = x_centered * (1 - x_u[mask] ** 2) ** 2
-    y_weighted = y_centered * (1 - y_u[mask] ** 2) ** 2
+    x_weighted = np.where(x_in, (x - x_median) * (1 - x_u**2) ** 2, 0.0)
+    y_weighted = np.where(y_in, (y - y_median) * (1 - y_u**2) ** 2, 0.0)
     denominator = np.sqrt(np.sum(x_weighted**2) * np.sum(y_weighted**2))
     if denominator == 0:
         return MetricResult.no_value(name)

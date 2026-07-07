@@ -1,8 +1,12 @@
+import numpy as np
+import pandas as pd
 import pytest
 
 from corrsleuth.api import profile_pair
 from corrsleuth.datasets import make_relationship
 from corrsleuth.heuristics.classifier import (
+    _dependence_type_axis,
+    _functional_direction_axis,
     _mean_shape_axis,
     _outlier_sensitivity_axis,
     _variance_shape_axis,
@@ -69,11 +73,43 @@ def test_circular_resolves_to_nonmonotonic_dependence():
     # Points scattered around a ring: Pearson, Spearman, and distance
     # correlation on the raw values are all near zero (distance correlation is
     # structurally capped around ~0.2 for a true circular relationship), but
-    # sq_corr (corr(X^2, Y^2)) is strongly negative. Lite mode: no optional
+    # sq_corr (corr of the mean-centered squares) is strongly negative. Lite mode: no optional
     # dependency needed.
     df = make_relationship("circular", n=500, noise=0.1, random_state=42)
     res = profile_pair(df, "x", "y", mode="lite")
     assert res.pattern == "nonmonotonic_dependence"
+
+
+@pytest.mark.parametrize("center", [(0.0, 0.0), (5.0, 5.0), (100.0, -40.0)])
+@pytest.mark.parametrize("seed", range(5))
+def test_offset_circle_still_reads_nonmonotonic_dependence(center, seed):
+    """Regression lock for the sq_corr translation-invariance BLOCKER (FU-B).
+
+    ``corr(X², Y²)`` on raw values collapses toward ``corr(X, Y)`` for data far
+    from the origin, so before the fix a noisy ring centered anywhere but (0, 0)
+    read ``sq_corr`` ≈ 0 and was mislabeled ``weak_or_no_relationship`` (a circle
+    at (5, 5) measured −0.05 instead of −0.95). Centering X and Y before squaring
+    makes the diagnostic shape-only, so the label must be
+    ``nonmonotonic_dependence`` regardless of where the circle sits. The (0, 0)
+    cell guards against a regression on the origin case that always worked."""
+    import numpy as np
+    import pandas as pd
+
+    cx, cy = center
+    rng = np.random.default_rng(seed)
+    theta = rng.uniform(0, 2 * np.pi, size=500)
+    radius = 5.0 * (1 + rng.normal(0, 0.05, size=500))
+    df = pd.DataFrame(
+        {"x": cx + radius * np.cos(theta), "y": cy + radius * np.sin(theta)}
+    )
+    res = profile_pair(df, "x", "y", mode="lite")
+
+    assert res.pattern == "nonmonotonic_dependence", (
+        f"center={center} seed={seed} -> {res.pattern}"
+    )
+    assert res.diagnostics.sq_corr is not None and res.diagnostics.sq_corr < -0.5, (
+        f"center={center} seed={seed} -> sq_corr={res.diagnostics.sq_corr}"
+    )
 
 
 def test_sinusoidal_resolves_to_nonmonotonic_dependence_in_every_mode():
@@ -129,6 +165,60 @@ def test_linear_shapes_stay_near_linear_across_seeds(shape, seed):
     df = make_relationship(shape, n=500, noise=0.1, random_state=seed)
     res = profile_pair(df, "x", "y", mode="lite")
     assert res.pattern == "near_linear"
+
+
+@pytest.mark.parametrize("rho", [0.5, 0.6, 0.8])
+@pytest.mark.parametrize("n", [100, 300, 500])
+@pytest.mark.parametrize("seed", range(10))
+def test_moderate_correlation_bivariate_normal_never_reads_curved(rho, n, seed):
+    """Regression lock for the bin-lack-of-fit df-bias BLOCKER (FU-A).
+
+    A plain bivariate normal at moderate rho is a straight line with noise. The
+    old unadjusted R² gain carried a positive null bias ~(k-2)/(n-1) — above the
+    0.05 curvature threshold for n < ~400 — which mislabeled ~25% of the
+    rho=0.6/n=100 cells as ``monotonic_nonlinear`` (and drove ``mean_shape``
+    ``curved`` on the majority of moderate-correlation pairs). Unlike the
+    existing ``linear_positive`` regression, this exercises the moderate-rho
+    (~0.5-0.8) regime the make_relationship shapes never reach (their "linear"
+    cases sit at rho ≈ 0.87+ even at max noise), which is exactly why the bias
+    shipped. Post-fix: stays ``near_linear`` (or falls through to
+    ``mixed_or_ambiguous`` at the rho=0.5 boundary), never ``monotonic_nonlinear``
+    or ``nonmonotonic_dependence``, and its mean is never ``curved``."""
+    import numpy as np
+    import pandas as pd
+
+    rng = np.random.default_rng(seed)
+    x = rng.normal(size=n)
+    y = rho * x + np.sqrt(1.0 - rho**2) * rng.normal(size=n)
+    res = profile_pair(pd.DataFrame({"x": x, "y": y}), "x", "y", mode="lite")
+
+    assert res.pattern in ("near_linear", "mixed_or_ambiguous"), (
+        f"rho={rho} n={n} seed={seed} -> {res.pattern}"
+    )
+    assert res.diagnostics.mean_shape != "curved", (
+        f"rho={rho} n={n} seed={seed} -> mean_shape={res.diagnostics.mean_shape}"
+    )
+
+
+@pytest.mark.parametrize("n", [100, 200])
+@pytest.mark.parametrize("seed", range(10))
+def test_pure_noise_mean_shape_is_not_curved(n, seed):
+    """Regression lock (FU-A / Chunk 1 #3). The df-unadjusted bin gain made
+    ``mean_shape="curved"`` fire on the majority of pure-noise pairs, flatly
+    contradicting their ``weak_or_no_relationship`` label. The df-adjusted gain,
+    plus the weak-trend structure gate in ``_mean_shape_axis``, keep ``curved``
+    off noise."""
+    import numpy as np
+    import pandas as pd
+
+    rng = np.random.default_rng(seed)
+    x = rng.normal(size=n)
+    y = rng.normal(size=n)
+    res = profile_pair(pd.DataFrame({"x": x, "y": y}), "x", "y", mode="lite")
+
+    assert res.diagnostics.mean_shape != "curved", (
+        f"n={n} seed={seed} -> mean_shape={res.diagnostics.mean_shape}"
+    )
 
 
 def test_conflicting_signs_warning():
@@ -191,6 +281,8 @@ def test_disagreement_score_reflects_sign_conflict():
     import numpy as np
     import pandas as pd
 
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
     n = 200
     x = np.linspace(0, 10, n)
     y = -x.copy()
@@ -338,11 +430,12 @@ def test_detect_metric_warnings_ignores_nan_xi():
 
 
 def test_deep_mode_u_shape_resolves_via_sq_corr_without_xi_warning():
-    # The sq_corr shape diagnostic (corr(X^2, Y^2)) is lite-computable, so a
-    # classic U-shape now resolves to nonmonotonic_dependence even without
-    # distance correlation (deep mode) — it no longer falls back to
-    # weak_or_no_relationship, and no longer needs the chatterjee_xi warning
-    # as a safety net for this case.
+    # deep mode resolves a classic U-shape to nonmonotonic_dependence (via the
+    # lite-computable sq_corr route, and also distance correlation now that deep
+    # is a superset of standard), so it no longer falls back to
+    # weak_or_no_relationship and needs no chatterjee_xi warning as a safety net.
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
     df = make_relationship("u_shape", n=500, noise=0.1, random_state=42)
     res = profile_pair(df, "x", "y", mode="deep")
 
@@ -375,7 +468,17 @@ def test_stable_trim_sensitivity_avoids_outlier_label():
 
 
 def _axis_metrics(**values):
-    """Build a metrics dict of MetricResults from name=value kwargs."""
+    """Build a metrics dict of MetricResults from name=value kwargs.
+
+    When ``bin_lof_r2_gain`` / ``sq_corr`` is given but its ``*_robust`` companion
+    is not, the robust value defaults to the same value — the real-world case for
+    genuine structure (a sinusoid/curve/circle), where dropping the extreme few
+    bins/points barely changes the statistic. Tests exercising a robustness gate
+    itself pass a lower ``*_robust`` value explicitly."""
+    if "bin_lof_r2_gain" in values and "bin_lof_r2_gain_robust" not in values:
+        values["bin_lof_r2_gain_robust"] = values["bin_lof_r2_gain"]
+    if "sq_corr" in values and "sq_corr_robust" not in values:
+        values["sq_corr_robust"] = abs(values["sq_corr"])
     return {name: MetricResult(name, value, True) for name, value in values.items()}
 
 
@@ -498,6 +601,10 @@ def test_axes_missing_reversal_count_preserves_previous_behavior():
 
 def test_cascade_oscillation_route_into_nonmonotonic_dependence():
     def metrics(p, s, k, **extra):
+        # Mirror _axis_metrics: robust gain defaults to the raw gain (genuine
+        # multi-bin structure survives dropping any one bin).
+        if "bin_lof_r2_gain" in extra and "bin_lof_r2_gain_robust" not in extra:
+            extra["bin_lof_r2_gain_robust"] = extra["bin_lof_r2_gain"]
         base = {
             "pearson": MetricResult("pearson", p, True),
             "spearman": MetricResult("spearman", s, True),
@@ -529,6 +636,71 @@ def test_cascade_oscillation_route_into_nonmonotonic_dependence():
         apply_heuristics(single_bend, ["pearson_trim_stable"], 500).label
         != "nonmonotonic_dependence"
     )
+
+    # A raw gain over the floor with enough reversals still must NOT fire the
+    # route when the *robust* (leave-one-bin-out) gain collapses — the
+    # heavy-tailed-Y artifact (FU-U), where one outlier bin carries the whole
+    # apparent oscillation.
+    artifact = metrics(
+        0.08,
+        0.12,
+        0.08,
+        bin_lof_r2_gain=0.19,
+        bin_lof_r2_gain_robust=0.05,
+        bin_reversal_count=6,
+    )
+    assert (
+        apply_heuristics(artifact, ["pearson_trim_stable"], 500).label
+        == "weak_or_no_relationship"
+    )
+
+
+def test_heavy_tailed_y_artifact_does_not_read_as_oscillation():
+    """End-to-end FU-U lock: an independent predictor against a pathologically
+    heavy-tailed target (whose unlucky draw inflates the raw bin-LoF gain over
+    the oscillation floor) is NOT mislabeled ``nonmonotonic_dependence`` via the
+    oscillation route, and its ``mean_shape``/``dependence_type`` axes do not
+    read as curved/oscillating. Seeds 20 and 135 both tripped the route before
+    the leave-one-bin-out robustness gate."""
+    for seed in (20, 135):
+        rng = np.random.default_rng(seed)
+        df = pd.DataFrame(
+            {"x": rng.normal(size=100), "y": np.exp(rng.uniform(0.1, 10, size=100))}
+        )
+        res = profile_pair(df, "x", "y", mode="lite")
+        # The raw gain really is over the floor (the artifact is present)...
+        assert res.diagnostics.bin_lof_r2_gain > 0.15
+        # ...but the label and axes are not fooled by it.
+        assert res.pattern == "weak_or_no_relationship"
+        assert res.diagnostics.mean_shape is None
+        assert res.diagnostics.dependence_type != "oscillating"
+
+
+def test_heavy_tailed_y_artifact_does_not_read_as_magnitude_linked():
+    """End-to-end FU-V lock: seed 574's heavy-tailed target inflates the raw
+    sq_corr over 0.35, but the robust sq_corr collapses, so the pair reads
+    ``weak_or_no_relationship`` (not ``nonmonotonic_dependence`` /
+    ``magnitude_linked``) — while a genuine U-shape, whose sq_corr is robust, is
+    still detected in lite mode."""
+    rng = np.random.default_rng(574)
+    df = pd.DataFrame(
+        {"x": rng.normal(size=100), "y": np.exp(rng.uniform(0.1, 10, size=100))}
+    )
+    res = profile_pair(df, "x", "y", mode="lite")
+    # The raw sq_corr really is over the threshold (the artifact is present)...
+    assert abs(res.diagnostics.sq_corr) > 0.35
+    # ...but the label and axis are not fooled by it.
+    assert res.pattern == "weak_or_no_relationship"
+    assert res.diagnostics.dependence_type != "magnitude_linked"
+
+    # A genuine U-shape (sq_corr robust to dropping the extreme points) still
+    # lands as magnitude-linked nonmonotonic dependence, in lite mode.
+    rr = np.random.default_rng(1)
+    x = rr.uniform(-3, 3, size=400)
+    u = pd.DataFrame({"x": x, "y": x**2 + rr.normal(0, 0.4, size=400)})
+    u_res = profile_pair(u, "x", "y", mode="lite")
+    assert u_res.pattern == "nonmonotonic_dependence"
+    assert u_res.diagnostics.dependence_type == "magnitude_linked"
 
 
 def test_axes_outlier_sensitivity_from_trim_status():
@@ -565,6 +737,8 @@ def test_axes_are_orthogonal_to_label_outlier_driven_but_linear_mean():
     # is possible_outlier_or_leverage, but mean_shape is linear and
     # outlier_sensitivity localizes the leverage — the axes carry what the label
     # cannot. The outlier_driven cluster reads as high_leverage_cluster.
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
     df = make_relationship("outlier_driven", n=500, noise=0.1, random_state=42)
     res = profile_pair(df, "x", "y", mode="deep")
     assert res.pattern == "possible_outlier_or_leverage"
@@ -717,8 +891,12 @@ def test_mean_shape_axis_refines_curved_monotone_by_stepness():
 
 def test_mean_shape_axis_non_monotone_curve_stays_generic_curved():
     # Weak Spearman (a U-shape): smooth-vs-step does not apply, even if the
-    # stepness value happens to be high.
-    assert _mean_shape_axis(0.05, 0.05, 0.9, 1.0) == "curved"
+    # stepness value happens to be high. A genuine curve's gain is robust to
+    # dropping any one bin, so the leave-one-bin-out gain also clears the floor.
+    assert _mean_shape_axis(0.05, 0.05, 0.9, 1.0, 0.9) == "curved"
+    # But a no-trend "gain" carried by a single outlier bin (robust gain below
+    # the floor) is a heavy-tailed-Y artifact, not curvature — stays unassessed.
+    assert _mean_shape_axis(0.05, 0.05, 0.9, 1.0, 0.02) is None
 
 
 def test_mean_shape_axis_curved_without_segmentation_is_generic_curved():
@@ -884,6 +1062,42 @@ def test_bowtie_warning_attributed_to_leverage_when_signal_vanishes_on_exclusion
     assert len(warnings) == 1
     assert "same leverage issue" in warnings[0]
     assert "invisible to a simple increasing/decreasing" not in warnings[0]
+
+
+def test_bowtie_warning_not_attributed_when_bowtie_excl_missing():
+    # A bowtie signal on the full sample, but the excl-influential recompute
+    # produced bp/gq without a bowtie_ratio (its middle third degenerated), so the
+    # bowtie check never re-ran. The signal must NOT be attributed to leverage —
+    # a "constant" verdict from a check that didn't run is not evidence (Chunk 1
+    # #2 / FU-G). The independent bowtie warning is kept instead.
+    metrics = _het_metrics(
+        bp=0.4, gq=1.1, bowtie=11.0, n_influential=1, excl=(0.5, 1.1, None)
+    )
+    warnings = detect_metric_warnings(metrics)
+    assert len(warnings) == 1
+    assert "same leverage issue" not in warnings[0]
+    assert "invisible to a simple increasing/decreasing" in warnings[0]
+
+
+def test_dependence_type_monotone_gates_on_spearman_not_pearson():
+    # A leverage pair — strong Pearson, near-zero Spearman — has no monotone
+    # trend; it must not be called "monotone" on the strength of the linear
+    # artifact (Chunk 1 #9). It falls through to None.
+    assert _dependence_type_axis(0.85, 0.05, None, None, None, None) is None
+    # A genuine monotone pair (Spearman clears the weak floor) still reads monotone.
+    assert _dependence_type_axis(0.60, 0.55, None, None, None, None) == "monotone"
+
+
+def test_functional_direction_none_for_strong_linear_with_subthreshold_xi():
+    # xi is only ~0.30 at rho=0.7 for a bivariate normal, below the 0.35 bar, so
+    # an obviously functional noisy-linear pair must NOT read "neither_direction"
+    # (Chunk 1 #6). With strong |p|/|s| and both xi below the bar the axis is
+    # uninformative -> None.
+    assert _functional_direction_axis(0.30, 0.29, 0.72, 0.72) is None
+    # A circle (weak p/s, both xi weak) genuinely lacks a functional direction.
+    assert _functional_direction_axis(0.10, 0.10, 0.05, 0.05) == "neither_direction"
+    # A real functional direction still wins regardless of |p|/|s|.
+    assert _functional_direction_axis(0.60, 0.10, 0.72, 0.72) == "y_of_x"
 
 
 def test_variance_warning_stays_independent_when_signal_survives_exclusion():

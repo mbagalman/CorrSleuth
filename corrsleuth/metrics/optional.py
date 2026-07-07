@@ -22,9 +22,11 @@ def compute_distance_correlation(
     try:
         import dcor
     except ImportError:
-        if mode == "standard":
+        # Both "standard" and "deep" require the [standard] extras (deep is a
+        # superset of standard); "lite" degrades to an unavailable result.
+        if mode in ("standard", "deep"):
             raise OptionalDependencyError(
-                "dcor is required for standard mode. Run `pip install corrsleuth[standard]`"
+                f"dcor is required for {mode} mode. Run `pip install corrsleuth[standard]`"
             ) from None
         return MetricResult(name="distance_correlation", value=None, available=False)
 
@@ -77,9 +79,11 @@ def compute_mutual_information(
     try:
         from sklearn.feature_selection import mutual_info_regression
     except ImportError:
-        if mode == "standard":
+        # Both "standard" and "deep" require the [standard] extras (deep is a
+        # superset of standard); "lite" degrades to an unavailable result.
+        if mode in ("standard", "deep"):
             raise OptionalDependencyError(
-                "scikit-learn is required for standard mode. Run `pip install corrsleuth[standard]`"
+                f"scikit-learn is required for {mode} mode. Run `pip install corrsleuth[standard]`"
             ) from None
         return MetricResult(name="mutual_information", value=None, available=False)
 
