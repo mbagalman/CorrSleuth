@@ -369,22 +369,36 @@ def apply_heuristics(
     ):
         label = "nonmonotonic_dependence"
     # 5. monotonic_nonlinear
-    # Gated on Spearman alone (no Kendall fallback, unlike the leverage rule):
-    # Spearman is the primary monotone measure here, and tau-b is numerically
-    # smaller for the same signal, so adding an OR on tau would only loosen the
-    # rule. A borderline-Spearman case deliberately falls through to
-    # mixed_or_ambiguous rather than overclaiming nonlinearity. The bin
-    # lack-of-fit gain is a second, independent route: it catches smooth
-    # monotonic curves (exponential, logarithmic) and step/threshold functions
-    # whose Pearson stays close enough to Spearman that the rank-linear gap
-    # alone misses them.
-    elif (
-        s > STRONG_MAGNITUDE_THRESHOLD
-        and (
-            s - p > RANK_LINEAR_GAP_THRESHOLD
-            or (bin_lof is not None and bin_lof > BIN_LOF_R2_GAIN_THRESHOLD)
+    # Two independent routes, both requiring no Pearson/Spearman sign conflict:
+    #   - Rank-gap route: a strong Spearman well above Pearson (the classic
+    #     "monotone but not linear" signature). Gated on Spearman, not Kendall
+    #     (tau-b is numerically smaller for the same signal).
+    #   - Bin-LoF curvature route: the df-adjusted bin lack-of-fit gain (null ~0,
+    #     so a straight line is never promoted) confirms a bend the rank-linear
+    #     gap misses — smooth curves (exponential, logarithmic) and step/threshold
+    #     functions whose Pearson stays close to Spearman. When Spearman itself is
+    #     strong the raw gain suffices. When Spearman is only *moderate* but
+    #     Pearson is strong — a curve that is flat in the middle and steep in the
+    #     tails (e.g. a cubic) depresses Spearman below Pearson, so keying strength
+    #     off Spearman alone under-labels it as mixed_or_ambiguous — accept
+    #     max(|p|, |s|) as the strength while still requiring a genuine monotone
+    #     trend (Spearman >= WEAK) and the *robust* (leave-one-bin-out) gain to
+    #     confirm the bend, so a single leverage bin cannot fake the curvature.
+    elif not pearson_spearman_conflict and (
+        (s > STRONG_MAGNITUDE_THRESHOLD and s - p > RANK_LINEAR_GAP_THRESHOLD)
+        or (
+            bin_lof is not None
+            and bin_lof > BIN_LOF_R2_GAIN_THRESHOLD
+            and (
+                s > STRONG_MAGNITUDE_THRESHOLD
+                or (
+                    max(p, s) > STRONG_MAGNITUDE_THRESHOLD
+                    and s >= WEAK_MAGNITUDE_THRESHOLD
+                    and bin_lof_robust is not None
+                    and bin_lof_robust > BIN_LOF_R2_GAIN_THRESHOLD
+                )
+            )
         )
-        and not pearson_spearman_conflict
     ):
         label = "monotonic_nonlinear"
     # 6. near_linear

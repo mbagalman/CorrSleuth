@@ -198,11 +198,16 @@ the defaults.
    for `sq_corr`; the joint gate is essential, as pure noise produces many
    reversals with near-zero gain).
 5. **`monotonic_nonlinear`** — Spearman is meaningfully stronger than Pearson
-   (`|s| > 0.50` and `|s| − |p| > 0.20`), **or** `|s| > 0.50` and the bin
-   lack-of-fit diagnostic finds real curvature (`bin_lof_r2_gain > 0.05`, no
-   mode gate — added because a smooth monotonic curve or step function can
-   keep Pearson and Spearman close together despite genuine nonlinearity),
-   without a Pearson/Spearman sign conflict.
+   (`|s| > 0.50` and `|s| − |p| > 0.20`), **or** the bin lack-of-fit diagnostic
+   finds real curvature (`bin_lof_r2_gain > 0.05`, no mode gate — added because a
+   smooth monotonic curve or step function can keep Pearson and Spearman close
+   together despite genuine nonlinearity) on a strong monotone relationship.
+   "Strong" is `|s| > 0.50`, **or** `max(|p|, |s|) > 0.50` with a moderate
+   monotone trend (`|s| ≥ 0.20`) when the *robust* leave-one-bin-out gain also
+   clears the floor — this catches a curve that is flat in the middle and steep
+   in the tails (a cubic), whose compressed middle ranks pull Spearman below
+   Pearson, while the robust gain keeps a single leverage bin from faking it.
+   All routes require no Pearson/Spearman sign conflict.
 6. **`near_linear`** — Pearson and Spearman are both strong (`|p| > 0.50` and
    `|s| > 0.50`) and close (`||p|−|s|| < 0.15`), without a sign conflict.
 7. **`weak_or_no_relationship`** — all available measures are small (`|p|, |s| <
