@@ -14,6 +14,29 @@ if TYPE_CHECKING:
     from corrsleuth.metrics.bootstrap import BootstrapStability
 
 
+def _json_safe_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    """``frame.to_dict(orient="records")`` with NaN normalized to ``None``.
+
+    A metrics / bootstrap-intervals column that mixes real floats with
+    unavailable values is float-typed, so pandas stores the gaps as ``NaN`` —
+    which ``to_dict`` would emit as a bare ``float('nan')``, not JSON-compliant
+    (``json.dumps(..., allow_nan=False)`` raises). Callers read ``None`` as "no
+    value", so normalize before returning the public dict."""
+
+    def _clean(value: Any) -> Any:
+        try:
+            return None if pd.isna(value) else value
+        except (TypeError, ValueError):
+            return value  # non-scalar (e.g. a list): leave as-is
+
+    return [
+        # str(key): pandas types record keys as Hashable; column names are
+        # strings, and JSON object keys must be strings regardless.
+        {str(key): _clean(value) for key, value in record.items()}
+        for record in frame.to_dict(orient="records")
+    ]
+
+
 @dataclass
 class MetricResult:
     """
@@ -586,13 +609,13 @@ class CorrSleuthResult:
             "x": self.x_name,
             "y": self.y_name,
             "pattern": self.pattern,
-            "metrics": self.metrics.to_dict(orient="records"),
+            "metrics": _json_safe_records(self.metrics),
             "disagreement_score": self.disagreement_score,
             "diagnostics": self.diagnostics.to_dict(),
             "bootstrap_intervals": (
                 None
                 if self.bootstrap_intervals is None
-                else self.bootstrap_intervals.to_dict(orient="records")
+                else _json_safe_records(self.bootstrap_intervals)
             ),
             "bootstrap_stability": (
                 None

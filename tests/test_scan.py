@@ -543,6 +543,25 @@ def test_target_report_to_markdown_lists_reliability_warning_section():
     assert "clean" not in section
 
 
+def test_target_report_to_markdown_escapes_warnings_once():
+    """Warnings in the pattern-section table are escaped exactly once by
+    markdown_table. They must not be pre-escaped as well, or metacharacters like
+    the underscores in metric names or the `<` in 'ratio (< 0.05)' render with
+    doubled backslashes."""
+    rng = np.random.default_rng(0)
+    n = 60
+    df = pd.DataFrame(
+        {"target": rng.normal(size=n), "lowcard": np.array([1.0, 2.0] * (n // 2))}
+    )
+
+    markdown = scan_target(df, "target").to_markdown()
+
+    # A low-cardinality column emits a 'unique value ratio (< 0.05)' warning; the
+    # '<' is escaped once as '\<', never doubled to '\\<'.
+    assert "\\<" in markdown
+    assert "\\\\" not in markdown  # no doubled backslash anywhere
+
+
 def test_target_report_to_markdown_omits_empty_cross_cutting_sections():
     rng = np.random.default_rng(0)
     n = 200

@@ -372,6 +372,30 @@ def test_serialization():
     assert d["bootstrap_intervals"] is None
 
 
+def test_to_dict_normalizes_unavailable_metrics_to_none_not_nan():
+    """An unavailable metric value in the metrics table is float-NaN inside the
+    frame (mixed float column), but to_dict() must emit None, not a bare
+    float('nan') that is invalid under strict JSON."""
+    import json
+    import math
+
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
+    # n=3 standard mode: mutual information is not computable and lands as NaN.
+    res = profile_pair(
+        pd.DataFrame({"x": [1, 2, 3], "y": [1, 3, 2]}), "x", "y", mode="standard"
+    )
+    d = res.to_dict()
+
+    mi = next(r for r in d["metrics"] if r["metric"] == "mutual_information")
+    assert mi["value"] is None
+    assert not any(
+        isinstance(r["value"], float) and math.isnan(r["value"]) for r in d["metrics"]
+    )
+    # The whole public dict is strict-JSON serializable (rejects NaN/Infinity).
+    json.dumps(d, allow_nan=False)
+
+
 def test_result_exposes_structured_diagnostics():
     df = pd.DataFrame({"x": [1, 2, 3, 4, 5], "y": [1, 2, 3, 4, 5]})
     res = profile_pair(df, "x", "y")

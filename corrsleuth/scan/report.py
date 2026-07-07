@@ -20,7 +20,6 @@ from corrsleuth.exceptions import InputError
 from corrsleuth.result import MetricDiagnostics
 from corrsleuth.scan.core import TargetScanEntry, metrics_map
 from corrsleuth.utils.markdown import (
-    escape_markdown_cell,
     escape_markdown_code_span,
     format_markdown_value,
     markdown_table,
@@ -515,9 +514,9 @@ class CorrSleuthTargetReport:
                     format_markdown_value(metrics.get("pearson")),
                     format_markdown_value(metrics.get("spearman")),
                     format_markdown_value(entry.result_data.disagreement_score),
-                    "; ".join(
-                        escape_markdown_cell(w) for w in entry.result_data.warnings
-                    )
+                    # Join the warnings raw; markdown_table escapes every cell once
+                    # (double-escaping here rendered underscores as literal `\_`).
+                    "; ".join(entry.result_data.warnings)
                     if entry.result_data.warnings
                     else "",
                 ]
