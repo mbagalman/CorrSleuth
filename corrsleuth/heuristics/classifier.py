@@ -151,6 +151,58 @@ OSCILLATION_MIN_REVERSALS = 2
 #: now miss ~13% of sinusoids.)
 OSCILLATION_BIN_LOF_FLOOR = 0.15
 
+# --- Two-group / mixture split gate (see metrics/mixture.py) -----------------
+# All five constants below gate ``dependence_type = "two_group_shift"`` and its
+# warning *jointly* — the calibration sweep (validation/cluster_split_sweep.py)
+# measured 0 fires in 680 negative trials (17 families x 4 sizes x 10 seeds:
+# bivariate normals, heavy-tailed/skewed linear links, curves, steps and
+# changepoints *with within-segment slopes*, heteroscedastic fans, leverage,
+# sparse subgroups, noise) versus 90-100% fires for two-blob mixtures separated
+# by >= 4 within-group stds at every size and share down to a 12% subpopulation.
+# Blobs at 3 stds (visibly overlapping) fire only partially — a deliberate,
+# conservative miss. A *flat step of a continuous variable* also fires: it is
+# the same joint distribution as a two-group mixture (two separated groups,
+# mean shift, no within-group trend), so the warning text presents both
+# readings instead of overclaiming "clusters".
+
+#: Variance share of the best two-group split of the association-axis
+#: projection (``cluster_split_r2``) that must be exceeded. An elliptical
+#: (unimodal) cloud is structurally capped near 0.64 (normal, asymptotically
+#: 2/pi) to 0.75 (uniform): bivariate normals measured 0.60-0.72 at every n on
+#: the sweep, so 0.70 excludes them with the valley gate as backstop. Strongly
+#: bent shapes (sigmoid, step, changepoint) do exceed it (up to ~0.87) — those
+#: are excluded by the within-group-collapse and valley gates instead.
+CLUSTER_SPLIT_R2_FLOOR = 0.70
+
+#: Ceiling on ``cluster_valley_share`` — the fraction of rows within
+#: +/-0.15 std of the split boundary. Unimodal shapes hold ~0.09-0.18 there
+#: (their density peaks where 2-means splits them); genuinely separated groups
+#: leave under 0.03 ("almost no points bridging the gap"). Not sufficient
+#: alone: a lognormal tail or a lattice can fake an empty band — the joint
+#: gate's other floors cover those.
+CLUSTER_VALLEY_SHARE_CEILING = 0.03
+
+#: Minimum share of rows in the smaller group. Distinguishes a genuine
+#: subpopulation from a handful of leverage points (the sweep's 2% leverage
+#: cluster measures ~0.02 here and belongs to the leverage diagnostics).
+CLUSTER_MIN_SHARE_FLOOR = 0.10
+
+#: Minimum pooled |Pearson| before the two-group reading is worth reporting —
+#: the warning's claim is "this correlation is carried by the split", which
+#: needs a correlation to be carried. Matches the 0.35 scale used by
+#: :data:`SQ_CORR_THRESHOLD` / :data:`NONMONOTONIC_DC_THRESHOLD`.
+CLUSTER_GLOBAL_PEARSON_FLOOR = 0.35
+
+#: Ceiling on ``pearson_within_cluster`` as a fraction of the pooled |Pearson|:
+#: the within-group association must have collapsed to under 40% of the pooled
+#: value. This is the gate that separates a mixture/flat-step (within ~0.01-0.05
+#: on the sweep) from steps, saturations, changepoints, and monotone curves that
+#: keep a within-segment slope (within 0.42-0.90). A correlated *elliptical*
+#: cloud also measures a small within value (splitting on the principal axis
+#: removes the shared variance — a restriction-of-range effect), but those are
+#: excluded by the split-R2 and valley gates instead; every gate is necessary.
+CLUSTER_WITHIN_PEARSON_RATIO_CEILING = 0.40
+
 #: Breusch-Pagan p-value below which the residual variance is treated as
 #: non-constant, for the ``variance_shape`` secondary axis (not the primary
 #: cascade). Unlike the effect-size-band thresholds, this is a real hypothesis
@@ -612,6 +664,31 @@ def detect_metric_warnings(
             f"inspect the residuals and consider adding a harmonic/periodic term."
         )
 
+    # Two-group mean shift (see metrics/mixture.py and _is_two_group_shift): the
+    # pooled correlation is carried by the separation between two well-separated
+    # groups of rows, with the association collapsed inside each group. From one
+    # pair a subpopulation mixture and a flat threshold effect are the same joint
+    # distribution, so the warning names both readings.
+    p_abs = abs(pearson) if pearson is not None else None
+    cl_r2 = _finite_metric_value(metrics.get("cluster_split_r2"))
+    cl_valley = _finite_metric_value(metrics.get("cluster_valley_share"))
+    cl_share = _finite_metric_value(metrics.get("cluster_min_share"))
+    cl_within = _finite_metric_value(metrics.get("pearson_within_cluster"))
+    if _is_two_group_shift(p_abs, cl_r2, cl_valley, cl_share, cl_within):
+        assert p_abs is not None and cl_share is not None and cl_within is not None
+        warnings.append(
+            f"The overall correlation (|pearson| = {p_abs:.2f}) appears to be "
+            f"carried almost entirely by the separation between two "
+            f"well-separated groups of rows ({cl_share:.0%} vs "
+            f"{1 - cl_share:.0%}, with an empty gap between them along the "
+            f"association axis); within each group the correlation is only "
+            f"~{cl_within:.2f}. This is the signature of a mixture of two "
+            f"subpopulations (a lurking grouping variable) or a flat threshold "
+            f"effect -- the pooled correlation describes the group separation, "
+            f"not a continuous x-y trend. Identify the grouping and analyze the "
+            f"groups separately before relying on the pooled value."
+        )
+
     return warnings
 
 
@@ -657,6 +734,42 @@ def _is_oscillating_trend(
         and reversals >= OSCILLATION_MIN_REVERSALS
         and bin_lof_robust is not None
         and bin_lof_robust > OSCILLATION_BIN_LOF_FLOOR
+    )
+
+
+def _is_two_group_shift(
+    p: float | None,
+    split_r2: float | None,
+    valley_share: float | None,
+    min_share: float | None,
+    within_pearson: float | None,
+) -> bool:
+    """True when the pooled correlation is carried by a **two-group mean
+    shift**: the association-axis projection splits into two well-separated
+    groups (high split R2, near-empty valley at the boundary), the smaller
+    group is a real subpopulation (not a few leverage points), and the
+    association *collapses* inside the groups.
+
+    All gates are joint — see the constants above for what each one excludes
+    and validation/cluster_split_sweep.py for the calibration (0 fires in 680
+    negative trials). ``within_pearson`` unavailable (a group too small or
+    constant) means the collapse cannot be verified, so the answer is False.
+
+    Statistical honesty: from a single pair, a mixture of two subpopulations
+    and a *flat step* of a continuous variable are the same joint distribution;
+    consumers of this predicate present both readings.
+    """
+    return (
+        p is not None
+        and p >= CLUSTER_GLOBAL_PEARSON_FLOOR
+        and split_r2 is not None
+        and split_r2 > CLUSTER_SPLIT_R2_FLOOR
+        and valley_share is not None
+        and valley_share < CLUSTER_VALLEY_SHARE_CEILING
+        and min_share is not None
+        and min_share >= CLUSTER_MIN_SHARE_FLOOR
+        and within_pearson is not None
+        and within_pearson <= CLUSTER_WITHIN_PEARSON_RATIO_CEILING * p
     )
 
 
@@ -798,10 +911,14 @@ def _dependence_type_axis(
     reversals: float | None = None,
     bin_lof_robust: float | None = None,
     sq_corr_robust: float | None = None,
+    cluster_split_r2: float | None = None,
+    cluster_valley_share: float | None = None,
+    cluster_min_share: float | None = None,
+    pearson_within_cluster: float | None = None,
 ) -> str | None:
     """How do the variables depend on each other — monotonically, through
-    magnitude, as an oscillation, or as a closed loop? (``None`` when nothing
-    is detected.)"""
+    magnitude, as an oscillation, as a closed loop, or as a two-group mean
+    shift? (``None`` when nothing is detected.)"""
     if p is None or s is None:
         return None
     monotone_weak = (
@@ -844,6 +961,20 @@ def _dependence_type_axis(
         ):
             return "closed_loop_or_multivalued"
         return "magnitude_linked" if sq_dependence else "nonmonotone"
+    # A two-group mean shift is checked before the generic "monotone": both
+    # describe a strong rank trend, but "monotone" implies a continuous x-y
+    # relationship while the split diagnostics show the association is carried
+    # by the separation between two groups (with the within-group association
+    # collapsed) — the more specific, more actionable description. Mirrors the
+    # oscillation-before-nonmonotone ordering above.
+    if _is_two_group_shift(
+        p,
+        cluster_split_r2,
+        cluster_valley_share,
+        cluster_min_share,
+        pearson_within_cluster,
+    ):
+        return "two_group_shift"
     # "monotone" describes a rank trend, so gate on Spearman, not max(|p|, |s|):
     # a leverage pair (strong Pearson, near-zero Spearman) has no monotone trend
     # and must not be called "monotone" on the strength of the linear artifact —
@@ -943,6 +1074,10 @@ def derive_diagnostic_axes(
     bowtie_ratio = _finite_metric_value(metrics.get("bowtie_ratio"))
     segment_stepness = _finite_metric_value(metrics.get("segment_stepness"))
     n_influential = _finite_metric_value(metrics.get("n_influential_points"))
+    cluster_split_r2 = _finite_metric_value(metrics.get("cluster_split_r2"))
+    cluster_valley_share = _finite_metric_value(metrics.get("cluster_valley_share"))
+    cluster_min_share = _finite_metric_value(metrics.get("cluster_min_share"))
+    pearson_within_cluster = _finite_metric_value(metrics.get("pearson_within_cluster"))
 
     return {
         "mean_shape": _mean_shape_axis(
@@ -962,6 +1097,10 @@ def derive_diagnostic_axes(
             reversals,
             bin_lof_robust,
             sq_corr_robust,
+            cluster_split_r2,
+            cluster_valley_share,
+            cluster_min_share,
+            pearson_within_cluster,
         ),
         "outlier_sensitivity": _outlier_sensitivity_axis(outlier_status, n_influential),
         "functional_direction": _functional_direction_axis(xi_fwd, xi_rev, p, s),
