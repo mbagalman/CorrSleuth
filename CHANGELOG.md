@@ -302,6 +302,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Pearson stable. Uses the softer Cook & Weisberg `D > 0.5` cutoff (a masked
   outlier cluster deflates each point's Cook's distance below the classical
   `D > 1`).
+- **Two-group / mixture detection** (`dependence_type = "two_group_shift"`,
+  new `corrsleuth/metrics/mixture.py`, no new dependency). A pooled correlation
+  can be carried almost entirely by a *between-group mean shift*: two
+  well-separated clouds of rows with little or no association inside either —
+  the lurking-grouping-variable / mixture situation (and the aggregation trap
+  behind Simpson-style reversals). `compute_cluster_split` measures the
+  ingredients on the association-axis projection (the first principal component
+  of the z-scored pair): `cluster_split_r2` (variance share of the best
+  two-group split — exact 1-D 2-means via a prefix-sum scan; a unimodal cloud is
+  structurally capped near 0.64–0.75), `cluster_valley_share` (occupancy of the
+  band around the split boundary — near zero when "almost no points bridge the
+  gap"), `cluster_min_share` (subpopulation vs. leverage handful), and
+  `pearson_within_cluster` (how much association survives inside the groups).
+  All four are on `result.diagnostics` and every render surface. When the five
+  jointly-calibrated gates hold (`validation/cluster_split_sweep.py`: 0 fires in
+  680 negative trials across bivariate normals, skewed/heavy-tailed links,
+  curves, sloped steps/changepoints, heteroscedastic fans, leverage clusters,
+  and sparse subgroups; 90–100% detection of blob mixtures ≥ 4 within-group
+  stds apart down to a 12% subpopulation), the `dependence_type` axis reads
+  `two_group_shift` (in preference to the generic `monotone`) and a warning
+  explains that the pooled correlation describes the group separation, not a
+  continuous trend — advising to identify the grouping and analyze the groups
+  separately. Statistical honesty note: from a single pair, a two-subpopulation
+  mixture and a *flat threshold effect* are the same joint distribution, so the
+  warning presents both readings; a step that keeps a within-segment slope keeps
+  a high within-group Pearson and is not flagged. Lite-computable (numpy only);
+  withheld for n < 100 or coarse discrete data (< 10 distinct values), where a
+  lattice fakes an empty valley. The primary label is unchanged — this refines
+  the secondary axis and adds the warning.
 - **Compound trend + oscillation detection** (`mean_shape = "oscillating_trend"`,
   no new dependency or threshold). A strong monotone trend whose binned
   conditional means still reverse direction two or more times — robustly — is now

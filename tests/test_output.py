@@ -537,6 +537,39 @@ def test_sq_corr_robust_surfaced_on_diagnostics_and_every_output_form():
     assert escape_markdown_cell("sq_corr_robust") in res.to_markdown()
 
 
+def test_cluster_split_diagnostics_surfaced_on_every_output_form():
+    """The two-group split diagnostics are stored on result.diagnostics and
+    appear in summary, markdown, to_dict, and to_frame."""
+    rng = np.random.default_rng(0)
+    n = 400
+    n1 = n // 2
+    x = np.concatenate([rng.normal(0, 1, n1), rng.normal(5, 1, n - n1)])
+    y = np.concatenate([rng.normal(0, 1, n1), rng.normal(5, 1, n - n1)])
+    res = profile_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")  # lite mode
+
+    d = res.diagnostics
+    assert d.cluster_split_r2 > 0.85
+    assert d.cluster_valley_share < 0.03
+    assert d.cluster_min_share == pytest.approx(0.5, abs=0.05)
+    assert d.pearson_within_cluster < 0.15
+
+    nested = res.to_dict()["diagnostics"]
+    assert nested["cluster_split_r2"] == pytest.approx(d.cluster_split_r2)
+    assert nested["pearson_within_cluster"] == pytest.approx(d.pearson_within_cluster)
+
+    frame = res.to_frame()
+    for col in (
+        "diagnostic_cluster_split_r2",
+        "diagnostic_cluster_valley_share",
+        "diagnostic_cluster_min_share",
+        "diagnostic_pearson_within_cluster",
+    ):
+        assert col in frame.columns
+
+    assert "cluster_split_r2" in res.summary()
+    assert escape_markdown_cell("pearson_within_cluster") in res.to_markdown()
+
+
 def test_secondary_axes_default_to_na_when_not_assessable():
     """A constant input can populate no axes; they render as NA rather than
     raising, and serialize as None."""

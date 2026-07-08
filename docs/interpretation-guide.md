@@ -453,7 +453,7 @@ available metrics it is `None` (rendered `NA`).
 |---|---|---|
 | `mean_shape` | Is E[Y\|X] a straight line, a smooth curve, a step, or a trend with a superimposed oscillation? | `linear`, `smooth_curve`, `step_or_threshold`, `oscillating_trend`, `curved`, `None` |
 | `variance_shape` | Does the spread of Y change with X? | `constant`, `increasing_spread`, `decreasing_spread`, `edge_high_spread`, `center_high_spread`, `None` |
-| `dependence_type` | What kind of dependence is it? | `monotone`, `magnitude_linked`, `oscillating`, `nonmonotone`, `closed_loop_or_multivalued`, `None` |
+| `dependence_type` | What kind of dependence is it? | `monotone`, `magnitude_linked`, `oscillating`, `nonmonotone`, `closed_loop_or_multivalued`, `two_group_shift`, `None` |
 | `outlier_sensitivity` | Do a few rows drive the summary? | `low`, `single_point_driven`, `high_leverage_cluster`, `high`, `unavailable` |
 | `functional_direction` | Which variable is a function of the other? | `y_of_x`, `x_of_y`, `both_directions`, `neither_direction`, `None` |
 
@@ -536,6 +536,29 @@ Notes on the less-obvious values:
   *neither variable is a function of the other* (points on a circle or ring).
   Requires `mode="deep"` (it is confirmed with Chatterjee's ξ in both
   directions); in lighter modes such a pair reads as `magnitude_linked`.
+- **`dependence_type = two_group_shift`** — the pooled correlation is carried
+  almost entirely by the separation between **two well-separated groups of
+  rows**, with the association *collapsed inside each group*. Detected from the
+  two-group split diagnostics (`metrics/mixture.py`, lite-computable): the best
+  two-group split of the association-axis projection explains most of its
+  variance (`cluster_split_r2 > 0.70` — a unimodal elliptical cloud is capped
+  near 0.64), the band around the split boundary is nearly empty
+  (`cluster_valley_share < 0.03` — "no points bridging the gap"), the smaller
+  group is a real subpopulation (`cluster_min_share ≥ 0.10`, distinguishing it
+  from a leverage handful), and the within-group `|Pearson|` has collapsed to
+  under 40% of the pooled value (`pearson_within_cluster`). Reported in
+  preference to the generic `monotone`, and paired with a warning: the pooled
+  correlation describes the *group separation*, not a continuous x-y trend —
+  the classic lurking-grouping-variable / mixture situation (and the
+  aggregation trap behind Simpson-style reversals). **A caveat on naming:**
+  from a single pair, a mixture of two subpopulations and a *flat threshold
+  effect* (a step of a continuous variable with no within-segment slope) are
+  the same joint distribution, so the warning presents both readings; a step
+  that keeps a within-segment slope keeps a high `pearson_within_cluster` and
+  is *not* flagged. All four numbers live on `result.diagnostics`; thresholds
+  were calibrated in `validation/cluster_split_sweep.py` (0 fires in 680
+  negative trials across bivariate normals, skewed/heavy-tailed links, curves,
+  sloped steps, heteroscedastic fans, leverage, and sparse subgroups).
 - **`functional_direction`** comes from Chatterjee's ξ, so it is populated only
   in `mode="deep"` (`None` otherwise). `y_of_x` means Y is a (noisy) function
   of X but not the reverse — the signature of a one-way mapping like Y = X².

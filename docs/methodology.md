@@ -265,7 +265,16 @@ smooth curve's segments are sloped. A strong monotone trend whose binned means
 still reverse direction repeatedly (robustly) reads instead as
 `oscillating_trend` — a trend with a superimposed wave (compound trend + periodic
 residual), detected before the step/smooth split so the wave is not misread as a
-step. `outlier_sensitivity` refines the
+step. `dependence_type` can also read `two_group_shift`
+(`metrics/mixture.py`): the pooled correlation is carried almost entirely by
+the separation between two well-separated groups of rows — a high-variance
+two-group split of the association-axis projection with an empty valley at the
+boundary, a smaller group big enough to be a subpopulation rather than
+leverage, and the within-group correlation collapsed. That is the
+lurking-grouping-variable / mixture signature (the aggregation trap behind
+Simpson-style reversals); since a flat threshold effect produces the same
+joint distribution, the paired warning presents both readings.
+`outlier_sensitivity` refines the
 trim-sensitivity verdict with row-level Cook's distance (`metrics/influence.py`)
 into `single_point_driven` versus `high_leverage_cluster`; because Cook's
 distance has no 1%-trim blind spot, it can flag a leverage cluster the primary

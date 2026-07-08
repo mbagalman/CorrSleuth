@@ -102,9 +102,16 @@ class MetricDiagnostics:
     influence
     diagnostics (``max_cook_distance``, the largest Cook's distance;
     ``n_influential_points``, how many rows exceed the influence cutoff) — see
-    ``corrsleuth/metrics/influence.py``. Gap, shape, variance, segmentation, and
-    influence fields are ``None`` when the metrics they depend on are
-    unavailable.
+    ``corrsleuth/metrics/influence.py`` — and the two-group / mixture split
+    diagnostics (``cluster_split_r2``, the variance share explained by the best
+    two-group split of the association-axis projection; ``cluster_valley_share``,
+    the fraction of rows in the band around the split boundary — near zero when
+    two groups are genuinely separated; ``cluster_min_share``, the smaller
+    group's fraction of rows; ``pearson_within_cluster``, the size-weighted
+    ``|Pearson|`` inside the groups — how much association survives the split) —
+    see ``corrsleuth/metrics/mixture.py``. Gap, shape, variance, segmentation,
+    influence, and cluster fields are ``None`` when the metrics they depend on
+    are unavailable.
 
     The final five fields are the **secondary diagnostic axes** — coarse
     categorical summaries describing orthogonal properties of the relationship
@@ -137,6 +144,10 @@ class MetricDiagnostics:
     breakpoint_x: float | None = None
     max_cook_distance: float | None = None
     n_influential_points: int | None = None
+    cluster_split_r2: float | None = None
+    cluster_valley_share: float | None = None
+    cluster_min_share: float | None = None
+    pearson_within_cluster: float | None = None
     mean_shape: str | None = None
     variance_shape: str | None = None
     dependence_type: str | None = None
@@ -195,6 +206,10 @@ class CorrSleuthResult:
             breakpoint_x=None,
             max_cook_distance=None,
             n_influential_points=None,
+            cluster_split_r2=None,
+            cluster_valley_share=None,
+            cluster_min_share=None,
+            pearson_within_cluster=None,
             mean_shape=None,
             variance_shape=None,
             dependence_type=None,
@@ -275,6 +290,10 @@ class CorrSleuthResult:
             ("breakpoint_x", self._format_value(diag.breakpoint_x)),
             ("max_cook_distance", self._format_value(diag.max_cook_distance)),
             ("n_influential_points", self._format_count(diag.n_influential_points)),
+            ("cluster_split_r2", self._format_value(diag.cluster_split_r2)),
+            ("cluster_valley_share", self._format_value(diag.cluster_valley_share)),
+            ("cluster_min_share", self._format_value(diag.cluster_min_share)),
+            ("pearson_within_cluster", self._format_value(diag.pearson_within_cluster)),
         ]
         diag_width = max(len(label) for label, _ in diag_rows)
         lines.extend(["", "Diagnostics:"])
@@ -502,6 +521,22 @@ class CorrSleuthResult:
                     [
                         "n_influential_points",
                         self._format_count(self.diagnostics.n_influential_points),
+                    ],
+                    [
+                        "cluster_split_r2",
+                        format_markdown_value(self.diagnostics.cluster_split_r2),
+                    ],
+                    [
+                        "cluster_valley_share",
+                        format_markdown_value(self.diagnostics.cluster_valley_share),
+                    ],
+                    [
+                        "cluster_min_share",
+                        format_markdown_value(self.diagnostics.cluster_min_share),
+                    ],
+                    [
+                        "pearson_within_cluster",
+                        format_markdown_value(self.diagnostics.pearson_within_cluster),
                     ],
                 ],
             ),

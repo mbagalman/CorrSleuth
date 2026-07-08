@@ -16,6 +16,7 @@ from corrsleuth.metrics import (
     compute_bootstrap,
     compute_chatterjee_xi,
     compute_chatterjee_xi_reverse,
+    compute_cluster_split,
     compute_distance_correlation,
     compute_heteroscedasticity,
     compute_heteroscedasticity_excluding,
@@ -58,6 +59,7 @@ def _build_diagnostics(
     heteroscedasticity=None,
     segmentation=None,
     influence=None,
+    cluster_split=None,
     axes: dict[str, str | None] | None = None,
 ) -> MetricDiagnostics:
     pearson = _metric_value(metrics_map, "pearson")
@@ -103,6 +105,11 @@ def _build_diagnostics(
     influence = influence or {}
     max_cook_result = influence.get("max_cook_distance")
     n_influential_result = influence.get("n_influential_points")
+    cluster_split = cluster_split or {}
+    cluster_r2_result = cluster_split.get("cluster_split_r2")
+    cluster_valley_result = cluster_split.get("cluster_valley_share")
+    cluster_share_result = cluster_split.get("cluster_min_share")
+    within_cluster_result = cluster_split.get("pearson_within_cluster")
     return MetricDiagnostics(
         rank_linear_gap=rank_linear_gap,
         pearson_spearman_signed_gap=pearson_spearman_signed_gap,
@@ -132,6 +139,14 @@ def _build_diagnostics(
         max_cook_distance=max_cook_result.value if max_cook_result else None,
         n_influential_points=int(n_influential_result.value)
         if (n_influential_result and n_influential_result.value is not None)
+        else None,
+        cluster_split_r2=cluster_r2_result.value if cluster_r2_result else None,
+        cluster_valley_share=cluster_valley_result.value
+        if cluster_valley_result
+        else None,
+        cluster_min_share=cluster_share_result.value if cluster_share_result else None,
+        pearson_within_cluster=within_cluster_result.value
+        if within_cluster_result
         else None,
         mean_shape=axes.get("mean_shape"),
         variance_shape=axes.get("variance_shape"),
@@ -290,6 +305,10 @@ def profile_pair(
     heteroscedasticity = compute_heteroscedasticity(pair)
     segmentation = compute_segmentation(pair)
     influence = compute_influence(pair)
+    # Two-group / mixture split diagnostics (metrics/mixture.py): is the pooled
+    # correlation carried by a between-group mean shift? Feeds the
+    # dependence_type axis and the two-group warning; lite-computable.
+    cluster_split = compute_cluster_split(pair)
 
     # Re-test heteroscedasticity excluding the Cook's-flagged row(s), but only
     # when there is one to exclude (n_influential_points >= 1) -- this keeps
@@ -372,6 +391,7 @@ def profile_pair(
         **heteroscedasticity,
         **segmentation,
         **influence,
+        **cluster_split,
         **heteroscedasticity_excl_influential,
     }
     heuristic_result = apply_heuristics(cascade_metrics, pair.flags, pair.n_used)
@@ -432,6 +452,7 @@ def profile_pair(
         heteroscedasticity=heteroscedasticity,
         segmentation=segmentation,
         influence=influence,
+        cluster_split=cluster_split,
         axes=axes,
     )
     bootstrap_result = compute_bootstrap(

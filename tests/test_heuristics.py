@@ -1337,3 +1337,90 @@ def test_no_exclusion_recomputation_when_outlier_sensitivity_low():
     assert res.diagnostics.variance_shape == "increasing_spread"
     assert any("Pearson describes the center trend" in w for w in res.warnings)
     assert not any("same leverage issue" in w for w in res.warnings)
+
+
+def test_axes_two_group_shift_when_all_gates_hold():
+    """A strong pooled Pearson carried by a two-group mean shift (high split R2,
+    empty valley, balanced groups, collapsed within-group Pearson) reads as
+    dependence_type=two_group_shift -- the more specific description that
+    overrides the generic monotone."""
+    metrics = _axis_metrics(
+        pearson=0.78,
+        spearman=0.75,
+        cluster_split_r2=0.88,
+        cluster_valley_share=0.0,
+        cluster_min_share=0.5,
+        pearson_within_cluster=0.02,
+    )
+    axes = derive_diagnostic_axes(metrics, "monotonic_nonlinear", "stable")
+    assert axes["dependence_type"] == "two_group_shift"
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"pearson_within_cluster": 0.6},  # trend survives inside groups
+        {"cluster_min_share": 0.02},  # leverage-sized "group"
+        {"cluster_valley_share": 0.12},  # no empty gap (unimodal)
+        {"cluster_split_r2": 0.63},  # split explains too little
+    ],
+)
+def test_axes_two_group_shift_requires_every_gate(override):
+    values = dict(
+        pearson=0.78,
+        spearman=0.75,
+        cluster_split_r2=0.88,
+        cluster_valley_share=0.0,
+        cluster_min_share=0.5,
+        pearson_within_cluster=0.02,
+    )
+    values.update(override)
+    axes = derive_diagnostic_axes(
+        _axis_metrics(**values), "monotonic_nonlinear", "stable"
+    )
+    assert axes["dependence_type"] == "monotone"
+
+
+def test_axes_two_group_shift_needs_within_pearson_available():
+    """When the within-group Pearson could not be computed (a group too small or
+    constant) the collapse cannot be verified, so the axis stays monotone."""
+    metrics = _axis_metrics(
+        pearson=0.78,
+        spearman=0.75,
+        cluster_split_r2=0.88,
+        cluster_valley_share=0.0,
+        cluster_min_share=0.5,
+    )
+    axes = derive_diagnostic_axes(metrics, "monotonic_nonlinear", "stable")
+    assert axes["dependence_type"] == "monotone"
+
+
+def test_two_group_shift_end_to_end_and_warning():
+    """Two separated diagonal blobs profile as dependence_type=two_group_shift
+    with the mixture/threshold warning; a plain correlated normal pair and a
+    step that keeps a within-segment slope do not."""
+    rng = np.random.default_rng(7)
+    n = 500
+    n1 = n // 2
+    x = np.concatenate([rng.normal(0, 1, n1), rng.normal(5, 1, n - n1)])
+    y = np.concatenate([rng.normal(0, 1, n1), rng.normal(5, 1, n - n1)])
+    res = profile_pair(pd.DataFrame({"x": x, "y": y}), "x", "y", mode="lite")
+
+    assert res.diagnostics.dependence_type == "two_group_shift"
+    assert res.diagnostics.cluster_split_r2 > 0.85
+    assert res.diagnostics.pearson_within_cluster < 0.15
+    assert any("two" in w and "groups of rows" in w for w in res.warnings)
+
+    z = rng.normal(size=n)
+    bvn = pd.DataFrame({"x": z, "y": 0.8 * z + 0.6 * rng.normal(size=n)})
+    res_bvn = profile_pair(bvn, "x", "y", mode="lite")
+    assert res_bvn.diagnostics.dependence_type == "monotone"
+    assert not any("groups of rows" in w for w in res_bvn.warnings)
+
+    u = rng.uniform(-3, 3, n)
+    step = pd.DataFrame(
+        {"x": u, "y": np.where(u > 0, 1.5 + 0.5 * u, 0.5 * u) + rng.normal(0, 0.2, n)}
+    )
+    res_step = profile_pair(step, "x", "y", mode="lite")
+    assert res_step.diagnostics.dependence_type != "two_group_shift"
+    assert not any("groups of rows" in w for w in res_step.warnings)

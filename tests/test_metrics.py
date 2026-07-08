@@ -17,6 +17,7 @@ from corrsleuth.metrics import (
     compute_biweight_midcorrelation,
     compute_chatterjee_xi,
     compute_chatterjee_xi_reverse,
+    compute_cluster_split,
     compute_distance_correlation,
     compute_heteroscedasticity,
     compute_heteroscedasticity_excluding,
@@ -1328,3 +1329,81 @@ def test_heteroscedasticity_excluding_none_when_subset_drops_below_min_n():
     assert result["bp_pvalue"].value is None
     assert result["gq_ratio"].value is None
     assert result["bowtie_ratio"].value is None
+
+
+# --- Two-group / mixture split diagnostics (cluster_split_*) ---
+
+
+def _two_blob_pair(n=500, sep=5.0, frac=0.5, within=0.0, seed=0):
+    """Two diagonal Gaussian blobs `sep` within-stds apart; `within` adds a
+    within-group linear trend."""
+    rng = np.random.default_rng(seed)
+    n1 = int(n * frac)
+    x = np.concatenate([rng.normal(0, 1, n1), rng.normal(sep, 1, n - n1)])
+    y = within * x + np.concatenate([rng.normal(0, 1, n1), rng.normal(sep, 1, n - n1)])
+    return validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+
+def test_cluster_split_detects_two_separated_blobs():
+    result = compute_cluster_split(_two_blob_pair())
+
+    assert result["cluster_split_r2"].value > 0.85
+    # "Almost no points bridging the gap": the boundary band is near-empty.
+    assert result["cluster_valley_share"].value < 0.03
+    assert result["cluster_min_share"].value == pytest.approx(0.5, abs=0.05)
+    # The association collapses inside the groups (it is pure between-group shift).
+    assert result["pearson_within_cluster"].value < 0.15
+
+
+def test_cluster_split_unimodal_correlated_pair_stays_below_gates():
+    """A plain bivariate normal is the null: its best two-group split explains
+    at most ~0.64 of the projection variance (2/pi asymptotically) and its
+    density peaks exactly where 2-means splits it, so the valley band is full."""
+    rng = np.random.default_rng(1)
+    n = 500
+    z = rng.normal(size=n)
+    y = 0.7 * z + np.sqrt(1 - 0.49) * rng.normal(size=n)
+    pair = validate_pair(pd.DataFrame({"x": z, "y": y}), "x", "y")
+
+    result = compute_cluster_split(pair)
+    assert result["cluster_split_r2"].value < 0.70
+    assert result["cluster_valley_share"].value > 0.05
+
+
+def test_cluster_split_unavailable_below_min_n_and_for_constant():
+    rng = np.random.default_rng(2)
+    small = validate_pair(
+        pd.DataFrame({"x": rng.normal(size=60), "y": rng.normal(size=60)}), "x", "y"
+    )
+    for res in compute_cluster_split(small).values():
+        assert res.value is None
+
+    const = validate_pair(
+        pd.DataFrame({"x": [3.0] * 200, "y": list(range(200))}), "x", "y"
+    )
+    for res in compute_cluster_split(const).values():
+        assert res.value is None
+
+
+def test_cluster_split_unavailable_for_coarse_discrete_data():
+    """Ordinal/Likert data quantizes the projection onto a lattice whose empty
+    inter-level spacing fakes a perfect valley, so the diagnostics are withheld
+    (the tie-rate validation warnings already cover such columns)."""
+    rng = np.random.default_rng(3)
+    n = 400
+    x = rng.integers(1, 6, n).astype(float)
+    y = np.clip(x + rng.integers(-1, 2, n), 1, 5).astype(float)
+    pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
+
+    for res in compute_cluster_split(pair).values():
+        assert res.value is None
+
+
+def test_cluster_split_within_pearson_reports_surviving_trend():
+    """Blobs with a genuine within-group slope keep a high within-group Pearson
+    -- the value that lets the classifier tell a mixture-driven correlation from
+    clusters riding on a real trend."""
+    result = compute_cluster_split(_two_blob_pair(within=0.8, seed=4))
+
+    assert result["cluster_split_r2"].value > 0.70  # the split is still there
+    assert result["pearson_within_cluster"].value > 0.5  # ...but the trend survives
