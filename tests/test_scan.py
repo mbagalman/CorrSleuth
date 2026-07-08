@@ -1335,3 +1335,86 @@ def test_scan_target_entries_capture_both_skipped_and_profiled():
     label_row = frame[frame["variable"] == "label"].iloc[0]
     assert label_row["status"] == "skipped"
     assert pd.isna(label_row["pattern"])
+
+
+def _skewed_radial_df(n: int = 400, random_state: int = 7) -> pd.DataFrame:
+    """A one-sided heavy-tailed target with (a) a tail-leveraged radial column
+    whose symmetric shape degrades to mixed_or_ambiguous, (b) a clean linear
+    column, and (c) pure noise. Mirrors the exponential blind-test case that
+    motivated the "dependence may be understated" section."""
+    rng = np.random.default_rng(random_state)
+    y = rng.exponential(scale=1.0, size=n)
+    return pd.DataFrame(
+        {
+            "target": y,
+            "radial": (y - y.mean()) ** 2 + rng.normal(0, 0.05, size=n),
+            "linear": 2 * y + rng.normal(0, 0.3, size=n),
+            "noise": rng.normal(size=n),
+        }
+    )
+
+
+def test_dependence_understated_surfaces_lite_radial_via_sq_corr_robust():
+    """A lite scan (no dcor/MI) must surface a weak/ambiguous column that still
+    carries robust radial dependence under "Dependence may be understated" — on
+    sq_corr_robust alone — while leaving a clean-linear column (confident label)
+    and pure noise (no evidence) out of the section."""
+    report = scan_target(_skewed_radial_df(), "target", mode="lite")
+
+    radial = next(e for e in report.successes if e.column == "radial")
+    assert radial.result_data.pattern == "mixed_or_ambiguous"
+    evidence = report._dependence_understatement(radial)
+    assert evidence is not None
+    signal, display_value, strength = evidence
+    assert signal == "sq_corr_robust"
+    assert strength > 0.20
+
+    # Neither a confident linear label nor pure noise qualifies.
+    for col in ("linear", "noise"):
+        entry = next(e for e in report.successes if e.column == col)
+        assert report._dependence_understatement(entry) is None
+
+    text = report.summary()
+    assert "Dependence may be understated" in text
+    assert "radial (mixed_or_ambiguous; sq_corr_robust=" in text
+    # The section is a strict subset of the flagged column.
+    assert "linear (" not in text.split("Dependence may be understated")[1]
+
+
+def test_dependence_understated_markdown_lists_signal_and_value():
+    report = scan_target(_skewed_radial_df(), "target", mode="lite")
+    md = report.to_markdown()
+
+    assert "## Dependence may be understated" in md
+    section = md.split("## Dependence may be understated")[1]
+    # Header row plus the radial row, with its lite-computable signal.
+    assert "Signal" in section and "sq_corr_robust" in section
+    assert "radial" in section
+
+
+def test_dependence_understated_absent_without_evidence():
+    """A scan with only a clean-linear and a noise column emits no section."""
+    df = _build_clean_df()
+    report = scan_target(df, "target", columns=["linear", "noise"])
+    assert "Dependence may be understated" not in report.summary()
+    assert "## Dependence may be understated" not in report.to_markdown()
+
+
+def test_dependence_understated_excludes_heavy_tail_sq_corr_artifact():
+    """The section must use the same robust evidence as the cascade: the seed-574
+    heavy-tailed pair whose *raw* sq_corr clears 0.35 but whose *robust* sq_corr
+    collapses (cascade → weak_or_no_relationship) must NOT be flagged — the exact
+    leverage artifact the FU-V robust gate suppresses."""
+    rng = np.random.default_rng(574)
+    noise = rng.normal(size=100)
+    target = np.exp(rng.uniform(0.1, 10, size=100))
+    df = pd.DataFrame({"noise": noise, "target": target})
+
+    report = scan_target(df, "target", mode="lite")
+    entry = next(e for e in report.successes if e.column == "noise")
+
+    # Raw artifact present, robust value collapsed below the floor.
+    assert abs(entry.result_data.diagnostics.sq_corr) > 0.35
+    assert entry.result_data.diagnostics.sq_corr_robust <= 0.20
+    assert report._dependence_understatement(entry) is None
+    assert "Dependence may be understated" not in report.summary()

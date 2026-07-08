@@ -11,12 +11,18 @@ Plotting is delegated to :mod:`corrsleuth.scan.plot`.
 from __future__ import annotations
 
 import dataclasses
+import math
 from collections.abc import Sequence
 from typing import Any
 
 import pandas as pd
 
 from corrsleuth.exceptions import InputError
+from corrsleuth.heuristics.classifier import (
+    NONMONOTONIC_DC_THRESHOLD,
+    SQ_CORR_ROBUST_FLOOR,
+    XI_DEPENDENCE_WARN_THRESHOLD,
+)
 from corrsleuth.result import MetricDiagnostics
 from corrsleuth.scan.core import TargetScanEntry, metrics_map
 from corrsleuth.utils.markdown import (
@@ -75,6 +81,16 @@ _RELIABILITY_WARNING_KEYWORDS: tuple[str, ...] = (
     "constant",
 )
 
+#: Non-committal primary labels whose headline shape may understate a genuine
+#: (nonmonotonic or radial/magnitude) dependence. Mirrors
+#: ``classifier._DEPENDENCE_WARNING_LABELS`` — the same label set the per-pair
+#: "may understate" warning fires on. A confident shape label (``near_linear``,
+#: ``monotonic_nonlinear``, ``nonmonotonic_dependence``) already *states* its
+#: dependence, so those are deliberately excluded from the callout.
+_DEPENDENCE_UNDERSTATED_LABELS = frozenset(
+    {"weak_or_no_relationship", "mixed_or_ambiguous"}
+)
+
 _SUMMARY_CAVEAT_BODY = (
     "Pairwise association does not imply causation or predictive "
     "usefulness by itself. Always inspect the diagnostic plots and validate "
@@ -126,6 +142,70 @@ class CorrSleuthTargetReport:
             entry.reverse_result.pattern in self._STRUCTURED_PATTERNS
             and entry.result.pattern not in self._STRUCTURED_PATTERNS
         )
+
+    @classmethod
+    def _dependence_understatement(
+        cls, entry: TargetScanEntry
+    ) -> tuple[str, float, float] | None:
+        """Return the strongest dependence signal a weak/ambiguous label may
+        understate, as ``(signal_name, display_value, strength)``, or ``None``.
+
+        Extends the per-pair "may understate" warning
+        (``classifier.detect_metric_warnings``) in two ways: it also fires in
+        **lite** mode on the robust squared-correlation (``sq_corr_robust``, which
+        no other scan section surfaces), and it *hoists* the result into a
+        scan-level section instead of leaving it buried in a per-column warnings
+        cell. Only non-committal labels qualify (see
+        :data:`_DEPENDENCE_UNDERSTATED_LABELS`).
+
+        Every signal is compared on the ``[0, 1]`` correlation scale — mutual
+        information via the same ``sqrt(1 - exp(-2*MI))`` transform the classifier
+        uses — and the strongest by that ``strength`` is returned. ``display_value``
+        is the signal's raw value (MI stays in nats). ``sq_corr_robust`` is the
+        leave-the-top-out value, so a heavy-tailed variable's leverage artifact —
+        which inflates raw ``sq_corr`` but collapses under the drop — does not
+        surface here.
+        """
+        result = entry.result_data
+        if result.pattern not in _DEPENDENCE_UNDERSTATED_LABELS:
+            return None
+
+        # (signal_name, display_value, strength on the [0, 1] correlation scale)
+        candidates: list[tuple[str, float, float]] = []
+
+        sq_robust = result.diagnostics.sq_corr_robust
+        if (
+            sq_robust is not None
+            and not pd.isna(sq_robust)
+            and abs(sq_robust) > SQ_CORR_ROBUST_FLOOR
+        ):
+            strength = abs(float(sq_robust))
+            candidates.append(("sq_corr_robust", strength, strength))
+
+        metrics = metrics_map(entry)
+        dcor = metrics.get("distance_correlation")
+        if dcor is not None and not pd.isna(dcor) and dcor > NONMONOTONIC_DC_THRESHOLD:
+            candidates.append(("distance_correlation", float(dcor), float(dcor)))
+
+        for xi_name in ("chatterjee_xi", "chatterjee_xi_reverse"):
+            xi = metrics.get(xi_name)
+            if xi is not None and not pd.isna(xi) and xi > XI_DEPENDENCE_WARN_THRESHOLD:
+                candidates.append((xi_name, float(xi), float(xi)))
+
+        mi = metrics.get("mutual_information")
+        if mi is not None and not pd.isna(mi) and mi >= 0:
+            mi_strength = math.sqrt(1.0 - math.exp(-2.0 * float(mi)))
+            if mi_strength > XI_DEPENDENCE_WARN_THRESHOLD:
+                candidates.append(("mutual_information", float(mi), mi_strength))
+
+        if not candidates:
+            return None
+        return max(candidates, key=lambda c: c[2])
+
+    @staticmethod
+    def _format_understatement(signal: str, display_value: float) -> str:
+        unit = " nats" if signal == "mutual_information" else ""
+        return f"{signal}={display_value:.2f}{unit}"
 
     def to_frame(self) -> pd.DataFrame:
         """Return one row per inspected column.
@@ -245,10 +325,18 @@ class CorrSleuthTargetReport:
            rank (Spearman/Kendall) or nonmonotonic evidence exceeds Pearson by
            more than 0.20. The gap is directional, so leverage cases where
            Pearson is stronger than the rank metrics are excluded.
-        4. ``Variables with missingness or tie warnings`` — cross-cutting;
+        4. ``Dependence may be understated`` — cross-cutting; weak/ambiguous
+           entries that nonetheless carry strong nonmonotonic or radial
+           dependence evidence (lite-computable ``sq_corr_robust``, or
+           distance correlation / Chatterjee's ξ / mutual information in
+           standard/deep mode). Sorted by evidence strength.
+        5. ``Shape differs by direction`` — cross-cutting, ``direction="both"``
+           only; candidates whose reverse orientation shows a structured shape
+           the forward one does not (the ``candidate = f(target)`` signature).
+        6. ``Variables with missingness or tie warnings`` — cross-cutting;
            entries whose ``warnings`` mention ties, missing data, low unique
            ratio, small samples, or constant inputs.
-        5. ``Skipped or failed`` — non-numeric / missing columns and per-column
+        7. ``Skipped or failed`` — non-numeric / missing columns and per-column
            profile failures captured under ``errors="warn"``.
 
         Within each section, entries are sorted by ``disagreement_score``
@@ -300,6 +388,22 @@ class CorrSleuthTargetReport:
             for entry in underrate[:top_n]:
                 gap = self._pearson_underrate_gap(entry)
                 lines.append(f"  {entry.column} (gap={gap:.2f})")
+
+        understated = [
+            (e, ev)
+            for e in self.successes
+            if (ev := self._dependence_understatement(e)) is not None
+        ]
+        if understated:
+            understated.sort(key=lambda pair: (-pair[1][2], pair[0].column))
+            lines.extend(
+                ["", "Dependence may be understated (nonmonotonic or radial):"]
+            )
+            for entry, (signal, display_value, _) in understated[:top_n]:
+                lines.append(
+                    f"  {entry.column} ({entry.result_data.pattern}; "
+                    f"{self._format_understatement(signal, display_value)})"
+                )
 
         reverse_shape = [e for e in self.successes if self._reverse_reveals_shape(e)]
         if reverse_shape:
@@ -406,6 +510,38 @@ class CorrSleuthTargetReport:
                             format_markdown_value(metrics_map(entry).get("spearman")),
                         ]
                         for entry in underrate[:top_n]
+                    ],
+                )
+            )
+
+        understated = [
+            (e, ev)
+            for e in self.successes
+            if (ev := self._dependence_understatement(e)) is not None
+        ]
+        if understated:
+            understated.sort(key=lambda pair: (-pair[1][2], pair[0].column))
+            lines.extend(["", "## Dependence may be understated"])
+            lines.append(
+                "These candidates carry strong nonmonotonic or radial "
+                "(magnitude-linked) dependence evidence, yet their headline "
+                "pattern is weak or ambiguous — the label may understate a real "
+                "relationship. `sq_corr_robust` is lite-computable (leave-the-top-"
+                "out, so leverage artifacts are already excluded); distance "
+                "correlation, Chatterjee's xi, and mutual information appear in "
+                "standard/deep mode. Inspect the scatter plot."
+            )
+            lines.append(
+                markdown_table(
+                    ["Variable", "Pattern", "Signal", "Value"],
+                    [
+                        [
+                            entry.column,
+                            entry.result_data.pattern,
+                            signal,
+                            format_markdown_value(display_value),
+                        ]
+                        for entry, (signal, display_value, _) in understated[:top_n]
                     ],
                 )
             )

@@ -269,6 +269,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the shape diagnostics are directional, so the reverse view re-describes shape,
   it does not find new relationships. `"both"` costs two `profile_pair` calls per
   candidate.
+- **"Dependence may be understated" scan section.** `summary()` and
+  `to_markdown()` now surface a cross-cutting section listing weak/ambiguous
+  candidates (`weak_or_no_relationship` / `mixed_or_ambiguous`) that nonetheless
+  carry strong nonmonotonic or radial dependence evidence — so a real
+  relationship the headline label understates does not go unnoticed in a wide
+  scan. It hoists the per-pair "may understate" warning
+  (`detect_metric_warnings`) into a scan-level callout and, critically, also
+  fires in **lite** mode on the leave-the-top-out `sq_corr_robust` (no optional
+  dependency), where distance correlation / Chatterjee's ξ / mutual information
+  are unavailable. Because the signal is the *robust* squared correlation, a
+  heavy-tailed variable's leverage artifact (which inflates raw `sq_corr` but
+  collapses under the drop) is excluded, matching the cascade. This is the
+  primary remedy for symmetric shapes (U/V/circular) degrading to
+  `mixed_or_ambiguous` under one-sided heavy-tailed support, where a
+  tail-inflated Pearson keeps the pair out of the nonmonotonic route.
+- **`sq_corr_robust` on `result.diagnostics`.** The leave-the-top-out companion
+  to `sq_corr` (previously computed but consumed only inside the cascade) is now
+  stored on `MetricDiagnostics` and rendered in every surface — `summary()`,
+  `to_markdown()`, `to_dict()`, and as a `diagnostic_sq_corr_robust` column in
+  both `to_frame()` methods — parallel to the raw `sq_corr` beside it, so callers
+  can see how much of a magnitude signal survives dropping the few most extreme
+  squared points.
 - **Regression-influence diagnostics** (`compute_influence` in
   `corrsleuth/metrics/influence.py`, no new dependency): row-level Cook's
   distance on the `y ~ x` fit, exposed as `max_cook_distance` and

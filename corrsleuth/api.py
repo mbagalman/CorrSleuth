@@ -54,6 +54,7 @@ def _build_diagnostics(
     outlier_sensitivity=None,
     bin_lof=None,
     sq_corr=None,
+    sq_corr_robust=None,
     heteroscedasticity=None,
     segmentation=None,
     influence=None,
@@ -117,6 +118,7 @@ def _build_diagnostics(
         if (reversal_result and reversal_result.value is not None)
         else None,
         sq_corr=sq_corr.value if sq_corr else None,
+        sq_corr_robust=sq_corr_robust.value if sq_corr_robust else None,
         bp_pvalue=bp_result.value if bp_result else None,
         gq_ratio=gq_result.value if gq_result else None,
         bowtie_ratio=bowtie_result.value if bowtie_result else None,
@@ -426,6 +428,7 @@ def profile_pair(
         outlier_sensitivity,
         bin_lof=bin_lof,
         sq_corr=sq_corr,
+        sq_corr_robust=sq_corr_robust,
         heteroscedasticity=heteroscedasticity,
         segmentation=segmentation,
         influence=influence,

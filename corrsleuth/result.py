@@ -84,8 +84,11 @@ class MetricDiagnostics:
     lack-of-fit test's R² gain over a linear fit; ``bin_reversal_count``, how
     many times the sequence of bin means changes direction — 0 for a monotone
     trend, 1 for a single bend, 2+ for an oscillation; ``sq_corr``, the
-    correlation between the squared mean-centered X and Y) — see
-    ``corrsleuth/metrics/shape.py`` — and the
+    correlation between the squared mean-centered X and Y; ``sq_corr_robust``,
+    the leave-the-top-out companion to ``sq_corr`` — the smallest ``|sq_corr|``
+    after dropping the few most extreme squared points, so a heavy-tailed
+    variable's spurious magnitude signal collapses while a genuine one survives)
+    — see ``corrsleuth/metrics/shape.py`` — and the
     heteroscedasticity diagnostics (``bp_pvalue``, the Breusch-Pagan p-value;
     ``gq_ratio``, the Goldfeld-Quandt high-vs-low-x residual variance ratio;
     ``bowtie_ratio``, the edge-thirds-vs-middle-third residual variance ratio) —
@@ -125,6 +128,7 @@ class MetricDiagnostics:
     bin_lof_r2_gain: float | None = None
     bin_reversal_count: int | None = None
     sq_corr: float | None = None
+    sq_corr_robust: float | None = None
     bp_pvalue: float | None = None
     gq_ratio: float | None = None
     bowtie_ratio: float | None = None
@@ -182,6 +186,7 @@ class CorrSleuthResult:
             bin_lof_r2_gain=None,
             bin_reversal_count=None,
             sq_corr=None,
+            sq_corr_robust=None,
             bp_pvalue=None,
             gq_ratio=None,
             bowtie_ratio=None,
@@ -261,6 +266,7 @@ class CorrSleuthResult:
             ("bin_lof_r2_gain", self._format_value(diag.bin_lof_r2_gain)),
             ("bin_reversal_count", self._format_count(diag.bin_reversal_count)),
             ("sq_corr", self._format_value(diag.sq_corr)),
+            ("sq_corr_robust", self._format_value(diag.sq_corr_robust)),
             ("bp_pvalue", self._format_value(diag.bp_pvalue)),
             ("gq_ratio", self._format_value(diag.gq_ratio)),
             ("bowtie_ratio", self._format_value(diag.bowtie_ratio)),
@@ -460,6 +466,10 @@ class CorrSleuthResult:
                     [
                         "sq_corr",
                         format_markdown_value(self.diagnostics.sq_corr),
+                    ],
+                    [
+                        "sq_corr_robust",
+                        format_markdown_value(self.diagnostics.sq_corr_robust),
                     ],
                     [
                         "bp_pvalue",

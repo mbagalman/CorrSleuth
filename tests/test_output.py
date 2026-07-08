@@ -513,6 +513,30 @@ def test_secondary_axes_surfaced_in_every_output_form():
     assert escape_markdown_cell("closed_loop_or_multivalued") in md
 
 
+def test_sq_corr_robust_surfaced_on_diagnostics_and_every_output_form():
+    """The robust squared-correlation companion is stored on
+    result.diagnostics.sq_corr_robust and appears in summary, markdown, to_dict,
+    and to_frame — not just consumed inside the cascade. A U-shape's sq_corr is
+    robust (spread over many points), so the two values track closely."""
+    rng = np.random.default_rng(0)
+    x = rng.uniform(-3, 3, size=400)
+    df = pd.DataFrame({"x": x, "y": x**2 + rng.normal(0, 0.3, size=400)})
+    res = profile_pair(df, "x", "y")  # lite mode: sq_corr_robust needs no extras
+
+    robust = res.diagnostics.sq_corr_robust
+    assert robust is not None
+    # Genuine radial link: robust stays well above the floor, and barely below
+    # the raw value (the signal is spread over many points, not a few extremes).
+    assert robust > 0.35
+    assert abs(res.diagnostics.sq_corr) - robust < 0.15
+
+    assert res.to_dict()["diagnostics"]["sq_corr_robust"] == pytest.approx(robust)
+    assert "diagnostic_sq_corr_robust" in res.to_frame().columns
+    assert "sq_corr_robust" in res.summary()
+    # Markdown escapes underscores in table cells so they don't render italic.
+    assert escape_markdown_cell("sq_corr_robust") in res.to_markdown()
+
+
 def test_secondary_axes_default_to_na_when_not_assessable():
     """A constant input can populate no axes; they render as NA rather than
     raising, and serialize as None."""

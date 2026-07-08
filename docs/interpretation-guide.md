@@ -611,6 +611,39 @@ variables where rank metrics or distance correlation exceed Pearson by
 more than a configurable threshold — those are the variables most likely
 to be discarded too early by a default correlation matrix.
 
+### "Dependence may be understated" in a scan
+
+A target scan's `summary()` and `to_markdown()` also emit a cross-cutting
+**Dependence may be understated** section. It lists candidates whose headline
+pattern is non-committal (`weak_or_no_relationship` or `mixed_or_ambiguous`)
+yet whose diagnostics still carry strong nonmonotonic or radial dependence
+evidence:
+
+- **`sq_corr_robust`** — the leave-the-top-out squared correlation. This is
+  **lite-computable** (no optional dependency), so a magnitude/radial link
+  surfaces here even in the default `mode="lite"` scan where distance
+  correlation and mutual information are unavailable. Because it is the *robust*
+  value (the few most extreme squared points are dropped), a heavy-tailed
+  variable's leverage artifact — which inflates the raw `sq_corr` but collapses
+  under the drop — is excluded, matching the cascade's own gate.
+- **distance correlation**, **Chatterjee's ξ**, and **mutual information** —
+  available in `mode="standard"`/`"deep"`, these promote the per-pair "this
+  label may understate the relationship" warning into a scan-level callout.
+
+This is the safety net for one situation the primary cascade is deliberately
+conservative about: a **symmetric shape on one-sided, heavy-tailed support**.
+A U/V/circular relationship generated against a skewed, positive-only variable
+(exponential, lognormal) is no longer symmetric in the observed sample — a few
+large-magnitude points give it a strong *tail-inflated* Pearson while the rank
+metrics stay near zero, so the pair reads `mixed_or_ambiguous` rather than
+`nonmonotonic_dependence` (the nonmonotonic route requires both Pearson and
+Spearman to be weak). The label is defensible — the shape genuinely degraded —
+but the dependence is real, and this section keeps it from being silently
+dropped. When a candidate appears here, inspect its scatter plot and, if the
+data was engineered as `candidate = f(target)`, re-profile with
+`direction="reverse"` (or scan with `direction="both"`), where the shape shows
+in the `E[candidate | target]` orientation.
+
 ### Monotonic vs Nonmonotonic Relationships
 
 A relationship is **monotonic** if `y` consistently increases (or
