@@ -302,6 +302,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Pearson stable. Uses the softer Cook & Weisberg `D > 0.5` cutoff (a masked
   outlier cluster deflates each point's Cook's distance below the classical
   `D > 1`).
+- **Compound trend + oscillation detection** (`mean_shape = "oscillating_trend"`,
+  no new dependency or threshold). A strong monotone trend whose binned
+  conditional means still reverse direction two or more times — robustly — is now
+  labeled a *trend with a superimposed oscillation* (a linear ramp plus a wave;
+  trend + periodic residual) and carries a companion "compound trend-plus-wave"
+  warning pointing at the periodic residual structure a single line or monotone
+  curve leaves behind. Previously such a shape was misread as `step_or_threshold`
+  (the single-breakpoint search forces one break onto the wave). Both the primary
+  cascade's oscillation route and the `dependence_type = oscillating` axis require
+  a *weak* trend, so a wave riding on a strong trend reached neither; this reuses
+  the same already-calibrated joint gate (`OSCILLATION_MIN_REVERSALS` +
+  `OSCILLATION_BIN_LOF_FLOOR` on the leave-one-bin-out robust gain) in the
+  strong-trend regime. The primary label is unchanged (the trend still dominates);
+  this refines the secondary `mean_shape` axis and adds the warning. A pure
+  sinusoid or U-shape (weak Spearman) is unaffected — it stays `curved` with
+  `dependence_type = oscillating`. Across the blind-test datasets (uniform /
+  exponential / lognormal, both orientations, every column) the only pair flagged
+  is the genuine trend+wave case; zero false positives on steps, curves, clusters,
+  linear, and heteroscedastic shapes.
 - **Breakpoint localization** (`compute_segmentation` in
   `corrsleuth/metrics/shape.py`, no new dependency): a single-breakpoint search
   refines a curved *monotone* `mean_shape` into `smooth_curve` versus
