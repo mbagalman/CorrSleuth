@@ -592,6 +592,26 @@ def detect_metric_warnings(
                     f"mode='standard' to check distance correlation."
                 )
 
+    # Compound trend + oscillation (e.g. a linear ramp with a superimposed wave).
+    # The primary label captures the dominant trend, but the conditional mean
+    # reverses direction repeatedly on top of it — periodic residual structure a
+    # single line or monotone curve leaves behind. Neither oscillation gate above
+    # fires here (they require a weak trend), so this is the one place the compound
+    # pattern is surfaced. See _is_oscillating_trend / mean_shape="oscillating_trend".
+    reversals = _finite_metric_value(metrics.get("bin_reversal_count"))
+    bin_lof_robust = _finite_metric_value(metrics.get("bin_lof_r2_gain_robust"))
+    s_abs = abs(spearman) if spearman is not None else None
+    if _is_oscillating_trend(s_abs, reversals, bin_lof_robust):
+        n_rev = int(reversals) if reversals is not None else 0
+        warnings.append(
+            f"A monotone trend is present, but the binned conditional means "
+            f"reverse direction {n_rev} times and a nonlinear fit clearly beats a "
+            f"line: the relationship carries a periodic/oscillatory component "
+            f"superimposed on the trend (a compound trend-plus-wave pattern). A "
+            f"single line or monotone curve leaves systematic periodic residuals; "
+            f"inspect the residuals and consider adding a harmonic/periodic term."
+        )
+
     return warnings
 
 
@@ -609,15 +629,47 @@ def detect_metric_warnings(
 # ---------------------------------------------------------------------------
 
 
+def _is_oscillating_trend(
+    s: float | None,
+    reversals: float | None,
+    bin_lof_robust: float | None,
+) -> bool:
+    """True for a **compound trend + oscillation**: a strong monotone trend whose
+    binned conditional means still reverse direction two or more times, robustly.
+
+    A linear ramp with a superimposed wave (or any trend-plus-periodic-residual
+    shape, e.g. X24 in the blind-test set) has a strong Spearman *and* an
+    oscillating conditional mean. Both the cascade's oscillation route and the
+    ``dependence_type`` oscillation gate require a *weak* trend
+    (``monotone_weak``), so neither fires here — leaving the wave to be misread as
+    a single monotone step/bend. This predicate detects the case using the same
+    already-calibrated oscillation signals (:data:`OSCILLATION_MIN_REVERSALS`,
+    :data:`OSCILLATION_BIN_LOF_FLOOR`), but in the strong-trend regime. Requiring
+    the *robust* (leave-one-bin-out) gain keeps a single extreme-Y bin from
+    manufacturing the reversals on an otherwise monotone predictor. Because that
+    floor (0.15) sits well above ``BIN_LOF_R2_GAIN_THRESHOLD`` (0.05), a genuine
+    smooth monotone curve or step (reversals 0) never qualifies.
+    """
+    return (
+        s is not None
+        and s >= STRONG_MAGNITUDE_THRESHOLD
+        and reversals is not None
+        and reversals >= OSCILLATION_MIN_REVERSALS
+        and bin_lof_robust is not None
+        and bin_lof_robust > OSCILLATION_BIN_LOF_FLOOR
+    )
+
+
 def _mean_shape_axis(
     p: float | None,
     s: float | None,
     bin_lof: float | None,
     segment_stepness: float | None,
     bin_lof_robust: float | None = None,
+    reversals: float | None = None,
 ) -> str | None:
-    """Is E[Y|X] a straight line, a smooth curve, or a step? (``None`` when not
-    assessable.)"""
+    """Is E[Y|X] a straight line, a smooth curve, a step, or a trend with a
+    superimposed oscillation? (``None`` when not assessable.)"""
     if p is None or s is None:
         return None
     # Curvature via either route the cascade uses for monotonic_nonlinear: a
@@ -649,6 +701,16 @@ def _mean_shape_axis(
         s > STRONG_MAGNITUDE_THRESHOLD and s - p > RANK_LINEAR_GAP_THRESHOLD
     )
     if curved:
+        # A strong monotone trend whose binned means still reverse direction 2+
+        # times (robustly) is a trend with a superimposed oscillation — a
+        # compound trend-plus-periodic-residual shape (e.g. a linear ramp plus a
+        # wave), not a single monotone bend or step. Detect it *before* the
+        # step-vs-smooth refinement, which forces one breakpoint onto the wave and
+        # misreads it as a step. A pure sinusoid / U-shape (weak Spearman) does
+        # not reach this branch — it stays "curved" and dependence_type carries
+        # its oscillation instead.
+        if _is_oscillating_trend(s, reversals, bin_lof_robust):
+            return "oscillating_trend"
         # Refine a *monotone* curve (strong Spearman) into a step/threshold jump
         # vs a smooth (or piecewise) bend, from the single-breakpoint stepness.
         # A non-monotone curve (weak Spearman, e.g. a U-shape) stays the generic
@@ -883,7 +945,9 @@ def derive_diagnostic_axes(
     n_influential = _finite_metric_value(metrics.get("n_influential_points"))
 
     return {
-        "mean_shape": _mean_shape_axis(p, s, bin_lof, segment_stepness, bin_lof_robust),
+        "mean_shape": _mean_shape_axis(
+            p, s, bin_lof, segment_stepness, bin_lof_robust, reversals
+        ),
         "variance_shape": _variance_shape_axis(
             bp_pvalue, gq_ratio, bin_lof, bowtie_ratio
         ),

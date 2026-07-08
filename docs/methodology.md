@@ -261,7 +261,11 @@ relationship is U/hill-shaped rather than linear); it reports
 *monotone* mean into `smooth_curve` versus `step_or_threshold` (with a
 `breakpoint_x`) using a single-breakpoint search (`metrics/shape.py`): a step's
 segments are flat, so a two-level model fits as well as a two-line one, while a
-smooth curve's segments are sloped. `outlier_sensitivity` refines the
+smooth curve's segments are sloped. A strong monotone trend whose binned means
+still reverse direction repeatedly (robustly) reads instead as
+`oscillating_trend` — a trend with a superimposed wave (compound trend + periodic
+residual), detected before the step/smooth split so the wave is not misread as a
+step. `outlier_sensitivity` refines the
 trim-sensitivity verdict with row-level Cook's distance (`metrics/influence.py`)
 into `single_point_driven` versus `high_leverage_cluster`; because Cook's
 distance has no 1%-trim blind spot, it can flag a leverage cluster the primary

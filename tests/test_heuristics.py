@@ -564,6 +564,97 @@ def test_axes_oscillating_requires_joint_reversal_and_gain_gate():
     axes = derive_diagnostic_axes(metrics, "nonmonotonic_dependence", "stable")
     assert axes["dependence_type"] != "oscillating"
 
+
+def test_axes_oscillating_trend_strong_trend_with_reversals():
+    """A strong monotone trend whose binned means still reverse direction 2+
+    times (robustly) reads as oscillating_trend (compound trend + wave), taking
+    precedence over the step/smooth split it would otherwise hit."""
+    metrics = _axis_metrics(
+        pearson=0.65,
+        spearman=0.68,
+        bin_lof_r2_gain=0.44,  # robust defaults to same -> clears the 0.15 floor
+        bin_reversal_count=4,
+        segment_stepness=0.9,  # would say "step", but oscillation wins
+    )
+    axes = derive_diagnostic_axes(metrics, "monotonic_nonlinear", "stable")
+    assert axes["mean_shape"] == "oscillating_trend"
+    # The dependence is still dominantly monotone (the trend), not "oscillating".
+    assert axes["dependence_type"] == "monotone"
+
+
+def test_axes_oscillating_trend_requires_strong_trend():
+    """A weak trend with the same reversals is a pure oscillation, not a compound
+    trend+wave: mean_shape stays the generic curved, and dependence_type carries
+    the oscillation."""
+    metrics = _axis_metrics(
+        pearson=0.08,
+        spearman=0.10,
+        bin_lof_r2_gain=0.44,
+        bin_reversal_count=4,
+        segment_stepness=0.9,
+    )
+    axes = derive_diagnostic_axes(metrics, "nonmonotonic_dependence", "stable")
+    assert axes["mean_shape"] == "curved"
+    assert axes["dependence_type"] == "oscillating"
+
+
+def test_axes_oscillating_trend_requires_robust_gain():
+    """The reversal count is only trusted with a robust bin-fit gain: a strong
+    trend with many reversals but a collapsed leave-one-bin-out gain (a lone
+    extreme-Y bin) is not oscillating_trend — it falls back to the step split."""
+    metrics = _axis_metrics(
+        pearson=0.65,
+        spearman=0.68,
+        bin_lof_r2_gain=0.44,
+        bin_lof_r2_gain_robust=0.08,  # collapses below OSCILLATION_BIN_LOF_FLOOR
+        bin_reversal_count=4,
+        segment_stepness=0.9,
+    )
+    axes = derive_diagnostic_axes(metrics, "monotonic_nonlinear", "stable")
+    assert axes["mean_shape"] == "step_or_threshold"
+
+
+def test_axes_monotone_step_not_misread_as_oscillating_trend():
+    """A genuine step (strong trend, zero reversals) keeps step_or_threshold."""
+    metrics = _axis_metrics(
+        pearson=0.74,
+        spearman=0.74,
+        bin_lof_r2_gain=0.36,
+        bin_reversal_count=0,
+        segment_stepness=0.9,
+    )
+    axes = derive_diagnostic_axes(metrics, "monotonic_nonlinear", "stable")
+    assert axes["mean_shape"] == "step_or_threshold"
+
+
+def test_compound_trend_plus_wave_end_to_end_and_warning():
+    """A linear ramp with a superimposed wave profiles as oscillating_trend and
+    emits the compound trend-plus-wave warning; a clean strong-linear pair does
+    not (guarding against the warning firing on ordinary monotone data)."""
+    rng = np.random.default_rng(3)
+    n = 400
+    x = np.linspace(-3.0, 3.0, n)
+    # Trend dominant (strong Spearman) with two visible cycles superimposed.
+    y = 0.9 * x + 1.5 * np.sin(2.0 * np.pi * x / 3.0) + rng.normal(0, 0.25, n)
+    df = pd.DataFrame({"x": x, "y": y})
+    res = profile_pair(df, "x", "y", mode="lite")
+
+    assert res.diagnostics.mean_shape == "oscillating_trend"
+    assert res.diagnostics.bin_reversal_count >= 2
+    # Reaching oscillating_trend requires a genuine monotone trend (strong rank).
+    spearman = next(
+        r["value"] for _, r in res.metrics.iterrows() if r["metric"] == "spearman"
+    )
+    assert abs(spearman) >= 0.50
+    assert any("compound trend-plus-wave" in w for w in res.warnings)
+    # No spurious breakpoint: oscillating_trend is not a single step.
+    assert res.diagnostics.breakpoint_x is None
+
+    clean = pd.DataFrame({"x": x, "y": 0.9 * x + rng.normal(0, 0.25, n)})
+    res_clean = profile_pair(clean, "x", "y", mode="lite")
+    assert res_clean.diagnostics.mean_shape == "linear"
+    assert not any("compound trend-plus-wave" in w for w in res_clean.warnings)
+
     # Many reversals but negligible gain (pure noise) is not oscillation.
     metrics = _axis_metrics(
         pearson=0.05, spearman=0.05, bin_lof_r2_gain=0.06, bin_reversal_count=14

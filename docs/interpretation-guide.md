@@ -451,7 +451,7 @@ available metrics it is `None` (rendered `NA`).
 
 | Axis | Question | Values |
 |---|---|---|
-| `mean_shape` | Is E[Y\|X] a straight line, a smooth curve, or a step? | `linear`, `smooth_curve`, `step_or_threshold`, `curved`, `None` |
+| `mean_shape` | Is E[Y\|X] a straight line, a smooth curve, a step, or a trend with a superimposed oscillation? | `linear`, `smooth_curve`, `step_or_threshold`, `oscillating_trend`, `curved`, `None` |
 | `variance_shape` | Does the spread of Y change with X? | `constant`, `increasing_spread`, `decreasing_spread`, `edge_high_spread`, `center_high_spread`, `None` |
 | `dependence_type` | What kind of dependence is it? | `monotone`, `magnitude_linked`, `oscillating`, `nonmonotone`, `closed_loop_or_multivalued`, `None` |
 | `outlier_sensitivity` | Do a few rows drive the summary? | `low`, `single_point_driven`, `high_leverage_cluster`, `high`, `unavailable` |
@@ -474,7 +474,16 @@ Notes on the less-obvious values:
   separable from a smooth bend over a finite range, so it currently reads as
   `smooth_curve`. A *non-monotone* curve (a U-shape) stays the generic `curved`
   — smooth-vs-step does not apply to it, and `dependence_type` carries its
-  shape.
+  shape. **`oscillating_trend`** is a *compound* shape: a strong monotone trend
+  whose binned conditional means still reverse direction two or more times
+  (robustly) — a linear ramp with a superimposed wave (trend + periodic
+  residual). It is detected *before* the smooth-vs-step split, which would
+  otherwise force one breakpoint onto the wave and misread it as a step. Both the
+  primary cascade's oscillation route and the `dependence_type` oscillation gate
+  require a *weak* trend, so a wave riding on a strong trend reaches neither;
+  `oscillating_trend` (and a companion "compound trend-plus-wave" warning) is the
+  one place this pattern surfaces. A pure sinusoid or U-shape (weak Spearman)
+  does not qualify — it stays `curved` with `dependence_type` = `oscillating`.
 - **`variance_shape`** measures *heteroscedasticity* — whether the residual
   spread around the mean trend changes with X (a Breusch-Pagan test, with a
   Goldfeld-Quandt effect-size floor and direction). `increasing_spread` is the
