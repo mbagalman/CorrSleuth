@@ -322,9 +322,10 @@ class CorrSleuthTargetReport:
         2. ``Other or inconclusive`` — variables with patterns outside the
            explicit set (e.g., ``low_power_or_uncertain``).
         3. ``Variables Pearson may underrate`` — cross-cutting; entries where
-           rank (Spearman/Kendall) or nonmonotonic evidence exceeds Pearson by
-           more than 0.20. The gap is directional, so leverage cases where
-           Pearson is stronger than the rank metrics are excluded.
+           rank (Spearman/Kendall), nonmonotonic (distance-correlation), or
+           magnitude/radial (``sq_corr``) evidence exceeds Pearson by more than
+           0.20. The gap is directional, so leverage cases where Pearson is
+           stronger than the rank metrics are excluded.
         4. ``Dependence may be understated`` — cross-cutting; weak/ambiguous
            entries that nonetheless carry strong nonmonotonic or radial
            dependence evidence (lite-computable ``sq_corr_robust``, or
@@ -339,8 +340,12 @@ class CorrSleuthTargetReport:
         7. ``Skipped or failed`` — non-numeric / missing columns and per-column
            profile failures captured under ``errors="warn"``.
 
-        Within each section, entries are sorted by ``disagreement_score``
-        descending. Empty sections are omitted. The caveat is appended unless
+        Within the pattern sections and ``Other or inconclusive``, entries are
+        sorted by ``disagreement_score`` descending; the cross-cutting sections
+        sort by their own evidence strength (the underrate gap, the
+        dependence-understatement signal strength) or alphabetically by column
+        (shape-differs, missingness/tie, skipped/failed). Empty sections are
+        omitted. The caveat is appended unless
         ``include_caveat=False``.
         """
         if isinstance(top_n, bool) or not isinstance(top_n, int) or top_n < 1:

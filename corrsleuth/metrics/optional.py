@@ -13,8 +13,10 @@ def compute_distance_correlation(
 ) -> MetricResult:
     """Compute distance correlation, downsampling deterministically for large pairs.
 
-    In ``mode='standard'``, raises :class:`OptionalDependencyError` if ``dcor`` is
-    not installed. In ``mode='lite'``, returns an unavailable :class:`MetricResult`
+    In ``mode='standard'`` or ``'deep'`` (deep is a superset of standard, so both
+    need the ``[standard]`` extras), raises :class:`OptionalDependencyError` if
+    ``dcor`` is not installed. In ``mode='lite'``, returns an unavailable
+    :class:`MetricResult`
     instead. When ``pair.n_used > max_n_for_dcor`` the input is downsampled with a
     NumPy generator seeded by ``random_state``; pass ``max_n_for_dcor=None`` to
     disable the cap. Returns ``value=None`` when either column is constant.
@@ -69,8 +71,9 @@ def compute_mutual_information(
     larger MI means more shared information) or alongside the other metrics, not
     on the same 0-1 scale.
 
-    In ``mode='standard'``, raises :class:`OptionalDependencyError` if
-    ``scikit-learn`` is not installed. In ``mode='lite'`` returns an unavailable
+    In ``mode='standard'`` or ``'deep'`` (both need the ``[standard]`` extras),
+    raises :class:`OptionalDependencyError` if ``scikit-learn`` is not installed.
+    In ``mode='lite'`` returns an unavailable
     :class:`MetricResult` instead. ``random_state`` is forwarded to
     :func:`sklearn.feature_selection.mutual_info_regression` for reproducibility.
     Returns ``value=None`` when either column is constant or when

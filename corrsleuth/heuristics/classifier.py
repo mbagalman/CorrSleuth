@@ -388,15 +388,19 @@ def apply_heuristics(
     ``possible_outlier_or_leverage`` label so it is only assigned when there is
     independent evidence of leverage.
 
-    ``metrics`` may include three shape diagnostics (see ``metrics/shape.py``)
+    ``metrics`` may include the shape diagnostics (see ``metrics/shape.py``)
     in addition to the primary correlation metrics: ``bin_lof_r2_gain`` (an
     alternate route into ``monotonic_nonlinear``, for smooth monotonic curves
     and step functions the Spearman-vs-Pearson gap misses), ``sq_corr`` (an
     alternate route into ``nonmonotonic_dependence``, for magnitude/radial
-    dependence distance correlation under-reads), and ``bin_reversal_count``
-    (a third route into ``nonmonotonic_dependence``, jointly with
-    ``bin_lof_r2_gain``, for oscillating/periodic dependence neither of the
-    other two reliably catches). All are optional; their absence never blocks
+    dependence distance correlation under-reads), and ``bin_reversal_count``,
+    which jointly with ``bin_lof_r2_gain`` drives two more routes into
+    ``nonmonotonic_dependence``: the oscillation route (two or more reversals,
+    for oscillating/periodic dependence) and the single-bend route (one robust
+    reversal with large bin structure, for V / off-center-U shapes ``sq_corr``
+    misses). Their robust leave-one-bin-out companions
+    (``bin_lof_r2_gain_robust``, ``sq_corr_robust``) gate the routes so a lone
+    extreme-Y bin cannot fake them. All are optional; their absence never blocks
     a label the other metrics would otherwise assign.
     """
     m_p = metrics.get("pearson")
@@ -600,6 +604,14 @@ def detect_metric_warnings(
     to a bounded, correlation-like scale via the Gaussian-equivalent-correlation
     transform ``sqrt(1 - exp(-2*MI))`` before comparing against
     :data:`XI_DEPENDENCE_WARN_THRESHOLD`, so both signals share one cut point.
+    Three further warnings describe compound/hidden mean structure, each gated
+    by its predicate: a compound trend-plus-oscillation warning when a strong
+    monotone trend carries an oscillating conditional mean
+    (:func:`_is_oscillating_trend`); a two-group / mixture warning when the
+    pooled correlation is carried by a separated-group mean shift
+    (:func:`_is_two_group_shift`); and a discontinuity warning when a trend
+    hides a level shift large against the residual noise
+    (:func:`_is_discontinuous_jump`).
 
     A variance-shape signal is checked against ``n_influential_points`` before
     being reported as independent evidence: when Cook's distance already flags
@@ -951,8 +963,8 @@ def _mean_shape_axis(
     segment_jump_ratio: float | None = None,
 ) -> str | None:
     """Is E[Y|X] a straight line, a smooth curve, a step, a trend with a
-    superimposed oscillation, or a trend with a discontinuity? (``None`` when
-    not assessable.)"""
+    superimposed oscillation, a trend with a discontinuity, or a generic
+    (non-monotone) curve? (``None`` when not assessable.)"""
     if p is None or s is None:
         return None
     # Curvature via either route the cascade uses for monotonic_nonlinear: a
@@ -1103,8 +1115,8 @@ def _dependence_type_axis(
     pearson_within_cluster: float | None = None,
 ) -> str | None:
     """How do the variables depend on each other — monotonically, through
-    magnitude, as an oscillation, as a closed loop, or as a two-group mean
-    shift? (``None`` when nothing is detected.)"""
+    magnitude, as an oscillation, as a generic nonmonotone bend, as a closed
+    loop, or as a two-group mean shift? (``None`` when nothing is detected.)"""
     if p is None or s is None:
         return None
     monotone_weak = (

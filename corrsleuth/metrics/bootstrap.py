@@ -514,6 +514,9 @@ def compute_bootstrap_intervals(
     random_state: int,
     max_n_for_bootstrap: int | None,
 ) -> pd.DataFrame | None:
+    """Convenience wrapper returning only the percentile-interval DataFrame
+    (no pattern-stability computation, i.e. ``original_pattern=None``). See
+    :func:`compute_bootstrap` for parameters and the interval semantics."""
     return compute_bootstrap(
         pair=pair,
         bootstrap=bootstrap,

@@ -1,10 +1,10 @@
 """Shape diagnostics that supplement the linear/rank/distance metrics.
 
-Both diagnostics here are pure numpy/scipy — no optional dependency, cheap
+The diagnostics here are all pure numpy/scipy — no optional dependency, cheap
 enough to run in every mode — and are consumed only by the heuristic cascade
 and :class:`~corrsleuth.result.MetricDiagnostics`, never surfaced in the
 public metrics table the way Pearson/distance correlation/mutual information
-are. They exist to catch two blind spots the existing rank/linear/distance
+are. They exist to catch blind spots the existing rank/linear/distance
 metrics leave open (see docs/shape-diagnostics-design.md):
 
 - :func:`compute_bin_lof` — a lack-of-fit test comparing an
@@ -18,18 +18,27 @@ metrics leave open (see docs/shape-diagnostics-design.md):
   which separates *oscillating* dependence (a sinusoid: several reversals)
   from a single bend (a U-shape: exactly one) — the classifier only trusts the
   count when ``bin_lof_r2_gain`` also shows substantial bin structure, since
-  pure noise produces many spurious reversals with near-zero gain.
+  pure noise produces many spurious reversals with near-zero gain. A
+  leave-one-bin-out companion (``bin_lof_r2_gain_robust``) reports how much of
+  the gain survives dropping any single bin, so a lone extreme-Y bin cannot
+  fake curvature/oscillation on a structureless predictor.
 - :func:`compute_squared_correlation` — the correlation between the squared
   mean-centered X and Y (``corr((X−x̄)², (Y−ȳ)²)``),
   used to catch dependence that shows up in magnitude but not in the raw
   signed values (e.g. points scattered around a circle, where X and Y are
   strongly dependent but Pearson/Spearman/distance correlation on the raw
-  values are all near zero).
+  values are all near zero). :func:`compute_squared_correlation_robust` is its
+  leave-the-top-out companion: the smallest ``|sq_corr|`` after dropping the
+  few most extreme squared points, so a heavy-tailed variable's spurious
+  magnitude signal collapses while a genuine one survives.
 - :func:`compute_segmentation` — a single-breakpoint search that refines a
   *curved monotone* mean into a smooth bend versus a step/threshold jump, and
   reports roughly where a step is located. Distinguishes the two by whether a
   two-*level* (flat-segment) model fits as well as a two-*line* model: a step's
-  segments are flat, a smooth curve's are sloped.
+  segments are flat, a smooth curve's are sloped. It also reports
+  ``segment_jump_ratio``, the fitted discontinuity at the best two-line split
+  in units of residual noise, which catches a level shift embedded in a strong
+  trend that the R²-scale gain washes out.
 """
 
 from __future__ import annotations
@@ -148,7 +157,7 @@ def _turning_point_count(means: np.ndarray, hysteresis: float) -> int:
 def compute_bin_lof(pair: CleanPair) -> dict[str, MetricResult]:
     """Equal-frequency-bin lack-of-fit diagnostics for the shape of E[Y|X].
 
-    Sorts by X, splits into equal-frequency bins, and returns two
+    Sorts by X, splits into equal-frequency bins, and returns three
     :class:`MetricResult` entries computed from the same bins:
 
     - ``bin_lof_r2_gain`` — the **degrees-of-freedom-adjusted** bin-mean-model R²
@@ -482,7 +491,7 @@ def compute_segmentation(pair: CleanPair) -> dict[str, MetricResult]:
     """Single-breakpoint search that characterizes a curved monotone mean.
 
     Sorts by X and, over every candidate split, fits (a) two independent lines
-    and (b) two independent levels (means), returning three
+    and (b) two independent levels (means), returning four
     :class:`MetricResult` entries:
 
     - ``segment_gain`` — R² of the best two-*line* fit minus the single-line R²

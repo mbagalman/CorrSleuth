@@ -300,13 +300,14 @@ def profile_pair(
     # MetricDiagnostics only — kept out of metrics_map so they never appear in
     # the public metrics table alongside primary association coefficients like
     # pearson/dcor/MI. compute_bin_lof and compute_heteroscedasticity return
-    # {name: MetricResult} dicts (bin_lof_r2_gain, bin_reversal_count;
-    # bp_pvalue, gq_ratio, bowtie_ratio).
+    # {name: MetricResult} dicts (bin_lof_r2_gain, bin_reversal_count,
+    # bin_lof_r2_gain_robust; bp_pvalue, gq_ratio, bowtie_ratio).
     bin_lof = compute_bin_lof(pair)
     sq_corr = compute_squared_correlation(pair)
     # Leave-the-top-out companion: the classifier gates the sq_corr routes on it
     # so a heavy-tailed variable's few extreme squared values cannot manufacture a
-    # magnitude-linked label (cascade-only, like bin_lof_r2_gain_robust).
+    # magnitude-linked label. Unlike bin_lof_r2_gain_robust (which stays internal
+    # to the cascade), this value is also surfaced on MetricDiagnostics.
     sq_corr_robust = compute_squared_correlation_robust(pair)
     heteroscedasticity = compute_heteroscedasticity(pair)
     segmentation = compute_segmentation(pair)
