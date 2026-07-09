@@ -1509,3 +1509,52 @@ def test_discontinuous_jump_end_to_end_and_warning():
     res_kink = profile_pair(pd.DataFrame({"x": u, "y": kink}), "x", "y", mode="lite")
     assert res_kink.diagnostics.mean_shape != "discontinuous_jump"
     assert not any("discontinuity" in w for w in res_kink.warnings)
+
+
+def test_axes_oscillating_allowed_up_to_moderate_trend():
+    """The oscillation axis gate has its own moderate ceiling (0.50): a
+    skew-tilted sinusoid with |s| ~ 0.34 reads oscillating, not monotone. At a
+    strong trend (>= 0.50) the label route hands off to oscillating_trend."""
+    moderate = _axis_metrics(
+        pearson=0.24, spearman=0.34, bin_lof_r2_gain=0.73, bin_reversal_count=5
+    )
+    axes = derive_diagnostic_axes(moderate, "nonmonotonic_dependence", "stable")
+    assert axes["dependence_type"] == "oscillating"
+
+    strong = _axis_metrics(
+        pearson=0.55, spearman=0.60, bin_lof_r2_gain=0.73, bin_reversal_count=5
+    )
+    axes = derive_diagnostic_axes(strong, "monotonic_nonlinear", "stable")
+    assert axes["dependence_type"] != "oscillating"
+    assert axes["mean_shape"] == "oscillating_trend"  # the strong-trend regime
+
+
+def test_moderate_trend_oscillation_labels_nonmonotonic_end_to_end():
+    """A sinusoid on one-sided exponential support (the blind-test X12 family)
+    picks up a spurious moderate rank tilt that used to strand it in
+    mixed_or_ambiguous -- the dead zone between the weak-trend oscillation
+    route (< 0.25) and the strong-trend oscillating_trend value (>= 0.50). It
+    must now resolve via the widened oscillation ceiling, in lite mode."""
+    rng = np.random.default_rng(5)
+    n = 500
+    ex = rng.exponential(2.0, size=n)
+    df = pd.DataFrame({"x": ex, "y": np.sin(1.5 * ex) + rng.normal(0, 0.25, n)})
+    res = profile_pair(df, "x", "y", mode="lite")
+
+    assert res.pattern == "nonmonotonic_dependence"
+    assert res.diagnostics.dependence_type == "oscillating"
+    assert res.diagnostics.bin_reversal_count >= 2
+
+
+def test_moderate_correlation_normal_pair_not_swept_up_by_wider_ceiling():
+    """A moderate-rho bivariate normal sits in the newly exposed zone
+    (0.25 <= max(|p|,|s|) < 0.50) but has no bin structure, so the widened
+    oscillation route must leave it alone."""
+    rng = np.random.default_rng(6)
+    n = 500
+    z = rng.normal(size=n)
+    df = pd.DataFrame({"x": z, "y": 0.4 * z + np.sqrt(1 - 0.16) * rng.normal(size=n)})
+    res = profile_pair(df, "x", "y", mode="lite")
+
+    assert res.pattern != "nonmonotonic_dependence"
+    assert res.diagnostics.dependence_type == "monotone"

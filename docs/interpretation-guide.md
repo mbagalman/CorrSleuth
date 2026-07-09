@@ -548,7 +548,14 @@ Notes on the less-obvious values:
   `mode="standard"`) because the practical advice differs: look for
   periodicity — a cyclical driver, seasonality, a waveform — not a single
   inflection point. A single bend (U-shape) reads exactly 1 reversal and
-  stays `magnitude_linked`/`nonmonotone`.
+  stays `magnitude_linked`/`nonmonotone`. Unlike the other nonmonotonic
+  routes (which require both monotone metrics weak, < 0.25), the oscillation
+  route applies up to a *moderate* trend (`max(|p|, |s|) < 0.50`): an
+  oscillation on skewed one-sided support picks up a spurious moderate tilt
+  (an exponential-support sinusoid measures |s| ≈ 0.34) and would otherwise
+  fall in a dead zone; from |s| ≥ 0.50 the strong-trend
+  `mean_shape = oscillating_trend` value takes over, so coverage tiles with
+  no gap.
 - **`dependence_type = closed_loop_or_multivalued`** — dependence exists, but
   *neither variable is a function of the other* (points on a circle or ring).
   Requires `mode="deep"` (it is confirmed with Chatterjee's ξ in both

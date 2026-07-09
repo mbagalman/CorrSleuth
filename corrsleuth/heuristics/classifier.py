@@ -151,6 +151,27 @@ OSCILLATION_MIN_REVERSALS = 2
 #: now miss ~13% of sinusoids.)
 OSCILLATION_BIN_LOF_FLOOR = 0.15
 
+#: Ceiling on ``max(|p|, |s|)`` for the **oscillation** route into
+#: ``nonmonotonic_dependence`` (and the ``dependence_type = oscillating`` axis
+#: value). Deliberately *higher* than :data:`NONMONOTONIC_MONOTONE_CEILING`
+#: (0.25), which still gates the dc / sq_corr routes: an oscillation on skewed,
+#: one-sided support picks up a spurious *moderate* monotone tilt (the
+#: exponential-support sinusoid in the blind-test set measures |s| ~ 0.34),
+#: which used to land it in a dead zone — too much trend for the weak-trend
+#: routes, too little for the strong-trend ``oscillating_trend`` axis value
+#: (|s| >= 0.50). The oscillation route can afford the extra headroom because
+#: it is the strictest joint gate in the cascade (reversals >= 2 AND raw AND
+#: robust bin gain > 0.15 — pure noise never exceeds ~0.05, and smooth
+#: monotone shapes measure 0 or 1 reversals), where dc / sq_corr are single
+#: statistics that genuinely need both monotone metrics weak. Set equal to
+#: :data:`STRONG_MAGNITUDE_THRESHOLD` so oscillation coverage tiles the trend
+#: axis with no gap: below 0.50 the label route fires; at 0.50 and above the
+#: ``mean_shape = oscillating_trend`` value and its compound-trend warning take
+#: over (and rules 5/6, which all require a strong coefficient, are never in
+#: contention below it). Calibrated in
+#: validation/oscillation_ceiling_sweep.py.
+OSCILLATION_MONOTONE_CEILING = 0.50
+
 # --- Two-group / mixture split gate (see metrics/mixture.py) -----------------
 # All five constants below gate ``dependence_type = "two_group_shift"`` and its
 # warning *jointly* — the calibration sweep (validation/cluster_split_sweep.py)
@@ -423,10 +444,16 @@ def apply_heuristics(
     # many reversals with near-zero gain, and the *robust* (leave-one-bin-out)
     # gain must also clear the floor so a lone extreme-Y bin cannot fake an
     # oscillation on a structureless predictor). The last two are lite-computable, so
-    # this label is reachable in every mode for those shapes. Any route is only
-    # trusted once Pearson and Spearman are both already weak, so this never
-    # competes with rules 5/6. See BIN_LOF_R2_GAIN_THRESHOLD / SQ_CORR_THRESHOLD
-    # / OSCILLATION_* module docs.
+    # this label is reachable in every mode for those shapes.
+    #
+    # The dc / sq_corr routes are only trusted once Pearson and Spearman are
+    # both already weak (< 0.25). The oscillation route — being the strictest
+    # joint gate of the three — is allowed up to a *moderate* trend
+    # (max(|p|, |s|) < OSCILLATION_MONOTONE_CEILING = 0.50): an oscillation on
+    # skewed, one-sided support picks up a spurious moderate tilt that used to
+    # strand it in a dead zone between this rule and the strong-trend
+    # oscillating_trend axis value. Rules 5/6 all require a coefficient above
+    # 0.50, so no route here ever competes with them.
     elif (
         p < NONMONOTONIC_MONOTONE_CEILING
         and s < NONMONOTONIC_MONOTONE_CEILING
@@ -438,15 +465,16 @@ def apply_heuristics(
                 and sq_corr_robust is not None
                 and sq_corr_robust > SQ_CORR_ROBUST_FLOOR
             )
-            or (
-                reversals is not None
-                and reversals >= OSCILLATION_MIN_REVERSALS
-                and bin_lof is not None
-                and bin_lof > OSCILLATION_BIN_LOF_FLOOR
-                and bin_lof_robust is not None
-                and bin_lof_robust > OSCILLATION_BIN_LOF_FLOOR
-            )
         )
+    ) or (
+        p < OSCILLATION_MONOTONE_CEILING
+        and s < OSCILLATION_MONOTONE_CEILING
+        and reversals is not None
+        and reversals >= OSCILLATION_MIN_REVERSALS
+        and bin_lof is not None
+        and bin_lof > OSCILLATION_BIN_LOF_FLOOR
+        and bin_lof_robust is not None
+        and bin_lof_robust > OSCILLATION_BIN_LOF_FLOOR
     ):
         label = "nonmonotonic_dependence"
     # 5. monotonic_nonlinear
@@ -1043,11 +1071,15 @@ def _dependence_type_axis(
     # sinusoid also clears the dc floor in standard mode, but "nonmonotone"
     # would undersell its cyclical structure — an analyst should look for
     # periodicity, not a single inflection point). The joint gate mirrors the
-    # cascade's rule-4 oscillation route exactly; a shape that qualifies here
-    # cannot be a closed loop (a multivalued loop's bin means average the
+    # cascade's rule-4 oscillation route exactly — including its *moderate*
+    # trend ceiling (OSCILLATION_MONOTONE_CEILING, not the 0.25 the dc/sq_corr
+    # routes use), so a skew-tilted sinusoid reads "oscillating" rather than
+    # "monotone" on the strength of its spurious tilt. A shape that qualifies
+    # here cannot be a closed loop (a multivalued loop's bin means average the
     # branches, flattening the gain below the floor — a circle measures ~0.05).
     if (
-        monotone_weak
+        p < OSCILLATION_MONOTONE_CEILING
+        and s < OSCILLATION_MONOTONE_CEILING
         and reversals is not None
         and reversals >= OSCILLATION_MIN_REVERSALS
         and bin_lof is not None

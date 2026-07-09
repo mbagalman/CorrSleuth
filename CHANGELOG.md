@@ -302,6 +302,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Pearson stable. Uses the softer Cook & Weisberg `D > 0.5` cutoff (a masked
   outlier cluster deflates each point's Cook's distance below the classical
   `D > 1`).
+- **Moderate-trend oscillation detection** (`OSCILLATION_MONOTONE_CEILING =
+  0.50`, no new metric). The oscillation route into `nonmonotonic_dependence`
+  (and the `dependence_type = "oscillating"` axis value) used to share the
+  dc / sq_corr routes' weak-trend ceiling (`max(|p|, |s|) < 0.25`), which
+  stranded skew-tilted oscillations in a dead zone: a sinusoid on one-sided
+  exponential/lognormal support picks up a spurious *moderate* monotone tilt
+  (the blind-test exponential sinusoid measures |s| ≈ 0.34) — too much trend
+  for the weak-trend routes, too little for the strong-trend
+  `oscillating_trend` axis value (≥ 0.50), so it read `mixed_or_ambiguous` /
+  `monotone`. The oscillation route now has its own ceiling of 0.50 (equal to
+  `STRONG_MAGNITUDE_THRESHOLD`, so the label route and `oscillating_trend`
+  tile the trend axis with no gap, and no rule-5/6 label ever competes). The
+  route can afford the headroom because it is the strictest joint gate in the
+  cascade — reversals ≥ 2 AND raw AND leave-one-bin-out `bin_lof_r2_gain` >
+  0.15, which pure noise (≤ ~0.05) and smooth monotone shapes (0–1 reversals)
+  cannot fake. Calibrated in `validation/oscillation_ceiling_sweep.py`: 0%
+  in-zone fires for every moderate-trend negative family at every size, with
+  one documented mild residual (a noisy *tilted-U* occasionally counts 2
+  reversals — its `nonmonotonic_dependence` label is still correct; only the
+  "oscillating" axis word over-specifies the single bend); tilted and
+  skew-supported sinusoids fire 90–100%. On the blind-test data the only
+  behavior change is the exponential sinusoid resolving correctly — verified
+  by a full label/axis diff across all 25 columns x 4 distribution variants x
+  both orientations.
 - **Discontinuity / level-shift detection** (`mean_shape = "discontinuous_jump"`,
   extends `compute_segmentation` in `corrsleuth/metrics/shape.py`, no new
   dependency). A sharp jump embedded in an otherwise strong trend is invisible
