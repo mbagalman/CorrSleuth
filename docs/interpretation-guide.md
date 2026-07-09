@@ -717,8 +717,14 @@ consistently decreases) with `x`, even if the rate changes. It is
 In `lite` mode CorrSleuth can detect monotonic-nonlinear relationships (via
 the rank-vs-linear gap or the bin lack-of-fit diagnostic), magnitude/radial
 nonmonotonic dependence such as U-shapes and circular data (via `sq_corr`),
-and oscillating/cyclical shapes (via the bin-reversal gate, reported as
-`dependence_type = oscillating`). A nonmonotonic shape outside those families
+oscillating/cyclical shapes (via the bin-reversal gate, reported as
+`dependence_type = oscillating`), and single-bend V shapes (one robust
+bin-mean reversal with a very high lack-of-fit gain, reported as
+`dependence_type = nonmonotone`). The single-bend route exists because a
+*linear-armed* V defeats `sq_corr` even when perfectly centered: on even point
+density the vertex value sits far below the mean of |Y|, so the centered
+square is minimized mid-arm rather than at the vertex, folding the squares.
+A nonmonotonic shape outside those families
 can still be missed in `lite` mode — if the label reads
 `weak_or_no_relationship` but you suspect hidden structure, run with
 `mode="standard"` or `mode="deep"` so distance correlation or Chatterjee's ξ
