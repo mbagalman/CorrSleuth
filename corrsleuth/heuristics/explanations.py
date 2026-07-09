@@ -81,14 +81,19 @@ def _nonmonotonic_context(
 ) -> list[str]:
     """Describe *why* a pair reads as nonmonotonic, by the route that fired.
 
-    The label has three routes (distance correlation, the squared-value
-    correlation ``sq_corr``, and the bin-reversal oscillation gate), so crediting
-    distance correlation unconditionally is wrong: for a circle dCor sits ~0.2
-    (below its floor) and the label is driven by ``sq_corr`` instead, and in
-    ``lite``/``deep`` mode dCor may be absent entirely while ``sq_corr`` or the
-    oscillation gate fires. The secondary ``dependence_type`` axis already
-    records which mechanism fired, so key off it — this keeps the explanation
-    consistent with the axis and quotes the evidence that actually matched.
+    The label has four routes (distance correlation, the squared-value
+    correlation ``sq_corr``, the bin-reversal oscillation gate, and a
+    single-bend gate for V / off-center-U shapes), so crediting distance
+    correlation unconditionally is wrong: for a circle dCor sits ~0.2 (below its
+    floor) and the label is driven by ``sq_corr`` instead, and in ``lite`` mode
+    dCor is absent entirely while ``sq_corr``, the oscillation gate, or the
+    single-bend gate fires. The secondary ``dependence_type`` axis already
+    records which mechanism fired (``magnitude_linked`` / ``oscillating`` /
+    ``closed_loop_or_multivalued`` / ``nonmonotone``), so key off it — this keeps
+    the explanation consistent with the axis and quotes the evidence that
+    actually matched. The single-bend route sets the generic ``nonmonotone``
+    value, which has no dedicated branch below and lands on the fallback text
+    (appropriate for a V: "inspect the scatter plot for U-shaped ... structure").
     """
     base = f"Pearson ({_fmt(pearson)}) and Spearman ({_fmt(spearman)}) are weak"
 
@@ -134,8 +139,10 @@ def _nonmonotonic_context(
             "disagreement is evidence consistent with dependence that is not "
             "simply increasing or decreasing."
         ]
-    # Defensive fallback: each genuine route sets one of the branches above once
-    # the diagnostics are present; this covers a result assembled without them.
+    # Fallback for the routes with no dedicated branch above: the lite-mode
+    # single-bend route (dependence_type="nonmonotone", dcor absent) lands here
+    # by design, as does a result assembled without diagnostics. The generic
+    # "inspect the scatter" text fits a V / off-center U well.
     return [
         f"{base}, yet the pair reads as nonmonotonic — inspect the scatter plot "
         "for U-shaped, cyclical, or radial structure the monotone metrics miss."
@@ -260,6 +267,15 @@ def generate_explanation(
     include_caveat: bool = True,
     diagnostics: "MetricDiagnostics | None" = None,
 ) -> str:
+    """Return the human-readable explanation string for a primary ``pattern``.
+
+    Starts from the fixed per-label template, appends any metric/diagnostic
+    context sentences (which, for ``nonmonotonic_dependence``, name the route
+    that actually fired — see :func:`_metric_context` /
+    :func:`_nonmonotonic_context`), and adds the non-causal caveat unless
+    ``include_caveat`` is False. Unknown patterns fall back to the
+    ``mixed_or_ambiguous`` template.
+    """
     exp = _EXPLANATIONS.get(pattern, _EXPLANATIONS["mixed_or_ambiguous"])
 
     context_sentences = _metric_context(pattern, metrics, diagnostics)
@@ -272,4 +288,7 @@ def generate_explanation(
 
 
 def generate_recommendations(pattern: str) -> list[str]:
+    """Return the fixed list of next-step recommendations for a primary
+    ``pattern`` (falling back to the ``mixed_or_ambiguous`` list for an
+    unknown label)."""
     return _RECOMMENDATIONS.get(pattern, _RECOMMENDATIONS["mixed_or_ambiguous"])

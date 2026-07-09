@@ -161,6 +161,7 @@ class MetricDiagnostics:
     functional_direction: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """Return the diagnostics as a plain ``{field_name: value}`` dict."""
         return asdict(self)
 
 

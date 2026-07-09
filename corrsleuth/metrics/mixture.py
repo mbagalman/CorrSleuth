@@ -17,8 +17,9 @@ lie). All quantities are closed-form numpy on sorted arrays — no clustering
 library, no new dependency, cheap enough to run in every mode:
 
 - ``cluster_split_r2`` — the variance share explained by the best two-group
-  split of ``t`` (exact 1-D 2-means via a prefix-sum scan, the same O(n)
-  pattern as the segmentation search). Unimodal data cannot exceed ~0.75 no
+  split of ``t`` (exact 1-D 2-means via an O(n) prefix-sum scan over the
+  sorted values, the same pattern as the segmentation search; the sort makes
+  the overall cost O(n log n)). Unimodal data cannot exceed ~0.75 no
   matter how strong the correlation (a normal tops out at 2/pi ~ 0.64, a
   uniform at 0.75, asymptotically); two genuinely separated groups push it
   well above.

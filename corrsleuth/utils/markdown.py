@@ -8,10 +8,14 @@ import pandas as pd
 
 
 def format_markdown_value(value: float | None) -> str:
+    """Format a numeric value to 3 decimals, or ``"NA"`` for ``None``/NaN."""
     return f"{value:.3f}" if value is not None and pd.notna(value) else "NA"
 
 
 def escape_markdown_cell(value: Any) -> str:
+    """Stringify and escape a value for a Markdown *table cell*: backslash-escape
+    every metacharacter that would alter rendering (``|_*`[]<>``), collapse
+    newlines to spaces, and render ``None``/NaN as ``"NA"``."""
     if value is None:
         return "NA"
     try:
@@ -57,6 +61,9 @@ def escape_markdown_code_span(value: Any) -> str:
 
 
 def markdown_table(headers: list[str], rows: list[list[Any]]) -> str:
+    """Build a Markdown table from ``headers`` and ``rows`` (a list of
+    equal-length cell lists). Every cell — headers included — is passed through
+    :func:`escape_markdown_cell`."""
     # Escape header cells too: today all call sites pass hardcoded literals, but
     # escaping keeps the helper safe if a header is ever derived from data.
     lines = [

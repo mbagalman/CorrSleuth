@@ -98,6 +98,8 @@ def is_real_numeric_dtype(series: pd.Series) -> bool:
 
 
 def is_constant_series(series: pd.Series) -> bool:
+    """True when ``series`` has no spread: at most one distinct value, or a
+    standard deviation of exactly 0."""
     return series.nunique() <= 1 or series.std() == 0
 
 

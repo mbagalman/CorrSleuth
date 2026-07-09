@@ -138,9 +138,10 @@ def compute_influential_mask(pair: CleanPair) -> np.ndarray | None:
     variance-shape signal is really just this same leverage artifact — see
     ``heuristics/classifier.py``'s ``detect_metric_warnings``).
 
-    ``None`` under the same guards as :func:`compute_influence` (constant
-    input, ``n_used`` below :data:`_MIN_N_FOR_INFLUENCE`, or a degenerate fit
-    with no residual structure to flag).
+    ``None`` for constant input or ``n_used`` below
+    :data:`_MIN_N_FOR_INFLUENCE`. A degenerate (near-perfect) linear fit has no
+    residual structure, so every Cook's distance is 0 and the mask is
+    **all-False** (not ``None``) — no row exceeds the threshold.
     """
     if pair.x_is_constant or pair.y_is_constant:
         return None
