@@ -302,6 +302,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Pearson stable. Uses the softer Cook & Weisberg `D > 0.5` cutoff (a masked
   outlier cluster deflates each point's Cook's distance below the classical
   `D > 1`).
+- **Discontinuity / level-shift detection** (`mean_shape = "discontinuous_jump"`,
+  extends `compute_segmentation` in `corrsleuth/metrics/shape.py`, no new
+  dependency). A sharp jump embedded in an otherwise strong trend is invisible
+  to the R²-scale diagnostics — the trend soaks up the variance, so a 6.5σ
+  level shift in a |p| ≈ 0.97 relationship reads `bin_lof_r2_gain` ≈ 0.047 and
+  `segment_gain` ≈ 0.05 and passed as `near_linear` with `mean_shape = linear`
+  (blind-test X22, in every distribution variant). The new
+  `segment_jump_ratio` diagnostic measures the fitted gap between the two
+  lines of the best *unconstrained* two-line split, at the boundary x, in
+  units of the **noisier side's** residual σ — taken as the min over the
+  global fit and localized refits on windows adjacent to the boundary. The
+  unconstrained fit makes a continuous kink read ~0 (its two lines meet at the
+  boundary); the localization collapses a smooth curve's chord-displacement
+  artifact (a moderate sigmoid drops from ~4.3 globally to ~0.5 locally); and
+  the noisier-side σ keeps a heavy tail's separation from the bulk (a leverage
+  artifact) from reading as a jump. When the ratio clears 3.0 jointly with
+  sloped segments, monotone bin means, and a real rank trend
+  (`_is_discontinuous_jump`), the pair reads `mean_shape =
+  "discontinuous_jump"`, `breakpoint_x` reports where the jump sits, and a
+  warning advises looking for a threshold, policy change, or regime switch at
+  that point. The primary label is unchanged (the trend genuinely dominates).
+  Calibrated in `validation/segment_jump_sweep.py`: one residual fire in 720
+  negative trials (a single seed of an adversarial near-noiseless folded
+  heavy-tail family, locally indistinguishable from a jump), all real-data
+  checks clean; genuine jumps detected from ~3σ (partial) and 70–100% from 4σ
+  up at every size. Withheld below n = 150, where a moderate smooth curve is
+  not reliably separable from a jump.
 - **Two-group / mixture detection** (`dependence_type = "two_group_shift"`,
   new `corrsleuth/metrics/mixture.py`, no new dependency). A pooled correlation
   can be carried almost entirely by a *between-group mean shift*: two

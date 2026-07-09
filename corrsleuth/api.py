@@ -97,11 +97,16 @@ def _build_diagnostics(
     segmentation = segmentation or {}
     segment_gain_result = segmentation.get("segment_gain")
     segment_stepness_result = segmentation.get("segment_stepness")
+    segment_jump_result = segmentation.get("segment_jump_ratio")
     breakpoint_result = segmentation.get("breakpoint_x")
     # The breakpoint location is only meaningful — and only reported — when the
-    # mean reads as a step/threshold; for a smooth curve the "break" is an
-    # artifact of forcing a single split onto a gradual bend.
-    report_breakpoint = axes.get("mean_shape") == "step_or_threshold"
+    # mean reads as a step/threshold or a discontinuous jump; for a smooth
+    # curve the "break" is an artifact of forcing a single split onto a
+    # gradual bend.
+    report_breakpoint = axes.get("mean_shape") in (
+        "step_or_threshold",
+        "discontinuous_jump",
+    )
     influence = influence or {}
     max_cook_result = influence.get("max_cook_distance")
     n_influential_result = influence.get("n_influential_points")
@@ -133,6 +138,7 @@ def _build_diagnostics(
         segment_stepness=segment_stepness_result.value
         if segment_stepness_result
         else None,
+        segment_jump_ratio=segment_jump_result.value if segment_jump_result else None,
         breakpoint_x=breakpoint_result.value
         if (report_breakpoint and breakpoint_result)
         else None,

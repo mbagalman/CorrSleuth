@@ -451,7 +451,7 @@ available metrics it is `None` (rendered `NA`).
 
 | Axis | Question | Values |
 |---|---|---|
-| `mean_shape` | Is E[Y\|X] a straight line, a smooth curve, a step, or a trend with a superimposed oscillation? | `linear`, `smooth_curve`, `step_or_threshold`, `oscillating_trend`, `curved`, `None` |
+| `mean_shape` | Is E[Y\|X] a straight line, a smooth curve, a step, a trend with a superimposed oscillation, or a trend with a discontinuity? | `linear`, `smooth_curve`, `step_or_threshold`, `oscillating_trend`, `discontinuous_jump`, `curved`, `None` |
 | `variance_shape` | Does the spread of Y change with X? | `constant`, `increasing_spread`, `decreasing_spread`, `edge_high_spread`, `center_high_spread`, `None` |
 | `dependence_type` | What kind of dependence is it? | `monotone`, `magnitude_linked`, `oscillating`, `nonmonotone`, `closed_loop_or_multivalued`, `two_group_shift`, `None` |
 | `outlier_sensitivity` | Do a few rows drive the summary? | `low`, `single_point_driven`, `high_leverage_cluster`, `high`, `unavailable` |
@@ -484,6 +484,23 @@ Notes on the less-obvious values:
   `oscillating_trend` (and a companion "compound trend-plus-wave" warning) is the
   one place this pattern surfaces. A pure sinusoid or U-shape (weak Spearman)
   does not qualify — it stays `curved` with `dependence_type` = `oscillating`.
+  **`discontinuous_jump`** is a trend that contains a genuine **level shift**:
+  the best unconstrained two-line fit leaves a gap at the boundary that is
+  large relative to the *noisier side's* residual noise (`segment_jump_ratio`
+  on `result.diagnostics`, gated at 3σ) and survives localized refits around
+  the boundary (which is what separates it from a smooth curve's
+  chord-displacement artifact). This is the case the R²-scale diagnostics
+  structurally miss — a jump that is huge against the noise but tiny against
+  the trend's variance (a 6.5σ level shift in a \|p\| ≈ 0.97 relationship
+  reads `bin_lof_r2_gain` ≈ 0.047 and would otherwise pass as `linear`).
+  Guards: the segments must be *sloped* (a flat-flat jump is already
+  `step_or_threshold`), the binned means must be monotone (a fold or wave is
+  not a level shift), and a real *rank* trend must exist for the jump to be
+  embedded in. `breakpoint_x` reports where the jump sits, and a warning
+  advises looking for a threshold, policy change, or regime switch there.
+  Below n = 150 the ratio is withheld (a moderate smooth curve is not reliably
+  separable from a jump at that size). Detection resolution is about 3σ:
+  jumps ≥ 4σ are caught 70–100% of the time, 3σ only partially, 2σ not at all.
 - **`variance_shape`** measures *heteroscedasticity* — whether the residual
   spread around the mean trend changes with X (a Breusch-Pagan test, with a
   Goldfeld-Quandt effect-size floor and direction). `increasing_spread` is the

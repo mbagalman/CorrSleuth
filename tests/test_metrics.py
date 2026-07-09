@@ -1407,3 +1407,67 @@ def test_cluster_split_within_pearson_reports_surviving_trend():
 
     assert result["cluster_split_r2"].value > 0.70  # the split is still there
     assert result["pearson_within_cluster"].value > 0.5  # ...but the trend survives
+
+
+# --- Discontinuity diagnostics (segment_jump_ratio) ---
+
+
+def _jump_pair(n=500, js=6.0, sigma=0.3, seed=0, slope_change=False):
+    """A linear trend with a `js`-sigma level shift at x=0."""
+    rng = np.random.default_rng(seed)
+    u = rng.uniform(-3, 3, size=n)
+    if slope_change:
+        y = np.where(u > 0, 0.5 * u + js * sigma, u) + rng.normal(0, sigma, n)
+    else:
+        y = u + js * sigma * (u > 0) + rng.normal(0, sigma, n)
+    return validate_pair(pd.DataFrame({"x": u, "y": y}), "x", "y")
+
+
+def test_segment_jump_ratio_measures_discontinuity_in_sigmas():
+    """A 6-sigma level shift reads ~6 on the jump-ratio scale, with or without
+    a slope change -- while segment_gain (R-squared scale) stays tiny because
+    the dominant trend soaks up the variance."""
+    for slope_change in (False, True):
+        seg = compute_segmentation(_jump_pair(slope_change=slope_change))
+        assert 4.0 < seg["segment_jump_ratio"].value < 9.0
+        assert seg["segment_gain"].value < 0.25
+
+
+def test_segment_jump_ratio_near_zero_for_continuous_shapes():
+    """Continuous relationships -- a line, a piecewise-linear kink (however
+    sharp), a smooth curve -- are fitted by two lines that nearly meet at the
+    boundary, so the ratio sits far below the 3.0 gate."""
+    rng = np.random.default_rng(1)
+    n = 500
+    u = rng.uniform(-3, 3, size=n)
+    shapes = {
+        "linear": 0.8 * u + rng.normal(0, 0.3, n),
+        "kink": np.where(u > 0, 2.0 * u, 0.2 * u) + rng.normal(0, 0.3, n),
+        "exp": np.exp(0.8 * u) + rng.normal(0, 0.2, n),
+    }
+    for name, y in shapes.items():
+        pair = validate_pair(pd.DataFrame({"x": u, "y": y}), "x", "y")
+        ratio = compute_segmentation(pair)["segment_jump_ratio"].value
+        assert ratio < 2.0, f"{name}: {ratio}"
+
+
+def test_segment_jump_ratio_localization_collapses_smooth_sigmoid():
+    """A moderate sigmoid fakes a boundary gap under the global two-line fit
+    (its tails displace the chords vertically), but the localized refit tracks
+    the curve through the boundary, so the reported min collapses."""
+    rng = np.random.default_rng(2)
+    n = 500
+    u = rng.uniform(-3, 3, size=n)
+    y = 1 / (1 + np.exp(-2 * u)) + rng.normal(0, 0.05, n)
+    pair = validate_pair(pd.DataFrame({"x": u, "y": y}), "x", "y")
+    assert compute_segmentation(pair)["segment_jump_ratio"].value < 2.0
+
+
+def test_segment_jump_ratio_unavailable_below_dedicated_floor():
+    """Below n=150 a moderate smooth curve is not reliably separable from a
+    jump, so the ratio is withheld while the other segmentation outputs (which
+    keep the n>=50 floor) still report."""
+    seg = compute_segmentation(_jump_pair(n=120))
+    assert seg["segment_jump_ratio"].value is None
+    assert seg["segment_gain"].value is not None
+    assert seg["segment_stepness"].value is not None

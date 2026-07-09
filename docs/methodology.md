@@ -265,7 +265,14 @@ smooth curve's segments are sloped. A strong monotone trend whose binned means
 still reverse direction repeatedly (robustly) reads instead as
 `oscillating_trend` — a trend with a superimposed wave (compound trend + periodic
 residual), detected before the step/smooth split so the wave is not misread as a
-step. `dependence_type` can also read `two_group_shift`
+step. A trend containing a genuine **level shift** reads `discontinuous_jump`:
+the unconstrained two-line fit's boundary gap, in units of the noisier side's
+residual sigma (`segment_jump_ratio`), survives localized refits around the
+boundary — catching a jump that is huge against the noise but invisible on the
+R²-scale diagnostics because the trend soaks up the variance. A continuous
+kink, a smooth curve (whose chords displace only globally), a fold, and a
+heavy tail's separation from the bulk are all excluded by construction and by
+the joint gates. `dependence_type` can also read `two_group_shift`
 (`metrics/mixture.py`): the pooled correlation is carried almost entirely by
 the separation between two well-separated groups of rows — a high-variance
 two-group split of the association-axis projection with an empty valley at the

@@ -570,6 +570,28 @@ def test_cluster_split_diagnostics_surfaced_on_every_output_form():
     assert escape_markdown_cell("pearson_within_cluster") in res.to_markdown()
 
 
+def test_segment_jump_ratio_surfaced_on_every_output_form():
+    """The discontinuity diagnostic is stored on result.diagnostics and appears
+    in summary, markdown, to_dict, and to_frame; breakpoint_x is reported for a
+    discontinuous_jump (not only for a step_or_threshold)."""
+    rng = np.random.default_rng(11)
+    n = 500
+    u = rng.uniform(-3, 3, size=n)
+    y = u + 6 * 0.3 * (u > 0) + rng.normal(0, 0.3, n)
+    res = profile_pair(pd.DataFrame({"x": u, "y": y}), "x", "y")  # lite mode
+
+    d = res.diagnostics
+    assert d.mean_shape == "discontinuous_jump"
+    assert d.segment_jump_ratio > 4.0
+    assert d.breakpoint_x is not None
+
+    nested = res.to_dict()["diagnostics"]
+    assert nested["segment_jump_ratio"] == pytest.approx(d.segment_jump_ratio)
+    assert "diagnostic_segment_jump_ratio" in res.to_frame().columns
+    assert "segment_jump_ratio" in res.summary()
+    assert escape_markdown_cell("segment_jump_ratio") in res.to_markdown()
+
+
 def test_secondary_axes_default_to_na_when_not_assessable():
     """A constant input can populate no axes; they render as NA rather than
     raising, and serialize as None."""

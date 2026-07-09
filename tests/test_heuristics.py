@@ -1424,3 +1424,88 @@ def test_two_group_shift_end_to_end_and_warning():
     res_step = profile_pair(step, "x", "y", mode="lite")
     assert res_step.diagnostics.dependence_type != "two_group_shift"
     assert not any("groups of rows" in w for w in res_step.warnings)
+
+
+def test_axes_discontinuous_jump_when_all_gates_hold():
+    """A strong trend with a large fitted level shift (sloped segments, monotone
+    bin means) reads mean_shape=discontinuous_jump -- even when bin_lof sits
+    under its threshold, i.e. from the branch that would otherwise say linear."""
+    metrics = _axis_metrics(
+        pearson=0.97,
+        spearman=0.98,
+        bin_lof_r2_gain=0.047,  # under BIN_LOF_R2_GAIN_THRESHOLD: X22's regime
+        bin_reversal_count=0,
+        segment_stepness=-1.5,
+        segment_jump_ratio=6.4,
+    )
+    axes = derive_diagnostic_axes(metrics, "near_linear", "stable")
+    assert axes["mean_shape"] == "discontinuous_jump"
+
+
+@pytest.mark.parametrize(
+    ("override", "expected"),
+    [
+        # Flat segments: the step story owns flat jumps (with bin_lof under
+        # its threshold this scenario reads linear; a real flat step has high
+        # bin_lof and reaches step_or_threshold through the curved branch).
+        ({"segment_stepness": 1.0}, "linear"),
+        # A bend in the bin means: a fold or U, not a level shift.
+        ({"bin_reversal_count": 1}, "linear"),
+        # No rank trend for the jump to be embedded in (a leverage-style
+        # Pearson alone cannot supply it); the linear check still holds.
+        ({"spearman": 0.1, "pearson": 0.75}, "linear"),
+        # The gap itself is too small.
+        ({"segment_jump_ratio": 2.0}, "linear"),
+    ],
+)
+def test_axes_discontinuous_jump_requires_every_gate(override, expected):
+    values = dict(
+        pearson=0.97,
+        spearman=0.98,
+        bin_lof_r2_gain=0.047,
+        bin_reversal_count=0,
+        segment_stepness=-1.5,
+        segment_jump_ratio=6.4,
+    )
+    values.update(override)
+    axes = derive_diagnostic_axes(_axis_metrics(**values), "near_linear", "stable")
+    assert axes["mean_shape"] == expected
+
+
+def test_axes_discontinuous_jump_in_curved_branch_beats_smooth_curve():
+    """When bin_lof does clear its threshold (a bigger jump), the jump check
+    runs before the step/smooth refinement, which would otherwise misread the
+    sloped-segment discontinuity as a smooth bend."""
+    metrics = _axis_metrics(
+        pearson=0.91,
+        spearman=0.95,
+        bin_lof_r2_gain=0.13,
+        bin_reversal_count=0,
+        segment_stepness=0.3,
+        segment_jump_ratio=6.7,
+    )
+    axes = derive_diagnostic_axes(metrics, "monotonic_nonlinear", "stable")
+    assert axes["mean_shape"] == "discontinuous_jump"
+
+
+def test_discontinuous_jump_end_to_end_and_warning():
+    """A linear trend with a 6-sigma level shift profiles as
+    mean_shape=discontinuous_jump with the level-shift warning and a populated
+    breakpoint_x near the true jump; a continuous kink stays clean."""
+    rng = np.random.default_rng(11)
+    n = 500
+    u = rng.uniform(-3, 3, size=n)
+    y = u + 6 * 0.3 * (u > 0) + rng.normal(0, 0.3, n)
+    res = profile_pair(pd.DataFrame({"x": u, "y": y}), "x", "y", mode="lite")
+
+    assert res.diagnostics.mean_shape == "discontinuous_jump"
+    assert res.diagnostics.segment_jump_ratio > 4.0
+    assert abs(res.diagnostics.breakpoint_x) < 0.4  # the true jump is at x=0
+    assert any("discontinuity" in w for w in res.warnings)
+    # The primary label still reports the dominant trend; the axis carries the jump.
+    assert res.pattern in ("near_linear", "monotonic_nonlinear")
+
+    kink = np.where(u > 0, 2.0 * u, 0.2 * u) + rng.normal(0, 0.3, n)
+    res_kink = profile_pair(pd.DataFrame({"x": u, "y": kink}), "x", "y", mode="lite")
+    assert res_kink.diagnostics.mean_shape != "discontinuous_jump"
+    assert not any("discontinuity" in w for w in res_kink.warnings)

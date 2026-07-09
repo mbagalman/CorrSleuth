@@ -239,6 +239,35 @@ BOWTIE_RATIO_FLOOR = 2.5
 #: segments is essential). The 0.5 cut sits in the wide empty gap between them.
 SEGMENT_STEPNESS_THRESHOLD = 0.5
 
+#: ``segment_jump_ratio`` (see metrics/shape.py) above which a trend carries a
+#: genuine **discontinuity** — a level shift whose fitted gap at the breakpoint
+#: is at least this many of the *noisier side's* residual sigmas, surviving
+#: both the global two-line fit and the localized refits (so a smooth curve's
+#: chord-displacement artifact and a heavy tail's separation from the bulk
+#: cannot qualify). Applied jointly with three guards (see
+#: ``_is_discontinuous_jump``): ``segment_stepness`` below
+#: :data:`SEGMENT_STEPNESS_THRESHOLD` (a flat-flat jump is already
+#: ``step_or_threshold``), **zero** robust bin-mean reversals (a co-directional
+#: level shift keeps the binned conditional mean monotone; a fold/U reads 1
+#: reversal and a wave 2+), and a real *rank* trend (``|spearman|`` at least
+#: :data:`WEAK_MAGNITUDE_THRESHOLD` — deliberately not ``max(|p|, |s|)``, so a
+#: leverage-manufactured Pearson on a heavy-tailed folded shape cannot supply
+#: the "trend" the jump is supposedly embedded in). On the calibration sweep
+#: (validation/segment_jump_sweep.py): one residual fire in 720 negative
+#: trials (19 families x 4 sizes x 10 seeds — linear, continuous kinks, smooth
+#: curves, sigmoids, sinusoids, flat steps, heavy tails, folded heavy tails,
+#: leverage, noise), the residual being a single seed of the adversarial
+#: *near-noiseless folded heavy tail* family, which is locally a noiseless
+#: smooth curve — indistinguishable from a jump at one sampling; every
+#: real-data check (all 25 blind-test columns x 4 distribution variants x both
+#: orientations) is clean. The worst un-gated smooth-family value was 2.75
+#: across a 50-seed stress at n >= 150 (the metric's own floor); genuine jumps
+#: fire from ~3 sigma (partial — the resolution limit) and 70-100% from 4
+#: sigma up at every size. The ratio scale is the point: a 7-sigma jump riding
+#: a strong linear trend reads ~0.05 on the R-squared ``segment_gain`` scale
+#: (the trend soaks up the variance) but ~7 here.
+SEGMENT_JUMP_RATIO_FLOOR = 3.0
+
 #: Magnitude above which Pearson and Spearman having *opposite signs* is worth
 #: a directionality warning. Below this both coefficients are near zero and a
 #: sign disagreement is just noise, so the warning would be spurious.
@@ -689,6 +718,29 @@ def detect_metric_warnings(
             f"groups separately before relying on the pooled value."
         )
 
+    # Discontinuity / level shift (see _is_discontinuous_jump and
+    # metrics/shape.py): a jump that is large against the residual noise hides
+    # inside an otherwise strong trend, because on the R-squared scale the trend
+    # soaks up the variance. Surfaced here so a near_linear label does not
+    # silently paper over a regime change.
+    s_signed = spearman  # already extracted above
+    p_for_jump = abs(pearson) if pearson is not None else None
+    s_for_jump = abs(s_signed) if s_signed is not None else None
+    jump_ratio = _finite_metric_value(metrics.get("segment_jump_ratio"))
+    stepness = _finite_metric_value(metrics.get("segment_stepness"))
+    if _is_discontinuous_jump(p_for_jump, s_for_jump, jump_ratio, stepness, reversals):
+        assert jump_ratio is not None
+        breakpoint_x = _finite_metric_value(metrics.get("breakpoint_x"))
+        location = f" near x = {breakpoint_x:.3g}" if breakpoint_x is not None else ""
+        warnings.append(
+            f"The trend contains a discontinuity{location}: the fitted level "
+            f"jumps by ~{jump_ratio:.1f}x the residual noise between the two "
+            f"sides, while each side keeps its own slope. A single straight "
+            f"line papers over this level shift -- look for a threshold, "
+            f"policy change, or regime switch at that point, and consider "
+            f"fitting the two regimes separately."
+        )
+
     return warnings
 
 
@@ -737,6 +789,51 @@ def _is_oscillating_trend(
     )
 
 
+def _is_discontinuous_jump(
+    p: float | None,
+    s: float | None,
+    jump_ratio: float | None,
+    stepness: float | None,
+    reversals: float | None,
+) -> bool:
+    """True when a trending relationship carries a genuine **discontinuity**: a
+    level shift whose fitted gap at the breakpoint is large relative to the
+    residual noise (``segment_jump_ratio``, already robust to smooth-curve
+    artifacts via its localized refits — see metrics/shape.py).
+
+    Three guards keep this specific: the segments must be *sloped*
+    (``stepness`` below the step threshold — a flat-flat jump is already
+    ``step_or_threshold`` and needs no second name), the binned conditional
+    mean must be **monotone** (zero robust reversals: a co-directional level
+    shift preserves monotonicity, while a single bend — a fold or U — reads 1
+    and a wave reads 2+, and neither is a level shift), and there must be a
+    real **rank** trend for the discontinuity to be embedded
+    in. The trend gate deliberately reads Spearman, not ``max(|p|, |s|)``: a
+    heavy-tailed folded shape (e.g. a degenerate U against a lognormal
+    variable) can carry a leverage-manufactured Pearson of ~0.75 while its
+    rank trend is weak and *opposite in sign* — there is no coherent trend for
+    a discontinuity to live in, and the boundary gap the two-line fit finds
+    there is the fold's branch separation, not a level shift. This is the case
+    the R-squared-scale diagnostics structurally miss: a jump that is huge
+    against the noise but small against the trend's variance (e.g. a 7-sigma
+    level shift in a |p| ~ 0.97 linear relationship reads ``bin_lof_r2_gain``
+    ~ 0.05 and ``segment_gain`` ~ 0.05 — both at their thresholds' edge —
+    while reading ~7 on the jump-ratio scale). See
+    :data:`SEGMENT_JUMP_RATIO_FLOOR` for the calibration.
+    """
+    return (
+        p is not None
+        and s is not None
+        and s >= WEAK_MAGNITUDE_THRESHOLD
+        and jump_ratio is not None
+        and jump_ratio > SEGMENT_JUMP_RATIO_FLOOR
+        and stepness is not None
+        and stepness < SEGMENT_STEPNESS_THRESHOLD
+        and reversals is not None
+        and reversals < 1  # monotone bin means: a level shift preserves them
+    )
+
+
 def _is_two_group_shift(
     p: float | None,
     split_r2: float | None,
@@ -780,9 +877,11 @@ def _mean_shape_axis(
     segment_stepness: float | None,
     bin_lof_robust: float | None = None,
     reversals: float | None = None,
+    segment_jump_ratio: float | None = None,
 ) -> str | None:
-    """Is E[Y|X] a straight line, a smooth curve, a step, or a trend with a
-    superimposed oscillation? (``None`` when not assessable.)"""
+    """Is E[Y|X] a straight line, a smooth curve, a step, a trend with a
+    superimposed oscillation, or a trend with a discontinuity? (``None`` when
+    not assessable.)"""
     if p is None or s is None:
         return None
     # Curvature via either route the cascade uses for monotonic_nonlinear: a
@@ -824,6 +923,14 @@ def _mean_shape_axis(
         # its oscillation instead.
         if _is_oscillating_trend(s, reversals, bin_lof_robust):
             return "oscillating_trend"
+        # A sloped trend with a genuine level shift (a jump discontinuity) —
+        # detected before the step-vs-smooth refinement, which would misread the
+        # discontinuity as a smooth bend (its segments are sloped, so stepness
+        # reads low). See _is_discontinuous_jump.
+        if _is_discontinuous_jump(
+            p, s, segment_jump_ratio, segment_stepness, reversals
+        ):
+            return "discontinuous_jump"
         # Refine a *monotone* curve (strong Spearman) into a step/threshold jump
         # vs a smooth (or piecewise) bend, from the single-breakpoint stepness.
         # A non-monotone curve (weak Spearman, e.g. a U-shape) stays the generic
@@ -836,6 +943,14 @@ def _mean_shape_axis(
                 else "smooth_curve"
             )
         return "curved"
+    # A discontinuity can hide inside an apparently linear trend: a jump that is
+    # huge against the residual noise but small against the trend's variance
+    # leaves bin_lof under its threshold (the R-squared scale washes it out), so
+    # the pair never reaches the curved branch above. The jump ratio is measured
+    # against the noise, not the variance, so it still sees it. This is the X22
+    # blind-test case: |p| ~ 0.97, bin_lof ~ 0.047, and a 6.5-sigma level shift.
+    if _is_discontinuous_jump(p, s, segment_jump_ratio, segment_stepness, reversals):
+        return "discontinuous_jump"
     # Assert "linear" only when we actually checked for curvature (the
     # lack-of-fit test ran) and there is a real trend, or when both coefficients
     # are strong and close (the near_linear regime). Otherwise the shape of the
@@ -1073,6 +1188,7 @@ def derive_diagnostic_axes(
     gq_ratio = _finite_metric_value(metrics.get("gq_ratio"))
     bowtie_ratio = _finite_metric_value(metrics.get("bowtie_ratio"))
     segment_stepness = _finite_metric_value(metrics.get("segment_stepness"))
+    segment_jump_ratio = _finite_metric_value(metrics.get("segment_jump_ratio"))
     n_influential = _finite_metric_value(metrics.get("n_influential_points"))
     cluster_split_r2 = _finite_metric_value(metrics.get("cluster_split_r2"))
     cluster_valley_share = _finite_metric_value(metrics.get("cluster_valley_share"))
@@ -1081,7 +1197,13 @@ def derive_diagnostic_axes(
 
     return {
         "mean_shape": _mean_shape_axis(
-            p, s, bin_lof, segment_stepness, bin_lof_robust, reversals
+            p,
+            s,
+            bin_lof,
+            segment_stepness,
+            bin_lof_robust,
+            reversals,
+            segment_jump_ratio,
         ),
         "variance_shape": _variance_shape_axis(
             bp_pvalue, gq_ratio, bin_lof, bowtie_ratio
