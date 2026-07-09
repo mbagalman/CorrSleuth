@@ -393,7 +393,37 @@ _MIN_N_FOR_SEGMENTATION = 50
 #: splits leaving at least this fraction on each side.
 _SEGMENT_MIN_FRACTION = 0.1
 
-_SEGMENT_NAMES = ("segment_gain", "breakpoint_x", "segment_stepness")
+_SEGMENT_NAMES = (
+    "segment_gain",
+    "breakpoint_x",
+    "segment_stepness",
+    "segment_jump_ratio",
+)
+
+#: Cap on ``segment_jump_ratio`` when the two-line fit is (near-)noiseless, so a
+#: perfect piecewise fit reports a large finite ratio instead of infinity
+#: (which would not survive JSON serialization). Far above any gate.
+_SEGMENT_JUMP_RATIO_CAP = 100.0
+
+#: Minimum rows before ``segment_jump_ratio`` is reported (the other
+#: segmentation outputs keep the lower :data:`_MIN_N_FOR_SEGMENTATION` floor).
+#: Below ~150 rows a moderate smooth curve is not reliably separable from a
+#: genuine discontinuity: the localization windows are too short to be both
+#: stable and local, and on the stress sweep a moderate sigmoid's ratio tail
+#: crossed the classifier floor at n = 100 (max 3.58 across 30 seeds) while
+#: staying comfortably under it from n = 150 up (max 2.75 across 50 seeds x 6
+#: smooth families at n in {150, 200}).
+_MIN_N_FOR_JUMP_RATIO = 150
+
+#: Second window size (points per side) for the localized jump refit (see
+#: ``compute_segmentation``). The localization is evaluated at both the 10%
+#: segment fraction and this fixed count, taking the minimum ratio: at small n
+#: the 10% window (10 points at n=100) is noisy and can fail to collapse a
+#: smooth curve's spurious global gap, while the fixed window is stabler; at
+#: small n the fixed window covers too large a fraction to be local, while the
+#: 10% window is. A genuine jump keeps its full gap at every window, so the
+#: minimum only removes smooth-curve artifacts, never real discontinuities.
+_LOCAL_JUMP_WINDOW_POINTS = 25
 
 
 def _segmentation_no_value() -> dict[str, MetricResult]:
@@ -423,6 +453,31 @@ def _segment_residual_ss(
     return np.maximum(ss_mean, 0.0), np.maximum(ss_line, 0.0)
 
 
+def _capped_jump_ratio(jump: float, sigma: float) -> float:
+    """``jump / sigma`` capped at :data:`_SEGMENT_JUMP_RATIO_CAP`; a noiseless
+    fit (sigma == 0) reports the cap for any nonzero gap (an unambiguous jump)
+    and 0 otherwise."""
+    if sigma > 0.0:
+        return min(jump / sigma, _SEGMENT_JUMP_RATIO_CAP)
+    return _SEGMENT_JUMP_RATIO_CAP if jump > 0.0 else 0.0
+
+
+def _segment_line_at(
+    m: float, sx: float, sy: float, sxx: float, sxy: float, x0: float
+) -> float:
+    """Value at ``x0`` of the least-squares line fitted to a segment described
+    by its running sums (same closed-form identities as
+    :func:`_segment_residual_ss`). A zero-spread (constant-x) segment falls back
+    to its mean level — the same convention the residual scan uses."""
+    mean_x = sx / m
+    mean_y = sy / m
+    ss_xx = sxx - sx**2 / m
+    if ss_xx <= 0.0:
+        return mean_y
+    slope = (sxy - sx * sy / m) / ss_xx
+    return mean_y + slope * (x0 - mean_x)
+
+
 def compute_segmentation(pair: CleanPair) -> dict[str, MetricResult]:
     """Single-breakpoint search that characterizes a curved monotone mean.
 
@@ -439,12 +494,34 @@ def compute_segmentation(pair: CleanPair) -> dict[str, MetricResult]:
       curve (see ``heuristics/classifier.py``).
     - ``breakpoint_x`` — the x-location of the best two-*level* split (where the
       jump sits). The classifier only reports it when the pair reads as a
-      step/threshold, since for a smooth curve the split is an artifact of
-      forcing a break onto a gradual bend.
+      step/threshold or a discontinuous jump, since for a smooth curve the
+      split is an artifact of forcing a break onto a gradual bend.
+    - ``segment_jump_ratio`` — the fitted **discontinuity** at the best
+      two-line split: the gap between the two fitted lines, evaluated at the
+      boundary x, divided by the **noisier side's** residual sigma (a genuine
+      level shift is the same process with a shifted level, so both regimes
+      carry comparable noise; a heavy tail fitted as its own "segment" has far
+      larger scatter than the bulk, and measuring against it keeps the tail's
+      separation from the body — a leverage artifact — from reading as a
+      jump). The two-line
+      fit is *unconstrained* (each side gets its own intercept and slope), so
+      it is exactly the "discontinuous two-line" model; a continuous
+      relationship — a straight line, a smooth curve, or a piecewise-linear
+      *kink* — is fitted by two lines that nearly meet at the boundary, so the
+      ratio sits near 0 no matter how sharp the bend, while a genuine level
+      shift measures the jump in units of noise (a 3-sigma jump reads ~3).
+      This is what catches a discontinuity embedded in an otherwise strong
+      trend, where the jump is huge relative to noise but tiny relative to the
+      trend's variance: on the R-squared scale ``segment_gain`` reads ~0.05 for
+      a 7-sigma jump riding a strong linear trend, because the trend soaks up
+      the variance — the ratio scale does not wash out. Capped at
+      :data:`_SEGMENT_JUMP_RATIO_CAP` for a noiseless piecewise fit.
 
-    Returns all three as ``None`` (``MetricResult.no_value``) for constant
+    Returns all four as ``None`` (``MetricResult.no_value``) for constant
     inputs, ``n_used`` below :data:`_MIN_N_FOR_SEGMENTATION`, or a degenerate
-    (zero-variance) response.
+    (zero-variance) response. ``segment_jump_ratio`` is additionally ``None``
+    below its own :data:`_MIN_N_FOR_JUMP_RATIO` floor, where a moderate smooth
+    curve is not reliably separable from a genuine jump.
     """
     if pair.x_is_constant or pair.y_is_constant:
         return _segmentation_no_value()
@@ -521,6 +598,112 @@ def compute_segmentation(pair: CleanPair) -> dict[str, MetricResult]:
         step_gain = r2_two_mean - r2_line
         stepness = step_gain / segment_gain if segment_gain > 1e-6 else 0.0
         breakpoint_x = 0.5 * (xs[best_mean_k - 1] + xs[best_mean_k]) + x_mean
+
+        # Fitted discontinuity at the best two-LINE split: evaluate each side's
+        # fitted line at the shared boundary x and take the gap, in units of
+        # residual sigma. The sigma is the **noisier side's** (max of the two
+        # per-segment sigmas), not the pooled one: a genuine level shift is the
+        # same process with a shifted level, so both regimes carry comparable
+        # noise and the max changes nothing — but a heavy tail fitted as its
+        # own "segment" has residual scatter far larger than the bulk's, and a
+        # pooled sigma would let the bulk's tightness manufacture a large
+        # ratio for what is really the tail's separation from the body (a
+        # leverage artifact, not a discontinuity). The jump and the boundary
+        # use centered coordinates, which is immaterial: the gap is a
+        # difference of two values at the same x.
+        best_line_idx = int(np.argmin(two_line))
+        best_line_k = int(ks[best_line_idx])
+        boundary = 0.5 * (xs[best_line_k - 1] + xs[best_line_k])
+        lo_at_boundary = _segment_line_at(
+            float(best_line_k),
+            float(cx[best_line_k]),
+            float(cy[best_line_k]),
+            float(cxx[best_line_k]),
+            float(cxy[best_line_k]),
+            boundary,
+        )
+        hi_at_boundary = _segment_line_at(
+            float(n - best_line_k),
+            float(cx[n] - cx[best_line_k]),
+            float(cy[n] - cy[best_line_k]),
+            float(cxx[n] - cxx[best_line_k]),
+            float(cxy[n] - cxy[best_line_k]),
+            boundary,
+        )
+        jump = abs(hi_at_boundary - lo_at_boundary)
+        sigma_lo = float(
+            np.sqrt(float(line_lo[best_line_idx]) / max(best_line_k - 2, 1))
+        )
+        sigma_hi = float(
+            np.sqrt(float(line_hi[best_line_idx]) / max(n - best_line_k - 2, 1))
+        )
+        global_ratio = _capped_jump_ratio(jump, max(sigma_lo, sigma_hi))
+
+        # Localization check: a smooth curve (a sigmoid, a sine) can fake a
+        # boundary gap under the *global* two-line fit — its tails tilt the
+        # chords, displacing them vertically at the center even though the
+        # relationship is continuous. A genuine discontinuity survives
+        # localization: refit each side's line on only the window of points
+        # nearest the boundary and re-measure the gap there. Locally, a smooth
+        # curve is approximately linear (the local two-line fit tracks it
+        # through the boundary, gap -> 0) while a real jump keeps its full gap
+        # at any window size. Evaluated at two window sizes — the 10% segment
+        # fraction and a fixed point count (see _LOCAL_JUMP_WINDOW_POINTS for
+        # why both) — and reported as the min of the global and all local
+        # measurements, so every fit must agree the gap is real.
+        def _local_ratio(w: int) -> float:
+            lo_idx, hi_idx = best_line_k - w, best_line_k + w
+            lo_val = _segment_line_at(
+                float(w),
+                float(cx[best_line_k] - cx[lo_idx]),
+                float(cy[best_line_k] - cy[lo_idx]),
+                float(cxx[best_line_k] - cxx[lo_idx]),
+                float(cxy[best_line_k] - cxy[lo_idx]),
+                boundary,
+            )
+            hi_val = _segment_line_at(
+                float(w),
+                float(cx[hi_idx] - cx[best_line_k]),
+                float(cy[hi_idx] - cy[best_line_k]),
+                float(cxx[hi_idx] - cxx[best_line_k]),
+                float(cxy[hi_idx] - cxy[best_line_k]),
+                boundary,
+            )
+            _, win_line_lo = _segment_residual_ss(
+                np.array([float(w)]),
+                np.array([cx[best_line_k] - cx[lo_idx]]),
+                np.array([cy[best_line_k] - cy[lo_idx]]),
+                np.array([cxx[best_line_k] - cxx[lo_idx]]),
+                np.array([cxy[best_line_k] - cxy[lo_idx]]),
+                np.array([cyy[best_line_k] - cyy[lo_idx]]),
+            )
+            _, win_line_hi = _segment_residual_ss(
+                np.array([float(w)]),
+                np.array([cx[hi_idx] - cx[best_line_k]]),
+                np.array([cy[hi_idx] - cy[best_line_k]]),
+                np.array([cxx[hi_idx] - cxx[best_line_k]]),
+                np.array([cxy[hi_idx] - cxy[best_line_k]]),
+                np.array([cyy[hi_idx] - cyy[best_line_k]]),
+            )
+            # Same noisier-side convention as the global ratio (see above).
+            win_sigma_lo = float(np.sqrt(float(win_line_lo[0]) / max(w - 2, 1)))
+            win_sigma_hi = float(np.sqrt(float(win_line_hi[0]) / max(w - 2, 1)))
+            return _capped_jump_ratio(
+                abs(hi_val - lo_val), max(win_sigma_lo, win_sigma_hi)
+            )
+
+        max_w = min(best_line_k, n - best_line_k)
+        windows = {
+            min(min_seg, max_w),
+            min(max(min_seg, _LOCAL_JUMP_WINDOW_POINTS), max_w),
+        }
+        jump_ratio: float | None
+        if n >= _MIN_N_FOR_JUMP_RATIO:
+            jump_ratio = min([global_ratio] + [_local_ratio(w) for w in windows])
+        else:
+            # Below the dedicated floor the ratio cannot reliably separate a
+            # moderate smooth curve from a real jump (see _MIN_N_FOR_JUMP_RATIO).
+            jump_ratio = None
     except (ValueError, RuntimeError, FloatingPointError) as e:
         raise MetricComputationError(
             f"Failed to compute segmentation: {type(e).__name__}: {e}"
@@ -535,5 +718,12 @@ def compute_segmentation(pair: CleanPair) -> dict[str, MetricResult]:
         ),
         "segment_stepness": MetricResult(
             name="segment_stepness", value=float(stepness), available=True
+        ),
+        "segment_jump_ratio": (
+            MetricResult(
+                name="segment_jump_ratio", value=float(jump_ratio), available=True
+            )
+            if jump_ratio is not None
+            else MetricResult.no_value("segment_jump_ratio")
         ),
     }

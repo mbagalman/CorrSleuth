@@ -97,8 +97,13 @@ class MetricDiagnostics:
     over one line; ``segment_stepness``, the fraction of that gain a two-*level*
     (flat-segment) model already captures — ``≈ 1`` for a step/threshold jump,
     ``≤ 0`` for a smooth bend, and the number behind the ``mean_shape``
-    step-vs-smooth call; ``breakpoint_x``, the x-location of a detected step,
-    reported only when ``mean_shape`` reads as a step/threshold) — and the
+    step-vs-smooth call; ``segment_jump_ratio``, the fitted discontinuity at
+    the best two-line split in units of residual sigma — the min over the
+    global fit and localized refits at the boundary, so a smooth curve's
+    chord-displacement artifact reads ~0 while a genuine level shift reads its
+    jump size in sigmas; ``breakpoint_x``, the x-location of a detected step or
+    jump, reported only when ``mean_shape`` reads as a step/threshold or a
+    discontinuous jump) — and the
     influence
     diagnostics (``max_cook_distance``, the largest Cook's distance;
     ``n_influential_points``, how many rows exceed the influence cutoff) — see
@@ -141,6 +146,7 @@ class MetricDiagnostics:
     bowtie_ratio: float | None = None
     segment_gain: float | None = None
     segment_stepness: float | None = None
+    segment_jump_ratio: float | None = None
     breakpoint_x: float | None = None
     max_cook_distance: float | None = None
     n_influential_points: int | None = None
@@ -203,6 +209,7 @@ class CorrSleuthResult:
             bowtie_ratio=None,
             segment_gain=None,
             segment_stepness=None,
+            segment_jump_ratio=None,
             breakpoint_x=None,
             max_cook_distance=None,
             n_influential_points=None,
@@ -287,6 +294,7 @@ class CorrSleuthResult:
             ("bowtie_ratio", self._format_value(diag.bowtie_ratio)),
             ("segment_gain", self._format_value(diag.segment_gain)),
             ("segment_stepness", self._format_value(diag.segment_stepness)),
+            ("segment_jump_ratio", self._format_value(diag.segment_jump_ratio)),
             ("breakpoint_x", self._format_value(diag.breakpoint_x)),
             ("max_cook_distance", self._format_value(diag.max_cook_distance)),
             ("n_influential_points", self._format_count(diag.n_influential_points)),
@@ -509,6 +517,10 @@ class CorrSleuthResult:
                     [
                         "segment_stepness",
                         format_markdown_value(self.diagnostics.segment_stepness),
+                    ],
+                    [
+                        "segment_jump_ratio",
+                        format_markdown_value(self.diagnostics.segment_jump_ratio),
                     ],
                     [
                         "breakpoint_x",
