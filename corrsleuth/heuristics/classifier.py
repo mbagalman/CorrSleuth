@@ -172,6 +172,36 @@ OSCILLATION_BIN_LOF_FLOOR = 0.15
 #: validation/oscillation_ceiling_sweep.py.
 OSCILLATION_MONOTONE_CEILING = 0.50
 
+#: ``bin_lof_r2_gain`` floor (raw AND leave-one-bin-out robust) for the
+#: **single-bend** route into ``nonmonotonic_dependence``: at least one robust
+#: bin-mean reversal with massive bin structure while both monotone metrics
+#: are weak — the lite-mode signature of a V (or off-center U) whose arm
+#: geometry defeats ``sq_corr``'s centered-squares assumption. A *linear* V on
+#: even point density is the canonical case: the vertex value sits far below
+#: the mean of |Y|, so the centered square ``(Y − ȳ)²`` is minimized mid-arm
+#: rather than at the vertex, folding the squares (the blind-test uniform V
+#: measures sq_corr ~ 0.16 versus the 0.35 route requirement despite a
+#: textbook V shape) — while its single bend cannot reach the oscillation
+#: route (reversals >= 2). Deep
+#: mode already catches these via distance correlation; without this route,
+#: lite mode called the uniform V ``weak_or_no_relationship`` — a confident
+#: wrong answer — with ``bin_lof_r2_gain = 0.90`` sitting right there.
+#: Deliberately **double** the oscillation route's 0.15: a single confirmed
+#: turn carries less information than two, and the key adversary — the
+#: heavy-tailed-Y artifact, where one extreme-Y bin manufactures a large raw
+#: gain and *exactly one* reversal — is itself a one-turn shape. The
+#: leave-one-bin-out robust gain collapses for that artifact (the structure
+#: lives in one bin) while a genuine V's gain is spread across bins: on the
+#: calibration sweep (validation/single_bend_sweep.py), the worst robust gain
+#: across every weak-zone negative family (noise, weak linear, three
+#: heavy-tailed-Y families, heavy-vs-heavy, trendless heteroscedastic, sparse
+#: subgroups; 4 sizes x 10 seeds each) was 0.078 — a 4x margin below this
+#: floor — while rank-balanced V's measured 0.66-0.91 and fired 90-100%. A
+#: strongly *tilted* V (vertex far off-center, no compensating arm asymmetry)
+#: has a genuine monotone trend, never enters the weak zone, and keeps its
+#: monotone-family label by design.
+SINGLE_BEND_BIN_LOF_FLOOR = 0.30
+
 # --- Two-group / mixture split gate (see metrics/mixture.py) -----------------
 # All five constants below gate ``dependence_type = "two_group_shift"`` and its
 # warning *jointly* — the calibration sweep (validation/cluster_split_sweep.py)
@@ -434,21 +464,26 @@ def apply_heuristics(
     ):
         label = "possible_outlier_or_leverage"
     # 4. nonmonotonic_dependence
-    # Three independent routes to the same conclusion: distance correlation
+    # Four independent routes to the same conclusion: distance correlation
     # clearing its floor (any form of dependence); |corr((X−x̄)², (Y−ȳ)²)| clearing
     # its floor (magnitude/radial dependence — e.g. points on a circle — that
-    # dCor itself can under-read); or the bin-mean reversal count jointly with
+    # dCor itself can under-read); the bin-mean reversal count jointly with
     # a high bin lack-of-fit gain (oscillating/periodic dependence — e.g. a
     # sinusoid — which dCor reads only marginally above its floor and sq_corr
     # misses entirely; the joint gate is essential because pure noise produces
     # many reversals with near-zero gain, and the *robust* (leave-one-bin-out)
     # gain must also clear the floor so a lone extreme-Y bin cannot fake an
-    # oscillation on a structureless predictor). The last two are lite-computable, so
-    # this label is reachable in every mode for those shapes.
+    # oscillation on a structureless predictor); or a **single bend** with
+    # massive bin structure (a V / off-center U whose vertex asymmetry breaks
+    # sq_corr's centered-squares assumption and whose one reversal cannot reach
+    # the oscillation route — held to a floor double the oscillation route's,
+    # because the heavy-tailed-Y artifact is itself a one-turn shape; see
+    # SINGLE_BEND_BIN_LOF_FLOOR). The last three are lite-computable, so this
+    # label is reachable in every mode for those shapes.
     #
-    # The dc / sq_corr routes are only trusted once Pearson and Spearman are
-    # both already weak (< 0.25). The oscillation route — being the strictest
-    # joint gate of the three — is allowed up to a *moderate* trend
+    # The dc / sq_corr / single-bend routes are only trusted once Pearson and
+    # Spearman are both already weak (< 0.25). The oscillation route — the
+    # strictest joint gate — is allowed up to a *moderate* trend
     # (max(|p|, |s|) < OSCILLATION_MONOTONE_CEILING = 0.50): an oscillation on
     # skewed, one-sided support picks up a spurious moderate tilt that used to
     # strand it in a dead zone between this rule and the strong-trend
@@ -464,6 +499,14 @@ def apply_heuristics(
                 and abs(sq_corr) > SQ_CORR_THRESHOLD
                 and sq_corr_robust is not None
                 and sq_corr_robust > SQ_CORR_ROBUST_FLOOR
+            )
+            or (
+                reversals is not None
+                and reversals >= 1
+                and bin_lof is not None
+                and bin_lof > SINGLE_BEND_BIN_LOF_FLOOR
+                and bin_lof_robust is not None
+                and bin_lof_robust > SINGLE_BEND_BIN_LOF_FLOOR
             )
         )
     ) or (
@@ -1108,6 +1151,21 @@ def _dependence_type_axis(
         ):
             return "closed_loop_or_multivalued"
         return "magnitude_linked" if sq_dependence else "nonmonotone"
+    # Single bend with massive robust bin structure (a V / off-center U whose
+    # vertex asymmetry defeats sq_corr and whose one reversal cannot reach the
+    # oscillation gate) — the lite-mode route; mirrors the cascade's rule-4
+    # single-bend arm. dCor would also call it "nonmonotone" in deep mode, so
+    # the axis reads the same in every mode. See SINGLE_BEND_BIN_LOF_FLOOR.
+    if (
+        monotone_weak
+        and reversals is not None
+        and reversals >= 1
+        and bin_lof is not None
+        and bin_lof > SINGLE_BEND_BIN_LOF_FLOOR
+        and bin_lof_robust is not None
+        and bin_lof_robust > SINGLE_BEND_BIN_LOF_FLOOR
+    ):
+        return "nonmonotone"
     # A two-group mean shift is checked before the generic "monotone": both
     # describe a strong rank trend, but "monotone" implies a continuous x-y
     # relationship while the split diagnostics show the association is carried

@@ -302,6 +302,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Pearson stable. Uses the softer Cook & Weisberg `D > 0.5` cutoff (a masked
   outlier cluster deflates each point's Cook's distance below the classical
   `D > 1`).
+- **Single-bend V detection in lite mode** (`SINGLE_BEND_BIN_LOF_FLOOR =
+  0.30`, no new metric). A *linear-armed* V defeats both lite nonmonotonic
+  detectors even when perfectly centered: on even point density the vertex
+  value sits far below the mean of |Y|, so the centered square `(Y − ȳ)²` is
+  minimized mid-arm rather than at the vertex, folding the squares and
+  collapsing `sq_corr` to ~0.16 (vs the 0.35 route floor) — and its single
+  bend reads exactly 1 reversal, below the oscillation route's 2. The
+  blind-test uniform V therefore read `weak_or_no_relationship` in lite mode —
+  a confident wrong answer, with `bin_lof_r2_gain = 0.90` sitting right there
+  — while deep mode corrected it via distance correlation. Rule 4 gains a
+  fourth, lite-computable arm for the weak-monotone zone (both metrics <
+  0.25): at least one robust bin-mean reversal with the raw AND
+  leave-one-bin-out `bin_lof_r2_gain` above 0.30 — deliberately double the
+  oscillation route's floor, because the key adversary (the heavy-tailed-Y
+  artifact, whose one extreme bin manufactures a large raw gain and exactly
+  one reversal) is itself a one-turn shape that the robust gain collapses for.
+  The `dependence_type` axis reads `nonmonotone` for these in every mode.
+  Calibrated in `validation/single_bend_sweep.py`: worst robust gain across
+  every weak-zone negative family was 0.078 (a 4× margin below the floor);
+  rank-balanced V's fired 90–100% with gains 0.66–0.91. A strongly *tilted* V
+  carries a genuine monotone trend, never enters the weak zone, and keeps its
+  monotone-family label by design. Deep-mode behavior is unchanged (verified
+  by a full label/axis diff: zero new diffs); in lite mode the only blind-test
+  pair affected is the uniform V, which now resolves.
 - **Moderate-trend oscillation detection** (`OSCILLATION_MONOTONE_CEILING =
   0.50`, no new metric). The oscillation route into `nonmonotonic_dependence`
   (and the `dependence_type = "oscillating"` axis value) used to share the

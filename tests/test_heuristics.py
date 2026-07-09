@@ -726,11 +726,22 @@ def test_cascade_oscillation_route_into_nonmonotonic_dependence():
         == "weak_or_no_relationship"
     )
 
-    # Gain without enough reversals (a U-shape reads 1) must not fire it
-    # either — the U-shape's own route is sq_corr, deliberately not this one.
+    # A single bend with *massive* robust gain now fires the single-bend route
+    # (a linear V defeats sq_corr — its centered squares fold mid-arm — so
+    # "the U-shape's own route is sq_corr" does not hold for it; see
+    # SINGLE_BEND_BIN_LOF_FLOOR).
     single_bend = metrics(0.05, 0.06, 0.04, bin_lof_r2_gain=0.75, bin_reversal_count=1)
     assert (
         apply_heuristics(single_bend, ["pearson_trim_stable"], 500).label
+        == "nonmonotonic_dependence"
+    )
+
+    # But one turn is held to a higher bar than the oscillation route's two:
+    # a gain above the 0.15 oscillation floor yet below the 0.30 single-bend
+    # floor must not fire on a single reversal.
+    modest_bend = metrics(0.05, 0.06, 0.04, bin_lof_r2_gain=0.22, bin_reversal_count=1)
+    assert (
+        apply_heuristics(modest_bend, ["pearson_trim_stable"], 500).label
         != "nonmonotonic_dependence"
     )
 
@@ -1558,3 +1569,84 @@ def test_moderate_correlation_normal_pair_not_swept_up_by_wider_ceiling():
 
     assert res.pattern != "nonmonotonic_dependence"
     assert res.diagnostics.dependence_type == "monotone"
+
+
+def test_axes_single_bend_reads_nonmonotone_and_defers_to_sq_corr():
+    """A single robust bend with massive bin structure and weak monotone
+    metrics reads dependence_type=nonmonotone (the lite V route); when sq_corr
+    also fires (a centered U), magnitude_linked keeps priority."""
+    v_shape = _axis_metrics(
+        pearson=0.02,
+        spearman=0.01,
+        bin_lof_r2_gain=0.90,
+        bin_reversal_count=1,
+        sq_corr=0.16,
+    )
+    axes = derive_diagnostic_axes(v_shape, "nonmonotonic_dependence", "stable")
+    assert axes["dependence_type"] == "nonmonotone"
+
+    centered_u = _axis_metrics(
+        pearson=0.02,
+        spearman=0.01,
+        bin_lof_r2_gain=0.90,
+        bin_reversal_count=1,
+        sq_corr=0.9,
+    )
+    axes = derive_diagnostic_axes(centered_u, "nonmonotonic_dependence", "stable")
+    assert axes["dependence_type"] == "magnitude_linked"
+
+
+def test_axes_single_bend_requires_robust_gain_above_high_floor():
+    """The single-bend route holds the leave-one-bin-out gain to double the
+    oscillation floor: the heavy-tailed-Y artifact is itself a one-turn shape
+    whose raw gain spikes but whose robust gain collapses."""
+    artifact = _axis_metrics(
+        pearson=0.02,
+        spearman=0.01,
+        bin_lof_r2_gain=0.60,
+        bin_lof_r2_gain_robust=0.05,  # collapses: the structure lives in one bin
+        bin_reversal_count=1,
+    )
+    axes = derive_diagnostic_axes(artifact, "weak_or_no_relationship", "stable")
+    assert axes["dependence_type"] is None
+
+    modest = _axis_metrics(
+        pearson=0.02, spearman=0.01, bin_lof_r2_gain=0.22, bin_reversal_count=1
+    )
+    axes = derive_diagnostic_axes(modest, "weak_or_no_relationship", "stable")
+    assert axes["dependence_type"] is None  # under the 0.30 single-bend floor
+
+
+def test_lite_mode_linear_v_resolves_via_single_bend_route():
+    """A centered *linear* V on even (uniform) support defeats sq_corr: with
+    the vertex value far below the mean of |u|, the centered square (v - vbar)^2
+    is minimized mid-arm rather than at the vertex, folding the squares (the
+    blind-test uniform V measures sq_corr ~ 0.16 despite a textbook V shape).
+    One reversal + massive robust bin gain + weak monotone metrics must resolve
+    it to nonmonotonic_dependence in lite mode -- it previously read
+    weak_or_no_relationship, a confident wrong answer that only deep mode's
+    distance correlation corrected."""
+    rng = np.random.default_rng(8)
+    n = 500
+    u = rng.uniform(-4, 4, size=n)
+    df = pd.DataFrame({"x": u, "y": 1.3 * np.abs(u) + rng.normal(0, 0.6, n)})
+    res = profile_pair(df, "x", "y", mode="lite")
+
+    assert res.pattern == "nonmonotonic_dependence"
+    assert res.diagnostics.dependence_type == "nonmonotone"
+    assert res.diagnostics.bin_reversal_count >= 1
+    assert abs(res.diagnostics.sq_corr) < 0.35  # sq_corr alone would have missed it
+
+
+def test_heavy_tail_artifact_not_promoted_by_single_bend_route():
+    """The seed-574 heavy-tailed pair (raw bin structure manufactured by one
+    extreme bin, exactly the one-turn shape the single-bend route must not
+    trust) stays weak_or_no_relationship."""
+    rng = np.random.default_rng(574)
+    noise = rng.normal(size=100)
+    target = np.exp(rng.uniform(0.1, 10, size=100))
+    df = pd.DataFrame({"noise": noise, "target": target})
+    res = profile_pair(df, "noise", "target", mode="lite")
+
+    assert res.pattern == "weak_or_no_relationship"
+    assert res.diagnostics.dependence_type is None
