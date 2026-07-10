@@ -113,22 +113,29 @@ def build_scan_figure(
 
     # flat_axes is padded to a full grid, so it is intentionally longer than
     # candidates; strict=False lets zip stop at the shorter candidates list.
+    # The primary profile's orientation depends on the scan direction:
+    # "forward"/"both" call profile_pair(candidate, target), so _clean_x is the
+    # candidate and _clean_y the target; "reverse" calls
+    # profile_pair(target, candidate), so the roles are swapped. Plot each
+    # panel in the orientation actually profiled (predictor on x, response on
+    # y) with labels drawn from the same source as the data — a reverse scan
+    # must not show target values under a candidate-named axis.
+    reverse_primary = report.direction == "reverse"
+
     for ax, entry in zip(flat_axes, candidates, strict=False):
         result = entry.result_data
         # candidates were filtered on both clean series being present.
         assert result._clean_x is not None and result._clean_y is not None
-        # scan_target() calls profile_pair(data, candidate, target), so
-        # _clean_x already holds the candidate (predictor) and _clean_y the
-        # target — exactly the EDA convention (predictor on x, target on y),
-        # so no swap is needed.
-        candidate_data = result._clean_x.to_numpy()
-        target_data = result._clean_y.to_numpy()
-        n_pts = len(candidate_data)
+        x_data = result._clean_x.to_numpy()
+        y_data = result._clean_y.to_numpy()
+        x_label = report.target if reverse_primary else entry.column
+        y_label = entry.column if reverse_primary else report.target
+        n_pts = len(x_data)
 
         if n_pts > 5000:
             ax.hexbin(
-                candidate_data,
-                target_data,
+                x_data,
+                y_data,
                 gridsize=30,
                 cmap="Blues",
                 mincnt=1,
@@ -136,8 +143,8 @@ def build_scan_figure(
         else:
             alpha = min(1.0, 100 / n_pts) if n_pts > 0 else 1.0
             ax.scatter(
-                candidate_data,
-                target_data,
+                x_data,
+                y_data,
                 alpha=alpha,
                 edgecolor="none",
                 color="steelblue",
@@ -145,8 +152,8 @@ def build_scan_figure(
             )
 
         ax.set_title(_panel_title(entry), fontsize=9)
-        ax.set_xlabel(entry.column, fontsize=8)
-        ax.set_ylabel(report.target, fontsize=8)
+        ax.set_xlabel(x_label, fontsize=8)
+        ax.set_ylabel(y_label, fontsize=8)
         ax.tick_params(labelsize=7)
 
     for ax in flat_axes[len(candidates) :]:

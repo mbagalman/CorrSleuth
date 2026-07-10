@@ -47,7 +47,7 @@ def make_relationship(
 
     Raises:
     - InputError: if ``shape_type`` is unknown, ``n`` is not an integer >= 2,
-      or ``noise`` is negative.
+      or ``noise`` is negative or non-finite.
     """
     if isinstance(n, bool) or not isinstance(n, (int, np.integer)) or n < 2:
         raise InputError("n must be an integer >= 2.")
@@ -55,9 +55,12 @@ def make_relationship(
         isinstance(noise, bool)
         or not isinstance(noise, (int, float, np.floating, np.integer))
         or pd.isna(noise)
+        or not np.isfinite(noise)
         or noise < 0
     ):
-        raise InputError("noise must be a non-negative number.")
+        # np.isfinite: infinite noise would silently produce +/-inf y values
+        # that pass this function but fail (or distort) everything downstream.
+        raise InputError("noise must be a finite non-negative number.")
 
     rng = np.random.default_rng(random_state)
 

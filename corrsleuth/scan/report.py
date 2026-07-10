@@ -554,14 +554,18 @@ class CorrSleuthTargetReport:
         reverse_shape = [e for e in self.successes if self._reverse_reveals_shape(e)]
         if reverse_shape:
             reverse_shape.sort(key=lambda e: e.column)
+            # Escaped like the report heading: a backtick/newline in a valid
+            # column name must not terminate the code span or inject Markdown
+            # structure into the report.
+            target_span = f"`{escape_markdown_code_span(self.target)}`"
             lines.extend(
-                ["", f"## Shape differs by direction (candidate = f(`{self.target}`))"]
+                ["", f"## Shape differs by direction (candidate = f({target_span}))"]
             )
             lines.append(
                 "These candidates read as unstructured when used to predict "
-                f"`{self.target}`, but `{self.target}` -> candidate is a "
+                f"{target_span}, but {target_span} -> candidate is a "
                 "structured nonlinear shape — the signature of the candidate being "
-                f"generated from `{self.target}`. Read the reverse shape as *how "
+                f"generated from {target_span}. Read the reverse shape as *how "
                 "the candidate depends on the target*, not as predictive."
             )
             reverse_rows = []

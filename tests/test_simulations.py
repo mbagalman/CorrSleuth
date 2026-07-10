@@ -45,9 +45,14 @@ def test_make_relationship_rejects_invalid_n(bad_n):
         make_relationship("linear_positive", n=bad_n)
 
 
-@pytest.mark.parametrize("bad_noise", [-1, -0.001, float("nan"), True, "0.1"])
+@pytest.mark.parametrize(
+    "bad_noise",
+    [-1, -0.001, float("nan"), float("inf"), -float("inf"), True, "0.1"],
+)
 def test_make_relationship_rejects_invalid_noise(bad_noise):
-    with pytest.raises(InputError, match="noise must be a non-negative number"):
+    # Non-finite noise must be rejected too: noise=inf previously passed the
+    # negative/NaN checks and returned y values of +/-inf.
+    with pytest.raises(InputError, match="noise must be a finite non-negative number"):
         make_relationship("linear_positive", n=50, noise=bad_noise)
 
 
