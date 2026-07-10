@@ -1,0 +1,18 @@
+# Dependency monitoring: weekly checks for the Python dependencies declared in
+# pyproject.toml and for the pinned GitHub Actions used by CI/publishing.
+# Security advisories additionally surface via GitHub's Dependabot alerts.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    # The library declares floors, not pins, so most routine bumps don't apply;
+    # this mainly surfaces security advisories and major-version releases.
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5

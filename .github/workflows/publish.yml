@@ -7,11 +7,17 @@
 # Then create a GitHub environment named "pypi" in the repo settings and cut a
 # GitHub release whose tag matches the version in corrsleuth/__init__.py
 # (e.g. tag v0.2.0) to trigger this workflow.
+#
+# Rehearsal: running this workflow manually (workflow_dispatch) publishes to
+# TestPyPI instead — same build and checks, different index — via the
+# "testpypi" environment. That needs its own trusted publisher on
+# test.pypi.org (same owner/repository/workflow, environment: testpypi).
 name: Publish to PyPI
 
 on:
   release:
     types: [published]
+  workflow_dispatch: # rehearsal -> TestPyPI only; real releases go via a GitHub release
 
 jobs:
   build:
@@ -29,7 +35,9 @@ jobs:
       # release tagged v0.3.0 while __init__ still says 0.2.0 cannot publish the
       # wrong version under the wrong release page (C8 #1). Reads __version__ from
       # source (no install needed) and expects the tag to be "v<version>".
+      # Skipped for workflow_dispatch rehearsals, which have no release tag.
       - name: Verify release tag matches package version
+        if: github.event_name == 'release'
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
@@ -56,6 +64,7 @@ jobs:
 
   publish:
     name: Upload to PyPI
+    if: github.event_name == 'release'
     needs: build
     runs-on: ubuntu-latest
     environment: pypi
@@ -69,3 +78,25 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-testpypi:
+    name: Rehearsal upload to TestPyPI
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          # A version can only be uploaded once per index; let a re-run of the
+          # rehearsal succeed as a no-op instead of failing the workflow.
+          skip-existing: true
