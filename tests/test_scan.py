@@ -167,6 +167,49 @@ def test_scan_target_columns_can_include_target_and_records_skip():
     assert target_entry.error_type == "TargetExcluded"
 
 
+def test_scan_target_preserves_explicit_column_order_across_skips():
+    """columns=['linear', 'missing_col', 'noise'] must come back in that order:
+    entries (and hence to_frame rows) previously grouped every pre-skipped
+    column before all successful profiles, reordering the caller's request."""
+    df = _build_clean_df()
+    report = scan_target(df, "target", columns=["linear", "missing_col", "noise"])
+
+    assert [e.column for e in report.entries] == ["linear", "missing_col", "noise"]
+    assert list(report.to_frame()["variable"]) == ["linear", "missing_col", "noise"]
+
+
+def test_scan_target_auto_columns_preserve_data_order_across_skips():
+    """With columns=None, entries follow the data's column order — a duplicated
+    (skipped) column stays at its position instead of jumping to the front."""
+    df = _build_clean_df()
+    dup = pd.concat([df, df[["linear"]].rename(columns={"linear": "noise"})], axis=1)
+    # Column order now: target, linear, noise, label(non-numeric), noise(dup).
+    report = scan_target(dup, "target")
+
+    assert [e.column for e in report.entries] == ["linear", "noise"]
+    assert report.entries[0].status == "ok"
+    noise_entry = report.entries[1]
+    assert noise_entry.status == "skipped"
+    assert noise_entry.error_type == "DuplicateColumn"
+
+
+def test_scan_target_rejects_shared_config_mistakes_once():
+    """A column-independent configuration mistake must raise a single
+    InputError before the per-column loop — under the default errors="warn" it
+    previously came back as a 'successful' report whose every candidate carried
+    the identical error entry."""
+    df = _build_clean_df()
+
+    with pytest.raises(InputError, match="Unknown mode"):
+        scan_target(df, "target", mode="bogus")
+    with pytest.raises(InputError, match="Unsupported missing mode"):
+        scan_target(df, "target", missing="bogus")
+    with pytest.raises(InputError, match="max_n_for_dcor"):
+        scan_target(df, "target", max_n_for_dcor=0)
+    with pytest.raises(InputError, match="bootstrap must be a positive integer"):
+        scan_target(df, "target", bootstrap=-1)
+
+
 def test_scan_target_errors_warn_captures_per_column_failures():
     df = _build_clean_df()
     df["bad"] = np.nan  # all-NaN column makes profile_pair raise InputError
@@ -366,6 +409,22 @@ def test_scan_direction_both_flags_and_frames_reverse_shape():
     assert step_row["reverse_mean_shape"] == "step_or_threshold"
     lin_row = frame[frame["variable"] == "lin"].iloc[0]
     assert lin_row["reverse_pattern"] == "near_linear"
+
+
+def test_direction_comparison_markdown_escapes_target_name():
+    """The 'Shape differs by direction' section interpolates the target name
+    inside code spans; like the report heading, it must sanitize backticks and
+    newlines so a valid (if hostile) column name cannot close the span and
+    inject Markdown structure into the report."""
+    hostile = "Y`\n# injected heading"
+    df = _directional_df().rename(columns={"Y": hostile})
+    report = scan_target(df, hostile, direction="both")
+
+    md = report.to_markdown()
+    assert "Shape differs by direction" in md
+    assert "\n# injected heading" not in md
+    # The sanitized name (backticks removed, newline flattened) is what appears.
+    assert "`Y # injected heading`" in md
 
 
 def test_scan_direction_forward_default_has_no_reverse_columns():
@@ -1230,6 +1289,34 @@ def test_plot_top_uses_candidate_on_x_and_target_on_y():
             assert xlabel in {"predictor_a", "predictor_b"}, (
                 f"candidate column expected on x-axis; got xlabel={xlabel!r}"
             )
+    finally:
+        plt.close(fig)
+
+
+def test_plot_top_reverse_scan_labels_and_data_match():
+    """For direction='reverse' the primary profile is profile_pair(target,
+    candidate): _clean_x holds the *target* and _clean_y the candidate. The
+    panel must plot that orientation with matching labels — previously it
+    showed target values under a candidate-named x-axis (and vice versa).
+    Disjoint value ranges make the mislabeling detectable from the data."""
+    rng = np.random.default_rng(0)
+    n = 60
+    target = rng.uniform(100, 102, size=n)  # values ~101
+    candidate = (target - 101) + rng.normal(0, 0.1, size=n)  # values ~0
+    df = pd.DataFrame({"y_target": target, "cand": candidate})
+
+    report = scan_target(df, "y_target", direction="reverse")
+    fig = report.plot_top(n=1, ncols=1)
+    try:
+        ax = next(a for a in fig.axes if a.get_title())
+        # Reverse orientation: predictor (the target) on x, candidate on y.
+        assert ax.get_xlabel() == "y_target"
+        assert ax.get_ylabel() == "cand"
+        offsets = ax.collections[0].get_offsets()
+        x_vals, y_vals = offsets[:, 0], offsets[:, 1]
+        # The values under each label must come from the labeled variable.
+        assert x_vals.min() > 50, "x-axis labeled y_target must hold ~101 values"
+        assert abs(y_vals).max() < 50, "y-axis labeled cand must hold ~0 values"
     finally:
         plt.close(fig)
 

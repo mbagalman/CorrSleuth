@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
-from corrsleuth.api import profile_pair
+from corrsleuth.api import _validate_profile_pair_options, profile_pair
 from corrsleuth.exceptions import InputError, OptionalDependencyError
 from corrsleuth.result import CorrSleuthResult
 from corrsleuth.validation.input import is_real_numeric_dtype, real_numeric_problem
@@ -35,7 +35,10 @@ _VALID_ERRORS_POLICIES = ("warn", "raise")
 #: ``InputError`` is deliberately excluded: ``validate_pair`` raises it *per
 #: column* for genuine data problems (all-NaN/constant columns), which
 #: ``errors="warn"`` must keep capturing, and a config ``InputError`` (e.g. a bad
-#: kwarg value) is not reliably distinguishable from a data one.
+#: kwarg value) is not reliably distinguishable from a data one *at catch time*.
+#: Shared-configuration ``InputError``s are instead prevented from reaching the
+#: loop at all: ``scan_target`` preflights the column-independent options via
+#: :func:`corrsleuth.api._validate_profile_pair_options` before iterating.
 _CONFIG_CLASS_EXCEPTIONS = (OptionalDependencyError, TypeError)
 
 _VALID_DIRECTIONS = ("forward", "reverse", "both")
@@ -115,15 +118,19 @@ def _resolve_candidate_columns(
     data: pd.DataFrame,
     target: str,
     columns: Sequence[str] | None,
-) -> tuple[list[str], list[TargetScanEntry]]:
-    """Return (numeric candidates, pre-skipped entries) honoring ``columns=``.
+) -> tuple[list[str], list[TargetScanEntry], list[str]]:
+    """Return (numeric candidates, pre-skipped entries, resolution order)
+    honoring ``columns=``.
 
     If ``columns`` is None, every real-valued numeric column except the target
     is a candidate; complex columns are excluded (pandas classifies them as
     numeric, but CorrSleuth's metrics are defined for real-valued data). When
     the caller passes an explicit list, we preserve their order and emit
     ``status="skipped"`` entries for missing, non-numeric, or complex names so
-    the report still reflects the request.
+    the report still reflects the request. The third element interleaves
+    candidate and skipped names in the order they were requested (or appear in
+    ``data``), so the final report can present entries in that order rather
+    than grouping all skips first.
 
     Duplicate column names are surfaced as ``DuplicateColumn`` skips in either
     mode (rather than silently dropped), because ``data[col]`` returns a
@@ -146,6 +153,7 @@ def _resolve_candidate_columns(
     if columns is None:
         candidates: list[str] = []
         skipped: list[TargetScanEntry] = []
+        order: list[str] = []
         seen_duplicates: set = set()
         for col in data.columns:
             if col == target:
@@ -155,13 +163,16 @@ def _resolve_candidate_columns(
                 if col not in seen_duplicates:
                     seen_duplicates.add(col)
                     skipped.append(_duplicate_skip(col))
+                    order.append(col)
                 continue
             if is_real_numeric_dtype(data[col]):
                 candidates.append(col)
-        return candidates, skipped
+                order.append(col)
+        return candidates, skipped, order
 
     candidates = []
     skipped = []
+    order = []
     seen: set[str] = set()
     for col in columns:
         # Skip names the caller listed more than once so a column is profiled
@@ -169,6 +180,7 @@ def _resolve_candidate_columns(
         if col in seen:
             continue
         seen.add(col)
+        order.append(col)
         if col == target:
             skipped.append(
                 TargetScanEntry(
@@ -204,7 +216,7 @@ def _resolve_candidate_columns(
             )
             continue
         candidates.append(col)
-    return candidates, skipped
+    return candidates, skipped, order
 
 
 def scan_target(
@@ -251,9 +263,12 @@ def scan_target(
         optional dependency (``OptionalDependencyError`` from ``mode="standard"``
         / ``"deep"`` without the extras) or a misspelled ``profile_pair`` keyword
         (``TypeError``) — are propagated even under ``"warn"``, so one config
-        mistake surfaces once rather than as N identical errors. Genuine
-        per-column data failures (e.g. an all-NaN or constant column, which raise
-        ``InputError``) remain captured.
+        mistake surfaces once rather than as N identical errors. Shared
+        (column-independent) option values — a bad ``mode``, ``missing``,
+        ``max_n_for_dcor``, or bootstrap option — are validated once before the
+        scan starts and raise ``InputError`` immediately, for the same reason.
+        Genuine per-column data failures (e.g. an all-NaN or constant column,
+        which raise ``InputError``) remain captured.
     direction : {"forward", "reverse", "both"}, default "forward"
         Which orientation each pair is profiled in. The primary association
         metrics (Pearson/Spearman/Kendall/dCor/MI) are symmetric and identical
@@ -353,10 +368,32 @@ def scan_target(
     if isinstance(columns, str):
         columns = [columns]
 
+    # Preflight the shared (column-independent) profile_pair configuration so a
+    # bad mode / missing policy / max_n_for_dcor / bootstrap option raises once,
+    # here — under errors="warn" the per-column loop captures InputError as a
+    # column failure, which would otherwise turn one config mistake into N
+    # identical error entries and zero successes.
+    _validate_profile_pair_options(
+        mode=mode,
+        missing=missing,
+        **{
+            key: profile_pair_kwargs[key]
+            for key in (
+                "max_n_for_dcor",
+                "bootstrap",
+                "bootstrap_metrics",
+                "max_n_for_bootstrap",
+            )
+            if key in profile_pair_kwargs
+        },
+    )
+
     if sample_size is not None and len(data) > sample_size:
         data = data.sample(n=sample_size, random_state=random_state)
 
-    candidates, pre_skipped = _resolve_candidate_columns(data, target, columns)
+    candidates, pre_skipped, resolution_order = _resolve_candidate_columns(
+        data, target, columns
+    )
     if max_pairs is not None and len(candidates) > max_pairs:
         # Record the columns dropped by the cap as explicit skips rather than
         # letting them vanish — otherwise summary() reports "profiled: N,
@@ -393,7 +430,11 @@ def scan_target(
             **profile_pair_kwargs,
         )
 
-    entries: list[TargetScanEntry] = list(pre_skipped)
+    # Collect per-column outcomes keyed by name, then emit them in resolution
+    # order — extending a pre_skipped list with profiled entries would group
+    # every skip before every success, losing the caller's requested order
+    # (columns=["a", "missing", "b"] must come back a, missing, b).
+    entry_by_column: dict[str, TargetScanEntry] = {e.column: e for e in pre_skipped}
     for col in _iter_with_progress(candidates, progress):
         try:
             # Forward = profile_pair(candidate, target) → E[target | candidate]
@@ -409,26 +450,23 @@ def scan_target(
         except Exception as exc:
             if errors == "raise":
                 raise
-            entries.append(
-                TargetScanEntry(
-                    column=col,
-                    status="error",
-                    error_type=type(exc).__name__,
-                    error_message=str(exc),
-                )
+            entry_by_column[col] = TargetScanEntry(
+                column=col,
+                status="error",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
             )
             continue
         # For "reverse" the reverse profile IS the primary result; for "forward"/
         # "both" the forward profile is primary and the reverse (if any) rides
         # alongside for the shape-comparison section.
         primary = reverse if direction == "reverse" else forward
-        entries.append(
-            TargetScanEntry(
-                column=col,
-                status="ok",
-                result=primary,
-                reverse_result=reverse if direction == "both" else None,
-            )
+        entry_by_column[col] = TargetScanEntry(
+            column=col,
+            status="ok",
+            result=primary,
+            reverse_result=reverse if direction == "both" else None,
         )
 
+    entries = [entry_by_column[col] for col in resolution_order]
     return CorrSleuthTargetReport(target=target, entries=entries, direction=direction)

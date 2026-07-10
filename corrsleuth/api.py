@@ -32,8 +32,56 @@ from corrsleuth.metrics import (
     compute_squared_correlation_robust,
     compute_winsorized_pearson,
 )
+from corrsleuth.metrics.bootstrap import _validate_bootstrap_inputs
 from corrsleuth.result import CorrSleuthResult, MetricDiagnostics
 from corrsleuth.validation.input import validate_pair
+
+
+def _validate_profile_pair_options(
+    mode: str = "lite",
+    missing: str = "pairwise",
+    max_n_for_dcor: int | None = 20000,
+    bootstrap: int | None = None,
+    bootstrap_metrics: str | Sequence[str] = "lite",
+    max_n_for_bootstrap: int | None = 5000,
+) -> None:
+    """Validate :func:`profile_pair`'s column-independent (configuration) options.
+
+    Factored out of :func:`profile_pair` so :func:`~corrsleuth.scan.core.scan_target`
+    can preflight the same checks once before its per-column loop: under
+    ``errors="warn"`` a per-column :class:`InputError` is captured as a column
+    failure, so a *shared-configuration* mistake (bad ``mode``, ``missing``,
+    ``max_n_for_dcor``, or bootstrap option) validated only inside the loop
+    would surface as N identical column failures instead of one actionable
+    error. Defaults mirror :func:`profile_pair`'s, so a caller can pass just
+    the options it received. Raises :class:`InputError` for a bad option (or
+    :class:`OptionalDependencyError` when ``bootstrap_metrics`` needs missing
+    extras).
+    """
+    if mode not in ("lite", "standard", "deep"):
+        raise InputError(
+            f"Unknown mode: '{mode}'. Supported modes are 'lite', 'standard', and 'deep'."
+        )
+    # Same check (and message) as validate_pair, which still guards direct
+    # callers of the validation layer; here it fails before any data work.
+    if missing not in ("pairwise", "listwise", "raise"):
+        raise InputError(
+            f"Unsupported missing mode: '{missing}'. Supported modes are 'pairwise', 'listwise', and 'raise'."
+        )
+    if max_n_for_dcor is not None and (
+        isinstance(max_n_for_dcor, bool)
+        or not isinstance(max_n_for_dcor, int)
+        or max_n_for_dcor < 1
+    ):
+        # Validate here rather than let a negative value reach rng.choice(n, -1)
+        # in optional.py, which raises a bare numpy ValueError outside the
+        # MetricComputationError wrapper (C4 #3).
+        raise InputError("max_n_for_dcor must be a positive integer or None.")
+    _validate_bootstrap_inputs(
+        bootstrap=bootstrap,
+        bootstrap_metrics=bootstrap_metrics,
+        max_n_for_bootstrap=max_n_for_bootstrap,
+    )
 
 
 def _metric_value(metrics_map, metric_name: str) -> float | None:
@@ -256,19 +304,14 @@ def profile_pair(
         ``corrsleuth[standard]`` extras (``dcor``, ``scikit-learn``) are not
         installed.
     """
-    if mode not in ("lite", "standard", "deep"):
-        raise InputError(
-            f"Unknown mode: '{mode}'. Supported modes are 'lite', 'standard', and 'deep'."
-        )
-    if max_n_for_dcor is not None and (
-        isinstance(max_n_for_dcor, bool)
-        or not isinstance(max_n_for_dcor, int)
-        or max_n_for_dcor < 1
-    ):
-        # Validate here rather than let a negative value reach rng.choice(n, -1)
-        # in optional.py, which raises a bare numpy ValueError outside the
-        # MetricComputationError wrapper (C4 #3).
-        raise InputError("max_n_for_dcor must be a positive integer or None.")
+    _validate_profile_pair_options(
+        mode=mode,
+        missing=missing,
+        max_n_for_dcor=max_n_for_dcor,
+        bootstrap=bootstrap,
+        bootstrap_metrics=bootstrap_metrics,
+        max_n_for_bootstrap=max_n_for_bootstrap,
+    )
 
     # 1. Validation
     pair = validate_pair(data, x, y, missing=missing)

@@ -8,6 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - Unreleased
 
 ### Fixed
+- **Reverse-scan plots no longer mislabel both axes.** With
+  `direction="reverse"` the primary profile is `profile_pair(target,
+  candidate)`, so the stored clean series are (target, candidate) — but
+  `plot_top()` always labeled them candidate/target, silently showing each
+  variable's values under the other's name. Panels are now direction-aware:
+  a reverse scan plots the target on x and the candidate on y, labels
+  matching, which is the orientation the reverse diagnostics describe.
+- **An invalid scan-wide option now raises once instead of failing every
+  column.** Under the default `errors="warn"`, a shared configuration mistake
+  (`mode="bogus"`, a bad `missing` policy, `max_n_for_dcor=0`, or an invalid
+  bootstrap option) was caught per column, returning a "successful" report in
+  which every candidate carried the identical `InputError`. `scan_target` now
+  preflights the column-independent `profile_pair` options (shared with
+  `profile_pair`'s own validation, so the checks cannot drift) before the loop
+  and raises a single actionable `InputError`.
+- **Scan entries now preserve the requested column order.**
+  `columns=["a", "missing", "b"]` came back ordered `missing, a, b` (and
+  `to_frame()` rows with it) because pre-skipped entries were grouped before
+  all successful profiles; entries are now emitted in the order columns were
+  requested (or appear in the data).
+- **The direction-comparison Markdown section now escapes the target name**,
+  like the report heading already did: a valid column name containing a
+  backtick or newline could close the code span and inject Markdown structure
+  (e.g. a fake heading) into `to_markdown()` output.
+- **`make_relationship` rejects non-finite noise.** `noise=float("inf")`
+  passed the negative/NaN checks and returned `y` values of `±inf`; noise must
+  now be a finite non-negative number.
 - **Tied X values no longer make shape diagnostics depend on input row order.**
   `bin_lof_r2_gain` (and its robust/reversal companions) and the segmentation
   diagnostics binned sorted X by *position*, so tied X values could land in
