@@ -57,7 +57,9 @@ def test_core_metrics():
 def test_optional_metrics():
     pytest.importorskip("dcor")
     pytest.importorskip("sklearn")
-    df = pd.DataFrame({"x": [1, 2, 3, 4, 5], "y": [2, 4, 5, 4, 5]})
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=60)
+    df = pd.DataFrame({"x": x, "y": x + rng.normal(0, 0.5, 60)})
     pair = validate_pair(df, "x", "y")
 
     dc = compute_distance_correlation(pair, mode="standard")
@@ -67,6 +69,33 @@ def test_optional_metrics():
     mi = compute_mutual_information(pair, mode="standard")
     assert mi.available is True
     assert mi.value is not None
+
+
+def test_mutual_information_discreteness_policy():
+    pytest.importorskip("sklearn")
+    rng = np.random.default_rng(1)
+
+    # Discrete (low-cardinality integer) FEATURE with a continuous target:
+    # declared discrete to scikit-learn, so MI is still computed (correctly).
+    xd = rng.integers(0, 8, 400).astype(float)
+    cont = xd + rng.normal(0, 1.0, 400)
+    disc_feat = validate_pair(pd.DataFrame({"x": xd, "y": cont}), "x", "y")
+    res_feat = compute_mutual_information(disc_feat, mode="standard")
+    assert res_feat.value is not None and res_feat.value > 0
+
+    # Discrete TARGET: mutual_info_regression assumes a continuous target, so MI
+    # is withheld with a warning rather than reported wrong.
+    pair_disc_y = validate_pair(pd.DataFrame({"x": cont, "y": xd}), "x", "y")
+    res_tgt = compute_mutual_information(pair_disc_y, mode="standard")
+    assert res_tgt.value is None
+    assert any("target (y) is discrete" in w for w in pair_disc_y.warnings)
+
+    # Continuous data is unaffected (treated as continuous features).
+    xc = rng.normal(size=400)
+    cont_pair = validate_pair(
+        pd.DataFrame({"x": xc, "y": xc + rng.normal(0, 0.5, 400)}), "x", "y"
+    )
+    assert compute_mutual_information(cont_pair, mode="standard").value is not None
 
 
 def test_optional_metrics_downsampling_override():
@@ -653,21 +682,55 @@ def test_bin_lof_returns_none_below_min_n():
     assert result["bin_lof_r2_gain"].available is True
 
 
-def test_bin_lof_r2_gain_handles_heavy_ties_without_raising():
-    """Heavy ties in X don't shrink any bin below 2 points here — binning is
-    by sorted *position*, not by distinct X value, and n >= _MIN_N_FOR_BIN_LOF
-    with at most 20 bins guarantees every bin has >= 2 points — but a heavily
-    tied sort key is exactly the shape that could regress this if the binning
-    logic ever changed to group by value instead of position."""
+def test_bin_lof_withheld_for_too_few_distinct_x():
+    """When X has too few distinct values to form the minimum bin count without
+    splitting a tied run, the bin-lof diagnostics are *withheld* (no_value)
+    rather than computed on order-dependent bins. Binning is tie-safe — a
+    boundary never splits a run of equal X — so with only a handful of distinct
+    values (here 4, one dominating) fewer than `_MIN_BINS` bins survive and the
+    diagnostic is not reported. It must not raise."""
     n = 200
-    # All but a handful of rows share the same X value.
     x = np.concatenate([np.zeros(n - 3), [1.0, 2.0, 3.0]])
     y = np.arange(n, dtype=float)
     pair = validate_pair(pd.DataFrame({"x": x, "y": y}), "x", "y")
 
-    result = compute_bin_lof(pair)["bin_lof_r2_gain"]
-    assert result.available is True
-    assert result.value is not None
+    result = compute_bin_lof(pair)
+    assert result["bin_lof_r2_gain"].available is True
+    assert result["bin_lof_r2_gain"].value is None
+    assert result["bin_reversal_count"].value is None
+
+
+def test_bin_lof_and_segmentation_invariant_under_row_permutation_with_ties():
+    """Reproducibility: an identical dataset with tied X must yield identical
+    shape diagnostics regardless of row order. The previous position-based
+    binning split tied runs by input order, so a reorder could flip
+    `bin_lof_r2_gain` / `bin_reversal_count` (and the label). Tie-safe binning
+    partitions only at value changes, so the diagnostics are invariant to
+    machine precision."""
+    rng = np.random.default_rng(7)
+    n = 300
+    x = np.round(rng.uniform(-3, 3, n), 1)  # many ties (~40-60 distinct values)
+    y = x**2 + rng.normal(0, 1.0, n)
+    perm = rng.permutation(n)
+
+    def diagnostics(xx, yy):
+        pair = validate_pair(pd.DataFrame({"x": xx, "y": yy}), "x", "y")
+        bl = compute_bin_lof(pair)
+        seg = compute_segmentation(pair)
+        return np.array(
+            [
+                bl["bin_lof_r2_gain"].value,
+                bl["bin_reversal_count"].value,
+                bl["bin_lof_r2_gain_robust"].value,
+                seg["segment_gain"].value,
+                seg["segment_stepness"].value,
+            ]
+        )
+
+    base = diagnostics(x, y)
+    permuted = diagnostics(x[perm], y[perm])
+    assert np.allclose(base, permuted, rtol=0, atol=1e-9)
+    assert base[1] == permuted[1]  # reversal count identical exactly
 
 
 def test_bin_reversal_count_separates_oscillation_from_single_bend():

@@ -87,20 +87,62 @@ def _bin_lof_no_value() -> dict[str, MetricResult]:
     return {name: MetricResult.no_value(name) for name in _BIN_LOF_NAMES}
 
 
+def _tie_safe_bin_indices(xs: np.ndarray, n_bins: int) -> list[np.ndarray]:
+    """Equal-frequency-ish bins over pre-sorted ``xs`` that **never split a run
+    of equal X values** across a boundary.
+
+    Starts from the plain equal-position split (:func:`numpy.array_split`) and
+    moves only those interior boundaries that would fall *inside* a tied run to
+    the nearer edge of that run. With no ties every boundary is already between
+    distinct values, so the result is byte-identical to ``array_split`` — the
+    binning of continuous data (and therefore the calibration of the bin-lof
+    gain on it) is unchanged. With ties the boundaries snap to value changes, so
+    the bins depend only on the *sorted values*, not on the arbitrary order of
+    tied rows — which is what makes the diagnostics reproducible under row
+    permutation (the previous position split assigned tied rows to bins by their
+    input order). Snapping can merge boundaries, so the returned list may hold
+    fewer than ``n_bins`` bins; the caller withholds the diagnostic when too few
+    survive.
+    """
+    n = xs.shape[0]
+    sizes = [len(b) for b in np.array_split(np.arange(n), n_bins)]
+    raw_bounds = np.cumsum(sizes)[:-1]  # interior boundary positions
+    edges = [0]
+    for b in raw_bounds:
+        b = int(b)
+        if xs[b - 1] == xs[b]:
+            # b splits a tied run; find the run's [lo, hi) extent and snap to the
+            # nearer edge (a real value change), keeping the split as balanced as
+            # the ties allow.
+            lo = b
+            while lo > 0 and xs[lo - 1] == xs[b]:
+                lo -= 1
+            hi = b
+            while hi < n and xs[hi] == xs[b]:
+                hi += 1
+            b = lo if (b - lo) <= (hi - b) else hi
+        if edges[-1] < b < n:
+            edges.append(b)
+    edges.append(n)
+    edges = sorted(set(edges))
+    return [np.arange(edges[i], edges[i + 1]) for i in range(len(edges) - 1)]
+
+
 def _adjusted_bin_gain(
-    xs: np.ndarray, ys: np.ndarray, n_bins: int
+    xs: np.ndarray, ys: np.ndarray, bin_indices: list[np.ndarray]
 ) -> tuple[float, np.ndarray] | None:
     """Df-adjusted bin-lack-of-fit gain for pre-sorted ``(xs, ys)`` split into
-    ``n_bins`` equal-frequency bins, plus the per-bin means.
+    the given ``bin_indices``, plus the per-bin means.
 
-    ``adjusted R^2 = 1 - (SS_res / (n - p)) / (SS_tot / (n - 1))``; the gain is
-    the k-bin mean model's adjusted R^2 minus the straight-line fit's, so the
-    extra parameters a line lacks earn no free credit (see ``compute_bin_lof``).
-    Returns ``None`` for a degenerate split (a bin under 2 points, or zero total
-    variance). Shared by the primary gain and the leave-one-bin-out jackknife."""
+    ``adjusted R^2 = 1 - (SS_res / (n - p)) / (SS_tot / (n - 1))`` with ``p`` the
+    number of bins; the gain is the k-bin mean model's adjusted R^2 minus the
+    straight-line fit's, so the extra parameters a line lacks earn no free credit
+    (see ``compute_bin_lof``). Returns ``None`` for a degenerate split (a bin
+    under 2 points, fewer than two bins, or zero total variance). Shared by the
+    primary gain and the leave-one-bin-out jackknife."""
     n = xs.shape[0]
-    bin_indices = np.array_split(np.arange(n), n_bins)
-    if any(len(idx) < 2 for idx in bin_indices):
+    n_bins = len(bin_indices)
+    if n_bins < 2 or any(len(idx) < 2 for idx in bin_indices):
         return None
     ss_tot = float(np.sum((ys - ys.mean()) ** 2))
     if ss_tot == 0.0:
@@ -188,12 +230,19 @@ def compute_bin_lof(pair: CleanPair) -> dict[str, MetricResult]:
       structureless predictor). The oscillation and no-trend-curvature gates read
       this value, so a single dominating bin cannot trip them.
 
-    Returns all three as ``None`` (``MetricResult.no_value``) for constant inputs
-    or ``n_used`` below :data:`_MIN_N_FOR_BIN_LOF`. The per-bin ``< 2`` check in
-    :func:`_adjusted_bin_gain` is a defensive guard, not a ties guard: binning is
-    by sorted *position* (``np.array_split``), so ties in X degrade bin *means*
-    but never bin *sizes* — with ``n >= _MIN_N_FOR_BIN_LOF`` and at most
-    :data:`_MAX_BINS` bins every bin already holds ``>= 2`` rows.
+    Binning is **tie-safe** (:func:`_tie_safe_bin_indices`): a bin boundary never
+    splits a run of equal X, so the bins — and every diagnostic here — depend only
+    on the sorted X *values*, not on the arbitrary order of tied rows. (The
+    previous position split assigned tied rows to bins by their input order, so a
+    mere row permutation of identical data could change the gain, the reversal
+    count, and hence the label.) On strictly continuous X the tie-safe bins are
+    identical to the plain equal-position split, so the calibration is unchanged.
+
+    Returns all three as ``None`` (``MetricResult.no_value``) for constant inputs,
+    ``n_used`` below :data:`_MIN_N_FOR_BIN_LOF`, or when X has **too few distinct
+    values** to form :data:`_MIN_BINS` tie-safe bins — there the shape diagnostics
+    are neither meaningful nor stably defined (see the low-unique-ratio validation
+    warning, which flags such columns).
     """
     if pair.x_is_constant or pair.y_is_constant:
         return _bin_lof_no_value()
@@ -211,7 +260,16 @@ def compute_bin_lof(pair: CleanPair) -> dict[str, MetricResult]:
         ys = y[order]
 
         n_bins = int(np.clip(n // _TARGET_POINTS_PER_BIN, _MIN_BINS, _MAX_BINS))
-        bin_indices = np.array_split(np.arange(n), n_bins)
+        # Tie-safe bins: boundaries never split a run of equal X, so the bins —
+        # and every diagnostic below — depend only on the sorted values, not on
+        # the input order of tied rows. When X has too few distinct values to
+        # fill even the minimum bin count, the shape diagnostics are not
+        # meaningful (and the tie split would otherwise make them order-
+        # dependent), so withhold rather than report an unstable value; the
+        # low-unique-ratio validation warning already flags such columns.
+        bin_indices = _tie_safe_bin_indices(xs, n_bins)
+        if len(bin_indices) < _MIN_BINS:
+            return _bin_lof_no_value()
 
         # The df-adjusted gain penalizes each model's residual by its own
         # parameter count, so the k-bin mean model earns no free credit for the
@@ -219,7 +277,7 @@ def compute_bin_lof(pair: CleanPair) -> dict[str, MetricResult]:
         # ~(k-2)/(n-1) positive null bias that mislabels noisy-linear data as
         # curved). See docs/shape-diagnostics-design.md and the calibration sweep
         # in validation/bin_lof_sweep.py.
-        primary = _adjusted_bin_gain(xs, ys, n_bins)
+        primary = _adjusted_bin_gain(xs, ys, bin_indices)
         if primary is None:
             return _bin_lof_no_value()
         bin_lof_gain, bin_means = primary
@@ -238,9 +296,14 @@ def compute_bin_lof(pair: CleanPair) -> dict[str, MetricResult]:
         # strong rank trend and where curvature legitimately concentrates in the
         # extreme bins -- so its calibration is untouched.
         robust_gain = bin_lof_gain
-        for j in range(n_bins):
-            keep = np.concatenate([bin_indices[i] for i in range(n_bins) if i != j])
-            dropped = _adjusted_bin_gain(xs[keep], ys[keep], n_bins - 1)
+        n_actual_bins = len(bin_indices)
+        for j in range(n_actual_bins):
+            keep = np.concatenate(
+                [bin_indices[i] for i in range(n_actual_bins) if i != j]
+            )
+            dropped = _adjusted_bin_gain(
+                xs[keep], ys[keep], _tie_safe_bin_indices(xs[keep], n_actual_bins - 1)
+            )
             # Skip unevaluable (degenerate) or NaN drops so a single bad subset
             # cannot poison the min (and a NaN primary gain stays NaN).
             if dropped is not None and dropped[0] == dropped[0]:
@@ -343,7 +406,10 @@ def compute_squared_correlation_robust(pair: CleanPair) -> MetricResult:
 
     Reports the smallest ``|corr((X−x̄)², (Y−ȳ)²)|`` obtained across the full data
     and after removing up to :data:`_SQ_CORR_ROBUST_DROP` of the points most
-    extreme in *either* squared variable. A genuine magnitude link (a circle, a
+    extreme in *either* squared variable — with the means **re-estimated on the
+    retained points** at each drop, so it is a genuine deletion estimate of the
+    statistic on the subsample (the dropped extremes no longer bias the center
+    the survivors are squared around). A genuine magnitude link (a circle, a
     one-sided U-shape) is carried by many points, so it barely moves; a
     heavy-tailed variable's spurious sq_corr is carried by a few extreme values
     and collapses. The classifier requires this to clear ``SQ_CORR_ROBUST_FLOOR``
@@ -369,19 +435,32 @@ def compute_squared_correlation_robust(pair: CleanPair) -> MetricResult:
 
     try:
         # Rank each point by how extreme it is in *either* squared variable, drop
-        # the top-j (j = 1..K), and recompute. The minimum |corr| — including the
-        # full-data value — is how much of the magnitude signal survives removing
-        # the most extreme few points.
+        # the top-j (j = 1..K), and recompute on the *retained* points. The
+        # minimum |corr| — including the full-data value — is how much of the
+        # magnitude signal survives removing the most extreme few points.
+        #
+        # The squared deviations are re-centered on the retained points each
+        # iteration (``(x[keep] - x[keep].mean())**2``), not reused from the
+        # full-sample centering: dropping the extreme points changes the mean, so
+        # a deletion estimate of ``corr((X−x̄)², (Y−ȳ)²)`` must recompute x̄/ȳ on
+        # the retained sample — otherwise the dropped extremes still bias the
+        # center the survivors are squared around. This also serves the gate's
+        # purpose: for a heavy-tailed artifact the dominating points inflate both
+        # the correlation and the mean, so re-centering after removing them
+        # collapses the value further, while a genuine link (spread over many
+        # points) barely moves.
         extremity = np.maximum(stats.rankdata(x2), stats.rankdata(y2))
         order = np.argsort(extremity)[::-1]
-        n = x2.shape[0]
+        n = x.shape[0]
         worst = abs(base)
         for j in range(1, _SQ_CORR_ROBUST_DROP + 1):
             if n - j < 2:
                 break
             keep = np.ones(n, dtype=bool)
             keep[order[:j]] = False
-            r = _squared_correlation(x2[keep], y2[keep])
+            xk = x[keep]
+            yk = y[keep]
+            r = _squared_correlation((xk - xk.mean()) ** 2, (yk - yk.mean()) ** 2)
             if r is not None:
                 worst = min(worst, abs(r))
     except (ValueError, RuntimeError, FloatingPointError) as e:
@@ -526,11 +605,19 @@ def compute_segmentation(pair: CleanPair) -> dict[str, MetricResult]:
       the variance — the ratio scale does not wash out. Capped at
       :data:`_SEGMENT_JUMP_RATIO_CAP` for a noiseless piecewise fit.
 
+    The breakpoint search considers only splits at a **value change** in X, so a
+    break never falls inside a run of equal X — the segment fits (and hence
+    ``segment_gain`` / ``segment_stepness`` / ``breakpoint_x``) depend on the
+    sorted X values, not on the order of tied rows. On strictly continuous X this
+    removes no candidate.
+
     Returns all four as ``None`` (``MetricResult.no_value``) for constant
-    inputs, ``n_used`` below :data:`_MIN_N_FOR_SEGMENTATION`, or a degenerate
-    (zero-variance) response. ``segment_jump_ratio`` is additionally ``None``
-    below its own :data:`_MIN_N_FOR_JUMP_RATIO` floor, where a moderate smooth
-    curve is not reliably separable from a genuine jump.
+    inputs, ``n_used`` below :data:`_MIN_N_FOR_SEGMENTATION`, a degenerate
+    (zero-variance) response, or when no value-change split exists in the
+    searchable range (X effectively single-valued there).
+    ``segment_jump_ratio`` is additionally ``None`` below its own
+    :data:`_MIN_N_FOR_JUMP_RATIO` floor, where a moderate smooth curve is not
+    reliably separable from a genuine jump.
     """
     if pair.x_is_constant or pair.y_is_constant:
         return _segmentation_no_value()
@@ -580,6 +667,14 @@ def compute_segmentation(pair: CleanPair) -> dict[str, MetricResult]:
 
         min_seg = max(5, int(_SEGMENT_MIN_FRACTION * n))
         ks = np.arange(min_seg, n - min_seg + 1)
+        # A breakpoint at position k splits between rows k-1 and k; restrict the
+        # candidates to positions where X actually changes value, so a break
+        # never falls inside a run of equal X. Otherwise the chosen split — and
+        # the resulting segment_gain / stepness / breakpoint_x — would depend on
+        # the arbitrary order of tied rows (the same reproducibility issue the
+        # bin-lof binning has). With no ties this removes nothing.
+        if ks.size:
+            ks = ks[xs[ks] != xs[ks - 1]]
         if ks.size == 0:
             return _segmentation_no_value()
 

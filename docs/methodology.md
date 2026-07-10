@@ -83,7 +83,7 @@ extras and raise `OptionalDependencyError` when they are missing.
 | **Spearman ρ** | lite | Monotone association (rank) | Monotone only; robust to monotone outliers; degraded by heavy ties |
 | **Kendall τ-b** | lite | Monotone association (rank, tie-corrected) | Monotone only; built from concordant−discordant *pair* counts (not rank variance like ρ), so it is numerically smaller than ρ for the same signal |
 | **Distance correlation** | standard | *Any* statistical dependence | Population dCor = 0 **iff** independent; range [0, 1]; needs `dcor` |
-| **Mutual information** | standard | *Any* statistical dependence | KSG estimator; **raw/unnormalized (nats, unbounded above)** — not a 0–1 scale; the population value is ≥ 0 but the estimator can be slightly negative under near-independence; needs `scikit-learn` |
+| **Mutual information** | standard | *Any* statistical dependence | KSG estimator; **raw/unnormalized (nats, ≥ 0, unbounded above)** — not a 0–1 scale; scikit-learn clamps the estimator's small negative excursions to 0 (read `0.0` as "near zero"); needs `scikit-learn` |
 | **Trimmed / winsorized / median-clipped Pearson, biweight midcorrelation** | deep | Whether Pearson is leverage-driven | Robust variants of Pearson; computed only when *n* ≥ 50 |
 | **Chatterjee's ξ** (both directions) | deep | *Functional* dependence, **asymmetric** | ξ(X→Y) → 0 under independence and → 1 for functional dependence with a rich/tie-free sort variable (discrete or heavily tied X can stay below 1 even under perfect dependence); *n* ≥ 20 |
 
@@ -95,14 +95,14 @@ Notes that matter for interpretation:
   **and** weak Spearman is the signature of a U-shape or other non-monotone
   structure. (The sample estimator is biased slightly positive even under
   independence, so read small values as "near zero," not exactly zero.)
-- **Mutual information** is reported as the raw KSG estimate in nats. The
-  population MI is `≥ 0` and unbounded above, but the KSG *estimator* can return
-  a small **negative** value under (near-)independence — a known property of the
-  estimator, not an error — so read a small or slightly negative value as "near
-  zero." Read its magnitude *relatively* (larger = more shared information), never
-  as if it were on Pearson's 0–1 scale. In practice it serves as a *detector* of
-  arbitrary dependence alongside distance correlation, not as a standalone
-  strength measure.
+- **Mutual information** is reported as the KSG estimate in nats. It is `≥ 0`
+  and unbounded above — scikit-learn's `mutual_info_regression` clamps the
+  estimator's occasional small negative excursions (a known KSG property under
+  near-independence) to zero, so a returned `0.0` should be read as "near zero,"
+  not as exact independence. Read its magnitude *relatively* (larger = more
+  shared information), never as if it were on Pearson's 0–1 scale. In practice it
+  serves as a *detector* of arbitrary dependence alongside distance correlation,
+  not as a standalone strength measure.
 - **Chatterjee's ξ** (2020) is **asymmetric**: ξ(X→Y) measures whether Y is a
   noisy function of X, which need not equal ξ(Y→X). Because it is asymmetric —
   and sensitive to the cardinality of the conditioning (sort) variable — both
@@ -450,8 +450,9 @@ for a fixed `random_state` but not invariant to input row order.
   spot and can flag a mid-range `high_leverage_cluster` the label missed (§5) —
   but the primary-label leverage rule itself remains trim-based. (See the
   trim-limitation note in the interpretation guide.)
-- **Mutual information is unnormalized** (nats) — interpret relatively; the KSG
-  estimator can also be slightly negative near independence (read as "near zero").
+- **Mutual information is unnormalized** (nats, `≥ 0` — scikit-learn clamps the
+  KSG estimator's small negative excursions to zero) — interpret relatively; read
+  a returned `0.0` as "near zero," not exact independence.
 - **Chatterjee's ξ is noisier for low-cardinality sort variables** (random
   tie-break) and is bounded below 1 for discrete predictors even under perfect
   dependence.
