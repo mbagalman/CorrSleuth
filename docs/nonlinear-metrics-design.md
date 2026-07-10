@@ -229,8 +229,12 @@ Conventions applied:
    `chatterjee_xi_reverse` is `ξ(target → candidate)`. Both names are valid
    `sort_by` keys for `report.plot_top()`.
 2. **Heuristic interaction. Substantially resolved, by a different route** —
-   ξ itself still does not feed `apply_heuristics` (it remains
-   diagnostic/warning-only), but the underlying gap this question pointed at
+   ξ itself still does not feed the primary label cascade (`apply_heuristics`),
+   but it is no longer warning-only: it drives two **secondary diagnostic
+   axes** — `functional_direction` (derived entirely from the two ξ directions)
+   and the `closed_loop_or_multivalued` value of `dependence_type` (a circle vs.
+   a one-way U-shape) — in addition to the dependence warning. The underlying
+   gap this question pointed at
    (a strong nonmonotonic dependence, e.g. a sinusoid, reading
    `weak_or_no_relationship` in deep mode because `dcor` isn't available) was
    closed by the lite-computable shape diagnostics instead:
