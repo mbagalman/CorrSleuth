@@ -103,15 +103,24 @@ Notes that matter for interpretation:
   shared information), never as if it were on Pearson's 0–1 scale. In practice it
   serves as a *detector* of arbitrary dependence alongside distance correlation,
   not as a standalone strength measure. A **low-cardinality column** (at most 20
-  distinct levels, each repeating at least twice on average) is treated as
-  discrete and routed to the matching scikit-learn estimator — a discrete
-  feature via `discrete_features`, a discrete target via `mutual_info_classif`
-  on integer-coded levels — because the continuous KSG estimator misestimates
-  such data. Detection is by cardinality/repetition, never by the values
-  themselves, so any bijective re-encoding of the same categories (e.g. `0…19`
-  vs `0.0…1.9`) yields the same MI, and both mixed discrete–continuous cases
-  run the same estimator (Ross, 2014), keeping the reported MI symmetric in X
-  and Y as MI must be.
+  distinct levels, each repeating at least twice on average, and **no level
+  observed only once**) is treated as discrete and routed to the matching
+  scikit-learn estimator — a discrete feature via `discrete_features`, a
+  discrete target via `mutual_info_classif` on integer-coded levels — because
+  the continuous KSG estimator misestimates such data. Detection is by
+  cardinality/repetition, never by the values themselves, so any bijective
+  re-encoding of the same categories (e.g. `0…19` vs `0.0…1.9`) yields the same
+  MI, and both mixed discrete–continuous cases run the same estimator (Ross,
+  2014), keeping the reported MI symmetric in X and Y as MI must be. A
+  low-cardinality column that *does* have singleton levels is **unestimable**
+  and MI is withheld with a warning: the discrete estimator silently discards
+  singleton-level observations (it can read a near-deterministic relationship
+  as MI ≈ 0) and the continuous estimator misestimates heavily tied data, so
+  neither estimate is defensible. In the bootstrap, this classification is made
+  once on the full original data and held fixed for every replicate — the
+  estimator choice is a property of the variables, and re-inferring it from
+  each (smaller) resample would mix two different estimators in one bootstrap
+  distribution.
 - **Chatterjee's ξ** (2020) is **asymmetric**: ξ(X→Y) measures whether Y is a
   noisy function of X, which need not equal ξ(Y→X). Because it is asymmetric —
   and sensitive to the cardinality of the conditioning (sort) variable — both

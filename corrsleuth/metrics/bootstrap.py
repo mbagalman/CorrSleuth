@@ -8,6 +8,7 @@ from corrsleuth.exceptions import InputError, OptionalDependencyError
 from corrsleuth.heuristics import STANDARD_ONLY_LABELS, apply_heuristics
 from corrsleuth.metrics.core import compute_kendall, compute_pearson, compute_spearman
 from corrsleuth.metrics.optional import (
+    _discreteness,
     compute_distance_correlation,
     compute_mutual_information,
 )
@@ -195,13 +196,23 @@ def _bootstrap_flags(pair: CleanPair, outlier_status: str) -> list[str]:
     return flags
 
 
-def _compute_bootstrap_metric(name: str, pair: CleanPair, random_state: int):
+def _compute_bootstrap_metric(
+    name: str,
+    pair: CleanPair,
+    random_state: int,
+    mi_discreteness: tuple[str, str] | None = None,
+):
     """Dispatch a single metric computation by name for one replicate.
 
     Distance correlation and mutual information are computed with
     ``max_n_for_dcor=None`` (no per-replicate downsampling) so every replicate
-    uses its full resampled rows. Raises :class:`InputError` for an unknown
-    name (the input is pre-validated, so this is a guard against drift).
+    uses its full resampled rows. ``mi_discreteness`` is the ``(x, y)``
+    discreteness classification of the *original* pair: the estimator choice is
+    a property of the variables, so it must be held fixed across replicates —
+    re-inferring it from each (smaller, resampled) replicate would mix two
+    different estimators in one bootstrap distribution. Raises
+    :class:`InputError` for an unknown name (the input is pre-validated, so
+    this is a guard against drift).
     """
     if name == "pearson":
         return compute_pearson(pair)
@@ -214,8 +225,13 @@ def _compute_bootstrap_metric(name: str, pair: CleanPair, random_state: int):
             pair, mode="standard", max_n_for_dcor=None, random_state=random_state
         )
     if name == "mutual_information":
+        x_state, y_state = mi_discreteness if mi_discreteness else (None, None)
         return compute_mutual_information(
-            pair, mode="standard", random_state=random_state
+            pair,
+            mode="standard",
+            random_state=random_state,
+            x_discreteness=x_state,
+            y_discreteness=y_state,
         )
     raise InputError(f"Unsupported bootstrap metric: {name}")
 
@@ -383,6 +399,14 @@ def compute_bootstrap(
     # the cascade, while collecting interval values only for the requested set.
     cascade_metrics = tuple(dict.fromkeys((*_LITE_BOOTSTRAP_METRICS, *metric_names)))
 
+    # Classify MI discreteness once, on the full original data, and hold it
+    # fixed for every replicate (see _compute_bootstrap_metric).
+    mi_discreteness = (
+        (_discreteness(pair.x.to_numpy()), _discreteness(pair.y.to_numpy()))
+        if "mutual_information" in cascade_metrics
+        else None
+    )
+
     generator = np.random.default_rng(random_state)
     values: dict[str, list[float]] = {name: [] for name in metric_names}
     interval_metrics = set(metric_names)
@@ -394,7 +418,9 @@ def compute_bootstrap(
         sample_pair = _bootstrap_sample_pair(pair, idx)
         sample_metrics = {}
         for name in cascade_metrics:
-            metric = _compute_bootstrap_metric(name, sample_pair, random_state + i + 1)
+            metric = _compute_bootstrap_metric(
+                name, sample_pair, random_state + i + 1, mi_discreteness
+            )
             sample_metrics[name] = metric
             if (
                 name in interval_metrics
