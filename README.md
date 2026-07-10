@@ -320,9 +320,14 @@ Spearman, and Kendall tau-b. Bootstrap diagnostics are disabled by default.
 These are approximate 95% intervals **only when every row is resampled**; the
 default caps each replicate at `max_n_for_bootstrap=5000` rows, so for `n_used
 > 5000` they become *conservative* (wider) m-out-of-n bands — inflated by
-roughly `sqrt(n_used / 5000)` — and a warning says so. Pass
-`max_n_for_bootstrap=None` for exact full-sample intervals (slower on large
-data). Even in `mode="standard"`, bootstrap uses lite metrics
+roughly `sqrt(n_used / 5000)` — and a warning says so. A binding cap also means
+**pattern stability** is computed by relabeling the 5,000-row resamples — a
+noisier decision procedure than the full sample, so near a label threshold it
+can understate the full-sample label's stability
+(`bootstrap_stability.sample_size` records the per-replicate size used). Pass
+`max_n_for_bootstrap=None` for full-size resamples and approximate (never
+exact — it is still a bootstrap) full-sample percentile intervals; slower on
+large data. Even in `mode="standard"`, bootstrap uses lite metrics
 unless you explicitly pass `bootstrap_metrics="standard"`, because distance
 correlation and mutual information can be expensive to resample. Standard
 bootstrap metrics require the `[standard]` extras even when the main

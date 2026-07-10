@@ -102,7 +102,16 @@ Notes that matter for interpretation:
   not as exact independence. Read its magnitude *relatively* (larger = more
   shared information), never as if it were on Pearson's 0–1 scale. In practice it
   serves as a *detector* of arbitrary dependence alongside distance correlation,
-  not as a standalone strength measure.
+  not as a standalone strength measure. A **low-cardinality column** (at most 20
+  distinct levels, each repeating at least twice on average) is treated as
+  discrete and routed to the matching scikit-learn estimator — a discrete
+  feature via `discrete_features`, a discrete target via `mutual_info_classif`
+  on integer-coded levels — because the continuous KSG estimator misestimates
+  such data. Detection is by cardinality/repetition, never by the values
+  themselves, so any bijective re-encoding of the same categories (e.g. `0…19`
+  vs `0.0…1.9`) yields the same MI, and both mixed discrete–continuous cases
+  run the same estimator (Ross, 2014), keeping the reported MI symmetric in X
+  and Y as MI must be.
 - **Chatterjee's ξ** (2020) is **asymmetric**: ξ(X→Y) measures whether Y is a
   noisy function of X, which need not equal ξ(Y→X). Because it is asymmetric —
   and sensitive to the cardinality of the conditioning (sort) variable — both
@@ -369,8 +378,13 @@ label rule), not just the sampling variability of a single coefficient.
   for cost. Resampling fewer rows than the data contains widens the intervals
   (for a √n-rate statistic they become conservative by roughly `sqrt(n / m)`; for
   a bounded coefficient near ±1 this is a rough guide only, since the sampling
-  distribution is non-normal there); a warning discloses this whenever the cap
-  binds.
+  distribution is non-normal there). The cap affects **pattern stability** the
+  same way: each replicate's label is recomputed on the m-row resample, so a
+  binding cap measures the stability of the *m-sample* decision procedure, not
+  the full-sample one — labels are noisier at m < n, so near a heuristic
+  threshold this can understate how stable the full-sample label really is.
+  `BootstrapStability.sample_size` records the per-replicate size actually used,
+  and a warning discloses both effects whenever the cap binds.
 
 Two conservative guards keep the bootstrap honest at small effective sizes (both
 key off the *effective per-replicate* size, `min(n_used, max_n_for_bootstrap)`):

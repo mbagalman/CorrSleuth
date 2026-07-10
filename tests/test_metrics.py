@@ -75,20 +75,39 @@ def test_mutual_information_discreteness_policy():
     pytest.importorskip("sklearn")
     rng = np.random.default_rng(1)
 
-    # Discrete (low-cardinality integer) FEATURE with a continuous target:
-    # declared discrete to scikit-learn, so MI is still computed (correctly).
+    # Discrete (low-cardinality) FEATURE with a continuous target: declared
+    # discrete to scikit-learn, so MI is computed with the correct estimator.
     xd = rng.integers(0, 8, 400).astype(float)
     cont = xd + rng.normal(0, 1.0, 400)
     disc_feat = validate_pair(pd.DataFrame({"x": xd, "y": cont}), "x", "y")
     res_feat = compute_mutual_information(disc_feat, mode="standard")
     assert res_feat.value is not None and res_feat.value > 0
 
-    # Discrete TARGET: mutual_info_regression assumes a continuous target, so MI
-    # is withheld with a warning rather than reported wrong.
+    # Encoding invariance: MI is invariant under a bijective relabeling, so the
+    # same 8 categories rescaled to 0.0..0.7 must give the same estimate —
+    # detection is by cardinality/repetition, not by whole-number values.
+    rescaled = validate_pair(pd.DataFrame({"x": xd / 10.0, "y": cont}), "x", "y")
+    res_rescaled = compute_mutual_information(rescaled, mode="standard")
+    assert res_rescaled.value == pytest.approx(res_feat.value, rel=1e-9)
+
+    # Symmetry: MI(X; Y) == MI(Y; X). A discrete TARGET dispatches to
+    # mutual_info_classif on integer-coded levels, which runs the same
+    # discrete-continuous estimator as the discrete-feature path, so swapping
+    # the columns must not change the value (and must not withhold it).
     pair_disc_y = validate_pair(pd.DataFrame({"x": cont, "y": xd}), "x", "y")
     res_tgt = compute_mutual_information(pair_disc_y, mode="standard")
-    assert res_tgt.value is None
-    assert any("target (y) is discrete" in w for w in pair_disc_y.warnings)
+    assert res_tgt.value == pytest.approx(res_feat.value, rel=1e-9)
+
+    # Both columns discrete: exact discrete MI, also encoding-invariant.
+    yd = np.floor(xd / 4.0) + rng.integers(0, 2, 400)
+    both = validate_pair(pd.DataFrame({"x": xd, "y": yd}), "x", "y")
+    both_rescaled = validate_pair(
+        pd.DataFrame({"x": xd / 10.0, "y": yd * 3.5 - 1.0}), "x", "y"
+    )
+    v1 = compute_mutual_information(both, mode="standard").value
+    v2 = compute_mutual_information(both_rescaled, mode="standard").value
+    assert v1 is not None and v1 > 0
+    assert v2 == pytest.approx(v1, rel=1e-9)
 
     # Continuous data is unaffected (treated as continuous features).
     xc = rng.normal(size=400)
@@ -96,6 +115,23 @@ def test_mutual_information_discreteness_policy():
         pd.DataFrame({"x": xc, "y": xc + rng.normal(0, 0.5, 400)}), "x", "y"
     )
     assert compute_mutual_information(cont_pair, mode="standard").value is not None
+
+
+def test_looks_discrete_requires_repetition_not_integer_values():
+    """Discreteness detection is cardinality/repetition-based: rescaled
+    categories still count as discrete, while a small all-distinct continuous
+    sample (n <= 20 but no repeats) must fall back to the continuous path."""
+    from corrsleuth.metrics.optional import _looks_discrete
+
+    rng = np.random.default_rng(2)
+    levels = rng.integers(0, 20, 200).astype(float)
+    assert _looks_discrete(levels)
+    assert _looks_discrete(levels / 10.0)  # non-integer encoding, same categories
+    # 15 continuous draws: 15 distinct values with no repeats — not discrete,
+    # even though the cardinality alone is under the 20-level cap.
+    assert not _looks_discrete(rng.normal(size=15))
+    # High-cardinality integers (ages, counts) stay continuous.
+    assert not _looks_discrete(rng.integers(0, 90, 400).astype(float))
 
 
 def test_optional_metrics_downsampling_override():

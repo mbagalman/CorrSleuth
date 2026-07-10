@@ -791,6 +791,23 @@ def test_bootstrap_cap_warning_reaches_result_and_records_sample_size():
     # The cap warning must disclose the m-out-of-n widening, not read as a pure
     # performance cap (CR-3).
     assert any("m-out-of-n" in w and "conservative" in w for w in res.warnings)
+    # A binding cap also means pattern stability was computed by relabeling the
+    # m-row resamples — the stability result records that size, and the warning
+    # discloses that stability reflects the m-sample decision procedure.
+    assert res.bootstrap_stability.sample_size == 40
+    assert any(
+        "Pattern stability" in w and "40-row resamples" in w for w in res.warnings
+    )
+
+
+def test_bootstrap_stability_sample_size_equals_n_used_when_uncapped():
+    df = make_relationship("linear_positive", n=80, random_state=42)
+    res = profile_pair(df, "x", "y", bootstrap=10, random_state=123)
+    assert res.bootstrap_stability.sample_size == 80
+    # No cap bound, so no m-sample stability disclosure fires.
+    assert not any(
+        "Pattern stability" in w and "-row resamples" in w for w in res.warnings
+    )
 
 
 def test_bootstrap_incomplete_warning_attributes_degenerate_resamples():

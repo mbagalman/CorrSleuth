@@ -8,6 +8,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - Unreleased
 
 ### Fixed
+- **Tied X values no longer make shape diagnostics depend on input row order.**
+  `bin_lof_r2_gain` (and its robust/reversal companions) and the segmentation
+  diagnostics binned sorted X by *position*, so tied X values could land in
+  different bins depending on the order rows arrived in — a pure row permutation
+  of identical data could flip the diagnostics and hence the label. Bin
+  boundaries and segmentation breakpoints now never split a run of equal X
+  (tie-safe binning; byte-identical to the old binning on continuous, tie-free
+  X, so calibration is unchanged), and when X has too few distinct values to
+  form the minimum bin count the diagnostics are withheld rather than reported
+  on order-dependent bins. Guarded by a Hypothesis permutation-invariance
+  property test.
+- **Robust squared correlation (`sq_corr_robust`) is now re-estimated on each
+  retained sample.** The leave-the-extremes-out deletion values previously
+  reused the full-sample means when centering before squaring; each deletion now
+  re-centers on the retained points, as a deletion estimate must. Re-running
+  `validation/sq_corr_sweep.py` confirms the change is calibration-neutral, and
+  a full blind-corpus diff shows no label changes.
+- **Mutual information now respects discreteness — symmetrically and
+  independent of encoding.** The continuous KSG estimator misestimates
+  low-cardinality data, so each column is classified as discrete (at most 20
+  distinct levels, each repeating at least twice on average — a
+  cardinality/repetition test, deliberately not a whole-number test, so the same
+  categories encoded `0…19` or `0.0…1.9` give the same MI) and the computation
+  dispatches to the matching scikit-learn estimator: `mutual_info_regression`
+  with `discrete_features` for a discrete feature, `mutual_info_classif` on
+  integer-coded levels for a discrete target. Both mixed cases run the same
+  discrete–continuous estimator, so the reported MI is symmetric in X and Y (as
+  MI must be); genuinely continuous data, including high-cardinality integers
+  like ages, is unaffected.
+- **A binding bootstrap cap is now disclosed as affecting pattern stability,
+  not only interval width.** With `max_n_for_bootstrap` capping replicates at m
+  < n rows, each replicate's label is recomputed on the m-row resample, so
+  `pattern_stability` measures the stability of the *m-sample* decision
+  procedure — noisier than the full sample, which near a heuristic threshold can
+  understate the full-sample label's stability. The cap warning now says so,
+  `BootstrapStability.sample_size` records the per-replicate size actually
+  used, and the README/methodology framing of capped intervals was tightened
+  (m-out-of-n bands are conservative approximations; uncapped intervals are
+  full-size but still approximate, never exact).
 - **Complex-valued columns are now rejected instead of silently truncated.**
   `pandas.api.types.is_numeric_dtype` treats complex dtypes as numeric, so a
   complex column passed the validation gate and was then cast to `float`,

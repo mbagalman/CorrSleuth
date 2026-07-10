@@ -67,6 +67,13 @@ class BootstrapStability:
     metric_set: str
     n_bootstrap: int
     n_iterations: int
+    #: Rows drawn per replicate — the sample size the per-replicate labels (and
+    #: therefore ``pattern_stability``) were computed on. Equals the original
+    #: ``n_used`` unless ``max_n_for_bootstrap`` capped it, in which case
+    #: stability describes the *m-row* decision procedure, not the full-sample
+    #: one: labels are noisier at m < n, so near a heuristic threshold this can
+    #: understate how stable the full-sample label would be.
+    sample_size: int
     #: Whether distance correlation was in the replicate cascade. This — not the
     #: ``metric_set`` string label — is the correct signal for the standard-only
     #: caveat: an explicit subset like ``bootstrap_metrics=["pearson"]`` leaves
@@ -303,9 +310,13 @@ def compute_bootstrap(
     just a performance cap: resampling fewer rows than the data contains inflates
     the per-replicate variance, so the reported intervals are wider (more
     conservative) than the true full-sample sampling variability by roughly a
-    factor of ``sqrt(pair.n_used / m)`` (where ``m`` is the capped row count). A
-    warning is emitted whenever the cap binds; pass ``max_n_for_bootstrap=None``
-    to resample all rows.
+    factor of ``sqrt(pair.n_used / m)`` (where ``m`` is the capped row count).
+    Pattern stability is affected the same way: each replicate's label is
+    recomputed on the ``m``-row resample, so a binding cap measures the
+    stability of the *m-sample* decision procedure, not the full-sample one
+    (``BootstrapStability.sample_size`` records which). A warning is emitted
+    whenever the cap binds; pass ``max_n_for_bootstrap=None`` to resample all
+    rows.
     """
     resolved = _validate_bootstrap_inputs(
         bootstrap=bootstrap,
@@ -326,8 +337,11 @@ def compute_bootstrap(
             f"{max_n_for_bootstrap} rows (random_state={random_state}); "
             f"resampling fewer rows than n_used is an m-out-of-n bootstrap that "
             f"widens the intervals, so they are conservative relative to the "
-            f"full-sample sampling variability. Pass max_n_for_bootstrap=None to "
-            f"use all rows."
+            f"full-sample sampling variability. Pattern stability is likewise "
+            f"computed by relabeling these {max_n_for_bootstrap}-row resamples — "
+            f"a noisier decision procedure than the full sample, so near a label "
+            f"threshold it can understate the full-sample label's stability. "
+            f"Pass max_n_for_bootstrap=None to use all rows."
         )
         sample_size = max_n_for_bootstrap
 
@@ -482,6 +496,7 @@ def compute_bootstrap(
             metric_set=metric_set,
             n_bootstrap=bootstrap,
             n_iterations=n_iterations,
+            sample_size=sample_size,
             dcor_in_cascade=dcor_in_cascade,
         )
 

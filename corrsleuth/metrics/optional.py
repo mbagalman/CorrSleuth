@@ -5,29 +5,33 @@ from corrsleuth.result import MetricResult
 from corrsleuth.validation.input import CleanPair
 
 #: Maximum distinct values for a variable to count as **discrete** for the
-#: mutual-information estimator. scikit-learn's ``mutual_info_regression`` runs a
-#: continuous k-NN (KSG) estimator by default, which misestimates a
-#: low-cardinality integer/categorical column unless it is declared discrete via
-#: ``discrete_features`` (and assumes a *continuous* target regardless). A
-#: variable whose values are all whole numbers and number at most this many
-#: distinct levels is treated as discrete: passed as a discrete feature when it
-#: is X, and (when it is the target Y) a signal to withhold MI, since
-#: ``mutual_info_regression`` has no correct estimate for a discrete target.
-#: Chosen to cover binary/ordinal/small-count columns while leaving genuinely
-#: continuous data (even integer-valued, like ages) that has many levels alone.
+#: mutual-information estimator. scikit-learn's continuous k-NN (KSG) estimators
+#: misestimate a low-cardinality column unless it is declared discrete, so
+#: :func:`compute_mutual_information` dispatches on this detection (see its
+#: discreteness policy). Detection is by *cardinality and repetition only* —
+#: never by the values themselves — because MI is invariant under any bijective
+#: relabeling: the same 20 categories encoded ``0…19`` or ``0.0…1.9`` must
+#: produce the same estimate, so a whole-number test (which the ``0.0…1.9``
+#: encoding fails) would make the result encoding-dependent. Chosen to cover
+#: binary/ordinal/small-count columns while leaving genuinely continuous data
+#: (even integer-valued, like ages) that has many levels alone.
 _MI_DISCRETE_MAX_CARDINALITY = 20
 
 
 def _looks_discrete(values: np.ndarray) -> bool:
-    """True when ``values`` are all whole numbers with at most
-    :data:`_MI_DISCRETE_MAX_CARDINALITY` distinct levels — the low-cardinality
-    integer/categorical case the continuous MI estimator misestimates."""
+    """True when ``values`` has at most :data:`_MI_DISCRETE_MAX_CARDINALITY`
+    distinct levels *and* each level repeats at least twice on average
+    (``n_distinct * 2 <= n``) — the low-cardinality case the continuous MI
+    estimator misestimates. The repetition requirement keeps a small continuous
+    sample (whose draws are almost surely all distinct) from being misread as
+    categorical; heuristic detection cannot recover true measurement type, so a
+    borderline column falls back to the continuous estimator (the pre-policy
+    behavior) rather than guessing discrete."""
     finite = values[np.isfinite(values)]
     if finite.size == 0:
         return False
-    if not np.all(finite == np.round(finite)):
-        return False
-    return np.unique(finite).size <= _MI_DISCRETE_MAX_CARDINALITY
+    n_distinct = np.unique(finite).size
+    return n_distinct <= _MI_DISCRETE_MAX_CARDINALITY and n_distinct * 2 <= finite.size
 
 
 def compute_distance_correlation(
@@ -96,27 +100,32 @@ def compute_mutual_information(
     larger MI means more shared information) or alongside the other metrics, not
     on the same 0-1 scale.
 
-    **Discreteness policy.** ``mutual_info_regression`` runs a continuous k-NN
-    (KSG) estimator that misestimates low-cardinality integer/categorical data
-    unless told otherwise. A discrete feature (X — all whole numbers, at most
-    :data:`_MI_DISCRETE_MAX_CARDINALITY` distinct levels) is declared via
-    ``discrete_features`` so the correct discrete-continuous estimator runs. A
-    discrete **target** (Y) has no correct estimate from this function — it
-    assumes a continuous target — so MI is *withheld* (``value=None``) with a
-    warning rather than reported wrong; distance correlation covers dependence in
-    that case.
+    **Discreteness policy.** The continuous k-NN (KSG) estimator misestimates
+    low-cardinality data unless told otherwise, so each column is classified by
+    :func:`_looks_discrete` (cardinality + repetition; deliberately *not*
+    value-based, so any bijective re-encoding of the same categories gives the
+    same estimate) and the computation dispatches to the matching estimator:
+    ``mutual_info_regression`` when Y is continuous (with a discrete X declared
+    via ``discrete_features``), ``mutual_info_classif`` on the integer-coded
+    levels when Y is discrete. Both mixed cases run scikit-learn's same
+    discrete–continuous (Ross 2014) estimator, so — like MI itself — the result
+    is symmetric in X and Y. Discreteness detection is heuristic: a column with
+    few repeating levels that is *conceptually* continuous is still estimated
+    on its level structure, which is the better-calibrated choice for such data.
 
     In ``mode='standard'`` or ``'deep'`` (both need the ``[standard]`` extras),
     raises :class:`OptionalDependencyError` if ``scikit-learn`` is not installed.
     In ``mode='lite'`` returns an unavailable
-    :class:`MetricResult` instead. ``random_state`` is forwarded to
-    :func:`sklearn.feature_selection.mutual_info_regression` for reproducibility.
-    Returns ``value=None`` when either column is constant, when
-    ``pair.n_used <= 3`` (too few observations for the estimator), or when the
-    target is discrete (see the discreteness policy above).
+    :class:`MetricResult` instead. ``random_state`` is forwarded to the
+    scikit-learn estimator for reproducibility.
+    Returns ``value=None`` when either column is constant or when
+    ``pair.n_used <= 3`` (too few observations for the estimator).
     """
     try:
-        from sklearn.feature_selection import mutual_info_regression
+        from sklearn.feature_selection import (
+            mutual_info_classif,
+            mutual_info_regression,
+        )
     except ImportError:
         # Both "standard" and "deep" require the [standard] extras (deep is a
         # superset of standard); "lite" degrades to an unavailable result.
@@ -139,27 +148,37 @@ def compute_mutual_information(
     x_arr = pair.x.to_numpy()
     y_arr = pair.y.to_numpy()
 
-    # scikit-learn's mutual_info_regression assumes a *continuous* target and, by
-    # default, continuous features. A discrete/low-cardinality target has no
-    # correct estimate here (it needs a classification estimator), so withhold
-    # rather than report a misestimated value; a discrete *feature* is handled
-    # correctly by declaring it via discrete_features. See _looks_discrete.
-    if _looks_discrete(y_arr):
-        pair.warnings.append(
-            "Mutual information is not computed: the target (y) is discrete / "
-            "low-cardinality, and scikit-learn's mutual_info_regression assumes a "
-            "continuous target. Rely on distance correlation for dependence here."
-        )
-        return MetricResult.no_value("mutual_information")
-
-    x = x_arr.reshape(-1, 1)
-    y = y_arr
-    discrete_features = [_looks_discrete(x_arr)]
+    # Dispatch by detected discreteness (see the docstring's discreteness
+    # policy). mutual_info_regression assumes a continuous target, so a discrete
+    # Y goes through mutual_info_classif instead, on integer level codes — MI is
+    # invariant under bijective relabeling, so coding the levels changes nothing
+    # while satisfying the classifier's label requirements. Either mixed case
+    # runs the same discrete-continuous estimator internally, keeping the
+    # reported MI symmetric in X and Y.
+    x_discrete = _looks_discrete(x_arr)
+    y_discrete = _looks_discrete(y_arr)
 
     try:
-        mi = mutual_info_regression(
-            x, y, discrete_features=discrete_features, random_state=random_state
-        )[0]
+        if y_discrete:
+            y_codes = np.unique(y_arr, return_inverse=True)[1]
+            feature = (
+                np.unique(x_arr, return_inverse=True)[1].astype(float)
+                if x_discrete
+                else x_arr
+            )
+            mi = mutual_info_classif(
+                feature.reshape(-1, 1),
+                y_codes,
+                discrete_features=[x_discrete],
+                random_state=random_state,
+            )[0]
+        else:
+            mi = mutual_info_regression(
+                x_arr.reshape(-1, 1),
+                y_arr,
+                discrete_features=[x_discrete],
+                random_state=random_state,
+            )[0]
     except (ValueError, RuntimeError, FloatingPointError) as e:
         raise MetricComputationError(
             f"Failed to compute mutual_information: {type(e).__name__}: {e}"
