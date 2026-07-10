@@ -23,28 +23,32 @@ def _discreteness(values: np.ndarray) -> str:
     or ``"unestimable"``.
 
     ``"discrete"`` requires at most :data:`_MI_DISCRETE_MAX_CARDINALITY` distinct
-    levels, each level repeating at least twice on average (``n_distinct * 2 <=
-    n``, so a small continuous sample — whose draws are almost surely all
-    distinct — is not misread as categorical), **and no singleton level**:
+    levels with **every observed level appearing at least twice**:
     scikit-learn's discrete-continuous estimator silently *discards* observations
     whose level appears only once, so with singletons present the "discrete"
     estimate can read a near-deterministic relationship as MI ≈ 0. A
-    low-cardinality column that has repeats but also singleton levels is
+    low-cardinality column that mixes repeated and singleton levels is
     ``"unestimable"``: the discrete estimator would drop the singleton rows and
-    the continuous KSG estimator misestimates heavily tied data (the original
-    reason this policy exists), so neither estimate is trustworthy and the
-    caller withholds MI with a warning. Everything else — many levels, or too
-    few repeats to look categorical — is ``"continuous"``. Heuristic detection
-    cannot recover true measurement type; the boundaries here only decide which
-    estimator (if any) is defensible."""
+    the continuous KSG estimator misestimates tied data (the original reason
+    this policy exists) — its estimate on such a column is not even invariant
+    under a bijective relabeling of the levels, as MI must be — so neither
+    estimate is trustworthy and the caller withholds MI with a warning. A
+    low-cardinality column with *no* repeats at all is a small continuous
+    sample (continuous draws are almost surely all distinct), and many-level
+    data is continuous outright. Heuristic detection cannot recover true
+    measurement type; the boundaries here only decide which estimator (if any)
+    is defensible."""
     finite = values[np.isfinite(values)]
     if finite.size == 0:
         return "continuous"
     counts = np.unique(finite, return_counts=True)[1]
-    n_distinct = counts.size
-    if n_distinct > _MI_DISCRETE_MAX_CARDINALITY or n_distinct * 2 > finite.size:
+    if counts.size > _MI_DISCRETE_MAX_CARDINALITY:
         return "continuous"
-    return "discrete" if counts.min() >= 2 else "unestimable"
+    if counts.min() >= 2:
+        return "discrete"
+    if counts.max() > 1:
+        return "unestimable"
+    return "continuous"  # small all-distinct sample
 
 
 def compute_distance_correlation(

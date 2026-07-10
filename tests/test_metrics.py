@@ -134,11 +134,20 @@ def test_discreteness_three_state_classification():
     assert _discreteness(rng.normal(size=15)) == "continuous"
     # High-cardinality integers (ages, counts) stay continuous.
     assert _discreteness(rng.integers(0, 90, 400).astype(float)) == "continuous"
-    # 19 singleton levels + one level repeated 21x: passes the *average*
-    # repetition test (20 distinct, n=40) but the singleton levels would be
-    # silently discarded by the discrete estimator — unestimable, not discrete.
+    # 19 singleton levels + one level repeated 21x: the singleton levels would
+    # be silently discarded by the discrete estimator — unestimable.
     singletons = np.concatenate([np.arange(1, 20, dtype=float), np.full(21, 0.0)])
     assert _discreteness(singletons) == "unestimable"
+    # Mixed repeated/singleton levels *below the average-count threshold* (ten
+    # levels twice + ten levels once, n=30, so n_distinct * 2 > n): the repeats
+    # prove this is not an all-distinct continuous sample, and the continuous
+    # estimator on such a column is not relabeling-invariant (a bijective
+    # re-encoding of the same categories changed MI 1.89 -> 0.53 nats) —
+    # unestimable, not continuous.
+    mixed = np.concatenate(
+        [np.repeat(np.arange(10, dtype=float), 2), np.arange(10, 20, dtype=float)]
+    )
+    assert _discreteness(mixed) == "unestimable"
 
 
 def test_mutual_information_withheld_for_singleton_level_column():
@@ -161,6 +170,32 @@ def test_mutual_information_withheld_for_singleton_level_column():
     # Symmetric: the swapped orientation withholds too.
     swapped = validate_pair(pd.DataFrame({"x": partner, "y": label}), "x", "y")
     assert compute_mutual_information(swapped, mode="standard").value is None
+
+
+def test_mutual_information_withheld_for_mixed_singleton_and_repeated_levels():
+    """Regression for the boundary case: mixed repeated/singleton levels whose
+    average count is below two (ten levels twice + ten once, n=30) previously
+    fell through to the continuous path, where the KSG estimate is not invariant
+    under a bijective relabeling of the same categories (1.89 vs 0.53 nats).
+    Such a column is unestimable: MI must be withheld — identically for any
+    encoding of the levels — rather than reported encoding-dependently."""
+    pytest.importorskip("sklearn")
+    rng = np.random.default_rng(0)
+    label = np.concatenate(
+        [np.repeat(np.arange(10, dtype=float), 2), np.arange(10, 20, dtype=float)]
+    )
+    rng.shuffle(label)
+    y = label * 0.3 + rng.normal(scale=0.5, size=label.size)
+
+    # A bijective relabeling of the same categories.
+    mapping = {v: float(i * 37 % 101) for i, v in enumerate(np.unique(label))}
+    relabeled = np.array([mapping[v] for v in label])
+
+    for lab in (label, relabeled):
+        pair = validate_pair(pd.DataFrame({"x": lab, "y": y}), "x", "y")
+        res = compute_mutual_information(pair, mode="standard")
+        assert res.value is None
+        assert any("levels observed only once" in w for w in pair.warnings)
 
 
 def test_bootstrap_holds_mi_discreteness_fixed_across_replicates(monkeypatch):
