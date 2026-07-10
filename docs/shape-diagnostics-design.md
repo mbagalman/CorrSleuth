@@ -1,5 +1,18 @@
 # Shape Diagnostics — Design Note
 
+> **Scope.** This note documents the design of the **first generation** of shape
+> diagnostics — `bin_lof_r2_gain`, `sq_corr`, and the periodicity closure
+> (`bin_reversal_count`). A later generation of shape/structure diagnostics has
+> since shipped and is **not** covered here: the single-bend V route
+> (`SINGLE_BEND_BIN_LOF_FLOOR`), the discontinuity detector
+> (`segment_jump_ratio` → `mean_shape = discontinuous_jump`), the compound
+> trend+wave value (`oscillating_trend`), and the two-group / mixture split
+> (`cluster_split_*` → `dependence_type = two_group_shift`). For those, see
+> [thresholds-and-rationale.md](thresholds-and-rationale.md) (values and
+> calibration) and [interpretation-guide.md](interpretation-guide.md) (behavior);
+> their robust leave-one-out companions (`bin_lof_r2_gain_robust`,
+> `sq_corr_robust`) also post-date this note.
+>
 > This note evaluates candidate fixes for four heuristic-cascade misses found
 > during user testing on synthetic data with known relationship shapes, picks
 > the two worth implementing now (`bin_lof_r2_gain`, `sq_corr`), and documents
@@ -135,6 +148,14 @@ correlated.
   way distance correlation is; a shape with no magnitude signature (e.g. some
   oscillating shapes) will not trigger it. See the periodicity discussion
   below.
+- Even within its target family, `sq_corr` assumes roughly **balanced support**
+  around the mean. A *linear-armed V* (or off-center U) on even density has its
+  vertex value far below the mean of |Y|, so the centered square is minimized
+  mid-arm rather than at the vertex — the squares fold and `sq_corr` collapses
+  (the blind-test uniform V measures ~0.16 versus the 0.35 requirement despite a
+  textbook V). This was found later and handled by a **separate single-bend
+  route** (`SINGLE_BEND_BIN_LOF_FLOOR`, one robust bin-mean reversal with a large
+  lack-of-fit gain), not covered in this note — see the scope banner at the top.
 - Also fires for classic U-shapes, which already reach
   `nonmonotonic_dependence` via distance correlation in `mode="standard"` —
   redundant there, but this is what makes U-shapes newly detectable in `lite`

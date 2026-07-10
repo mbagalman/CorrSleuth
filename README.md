@@ -179,16 +179,23 @@ CorrSleuth takes a fundamentally different approach to bivariate analysis. Inste
 
 By examining where these metrics **agree or disagree**, CorrSleuth assigns a heuristic diagnostic label (e.g., `monotonic_nonlinear` if Spearman is high but Pearson is low, or `nonmonotonic_dependence` if Distance Correlation is high but Spearman is low).
 
-Three additional shape diagnostics — a bin-based lack-of-fit test, a bin-mean
-reversal count, and a squared-value correlation — run in every mode (no
-optional dependency) and feed those same labels for cases the metrics above
-miss on their own: smooth monotonic curves and step functions that keep
-Pearson close to Spearman, oscillating/periodic relationships (a sinusoid)
-that keep every correlation coefficient near zero, and circular/radial
-dependence that even distance correlation under-reads. They aren't reported
-as standalone metrics; see
-[the design note](https://github.com/mbagalman/CorrSleuth/blob/main/docs/shape-diagnostics-design.md)
-for details.
+A family of **structural diagnostics** runs in every mode (no optional
+dependency) and feeds those same labels for cases the metrics above miss on
+their own — a bin-based lack-of-fit test and bin-mean reversal count (smooth
+curves, step functions, and oscillating/periodic relationships), a
+squared-value correlation (circular/radial dependence), a single-breakpoint
+segmentation search (steps, level-shift discontinuities, compound trend+wave
+shapes), a two-group split test (mixture / lurking-grouping-variable
+structure), heteroscedasticity tests (changing residual spread), and
+row-level Cook's-distance influence (leverage). They aren't reported as
+standalone metrics; instead they populate five orthogonal **relationship
+axes** on `result.diagnostics` — `mean_shape`, `variance_shape`,
+`dependence_type`, `outlier_sensitivity`, and `functional_direction` — that
+describe properties a single label can't carry at once (a mean can be linear
+while its variance grows and a few rows drive it). See
+[the shape-diagnostics design note](https://github.com/mbagalman/CorrSleuth/blob/main/docs/shape-diagnostics-design.md)
+and the [interpretation guide](https://github.com/mbagalman/CorrSleuth/blob/main/docs/interpretation-guide.md)
+for the full axis value lists.
 
 ## Scope
 
@@ -328,6 +335,9 @@ warning explains each case.
 ### `CorrSleuthResult`
 The object returned by `profile_pair()`.
 - `.pattern`: The assigned heuristic label (e.g., `"near_linear"`).
+- `.disagreement_score`: Scalar summarizing how much the association measures disagree (see the methodology note).
+- `.warnings` / `.recommendations`: Lists of cautionary notes and suggested next steps.
+- `.diagnostics`: A `MetricDiagnostics` object carrying the numeric diagnostic gaps (`rank_linear_gap`, `nonmonotonic_gap`, …), the shape/segmentation/variance/influence/mixture diagnostics (`bin_lof_r2_gain`(`_robust`), `sq_corr`(`_robust`), `segment_gain`/`segment_stepness`/`segment_jump_ratio`/`breakpoint_x`, `bp_pvalue`/`gq_ratio`/`bowtie_ratio`, `max_cook_distance`/`n_influential_points`, `cluster_split_r2`/`cluster_valley_share`/`cluster_min_share`/`pearson_within_cluster`), and the **five secondary axes**: `mean_shape` (`linear`, `smooth_curve`, `step_or_threshold`, `oscillating_trend`, `discontinuous_jump`, `curved`), `variance_shape` (`constant`, `increasing_spread`, `decreasing_spread`, `edge_high_spread`, `center_high_spread`), `dependence_type` (`monotone`, `magnitude_linked`, `oscillating`, `nonmonotone`, `closed_loop_or_multivalued`, `two_group_shift`), `outlier_sensitivity` (`low`, `single_point_driven`, `high_leverage_cluster`, `high`), and `functional_direction` (`y_of_x`, `x_of_y`, `both_directions`, `neither_direction`; deep mode only).
 - `.summary()`: Returns a string summary of the metrics, label, warnings, recommendations, and caveat.
 - `.explain()`: Returns a plain-English narrative interpreting the results.
 - `.plot(show=False)`: Generates a 1x3 Matplotlib diagnostic figure.
@@ -351,6 +361,7 @@ def scan_target(
     mode: str = "lite",                   # Forwarded to profile_pair
     missing: str = "pairwise",            # Forwarded to profile_pair
     errors: str = "warn",                 # "warn" captures per-column failures, "raise" propagates
+    direction: str = "forward",           # "forward" | "reverse" | "both" (adds the reverse-shape view)
     max_pairs: int | None = None,         # Cap on columns profiled
     sample_size: int | None = None,       # Optional one-time row downsample
     progress: bool = False,               # Use tqdm if installed; documented no-op otherwise
@@ -374,8 +385,8 @@ The object returned by `scan_target()`.
 - `.target`: Name of the target column.
 - `.entries`: List of `TargetScanEntry` objects, one per inspected column.
 - `.successes` / `.failures`: Convenience splits.
-- `.summary(top_n=5, include_caveat=True)`: Section-structured text overview. Pattern sections (`Strongest near-linear relationships`, `Potential monotonic nonlinear relationships`, `Potential nonmonotonic relationships`, `Possible outlier-driven relationships`, `Weak or no pairwise relationships`) are emitted only when populated, each capped at `top_n`. Variables whose pattern falls outside that set (e.g. `low_power_or_uncertain`, `mixed_or_ambiguous`) appear in an `Other or inconclusive` section so no profiled variable disappears from the summary. A cross-cutting `Variables Pearson may underrate` section lists variables where rank (Spearman/Kendall) or standard-mode nonmonotonic evidence exceeds Pearson by more than 0.20; the gap is directional, so leverage cases where Pearson is stronger than the rank metrics are excluded. A `Dependence may be understated` section lists weak/ambiguous candidates that nonetheless carry strong nonmonotonic or radial dependence evidence — the lite-computable robust squared-correlation `sq_corr_robust`, or distance correlation / Chatterjee's ξ / mutual information in standard/deep mode — so a real relationship the headline label understates is not lost in a wide scan (the robust signal excludes heavy-tailed leverage artifacts). With `direction="both"`, a `Shape differs by direction` section flags candidates whose reverse orientation is a structured nonlinearity while the forward one is not. `Variables with missingness or tie warnings` surfaces columns whose validation warnings mention ties, missingness, low unique ratios, small samples, or constant inputs. `Skipped or failed` lists non-numeric / errored columns. The output is deterministic; entries within each section are sorted by `disagreement_score` descending.
-- `.to_frame()`: One row per inspected column with variable, target, status, pattern, disagreement score, warnings, recommendations, and per-metric value columns. Skipped or errored rows leave metric columns NaN and populate `error_type` / `error_message`.
+- `.summary(top_n=5, include_caveat=True)`: Section-structured text overview. Pattern sections (`Strongest near-linear relationships`, `Potential monotonic nonlinear relationships`, `Potential nonmonotonic relationships`, `Possible outlier-driven relationships`, `Weak or no pairwise relationships`) are emitted only when populated, each capped at `top_n`. Variables whose pattern falls outside that set (e.g. `low_power_or_uncertain`, `mixed_or_ambiguous`) appear in an `Other or inconclusive` section so no profiled variable disappears from the summary. A cross-cutting `Variables Pearson may underrate` section lists variables where rank (Spearman/Kendall) or standard-mode nonmonotonic evidence exceeds Pearson by more than 0.20; the gap is directional, so leverage cases where Pearson is stronger than the rank metrics are excluded. A `Dependence may be understated` section lists weak/ambiguous candidates that nonetheless carry strong nonmonotonic or radial dependence evidence — the lite-computable robust squared-correlation `sq_corr_robust`, or distance correlation / Chatterjee's ξ / mutual information in standard/deep mode — so a real relationship the headline label understates is not lost in a wide scan (the robust signal excludes heavy-tailed leverage artifacts). With `direction="both"`, a `Shape differs by direction` section flags candidates whose reverse orientation is a structured nonlinearity while the forward one is not. `Variables with missingness or tie warnings` surfaces columns whose validation warnings mention ties, missingness, low unique ratios, small samples, or constant inputs. `Skipped or failed` lists non-numeric / errored columns. The output is deterministic; the pattern sections sort by `disagreement_score` descending, while the cross-cutting sections sort by their own evidence strength (the underrate gap, the dependence-understatement signal) or alphabetically by column.
+- `.to_frame()`: One row per inspected column with variable, target, status, pattern, disagreement score, warnings, recommendations, per-metric value columns, and a `diagnostic_<field>` column for every `MetricDiagnostics` field (numeric diagnostics and the five secondary axes). Under `direction="both"` it also adds `reverse_pattern` / `reverse_mean_shape` / `reverse_dependence_type`. Skipped or errored rows leave the result-dependent columns NaN and populate `error_type` / `error_message`.
 - `.to_markdown(top_n=5, include_caveat=True)`: Exports the grouped target report as Markdown with overview counts, populated pattern sections, the cross-cutting Pearson-underrated, dependence-understated, and reliability-warning sections, skipped/failed rows, and the non-causal caveat by default.
 - `.pearson_underrated(threshold=0.20)`: Returns a DataFrame of variables where Pearson may understate the relationship. The ranking is directional: Spearman, Kendall, or standard-mode nonmonotonic evidence must exceed Pearson by more than `threshold`, so outlier/leverage cases where Pearson is stronger than rank metrics are excluded. Rows include metric values, explicit excess-over-Pearson gap values, raw `nonmonotonic_gap`, pattern, disagreement score, and warnings, sorted by strongest evidence.
 - `.plot_top(n=12, sort_by="disagreement_score", patterns=None, ncols=3, figsize=None, show=False)`: Compact gallery of the top-`n` target relationships as a Matplotlib `Figure`. `sort_by` accepts `"disagreement_score"` (raw value descending) or a metric name (`pearson`, `spearman`, `kendall_tau_b`, `distance_correlation`, `mutual_information`, or a deep-mode robust metric, `chatterjee_xi`, or `chatterjee_xi_reverse`; sorted by absolute value descending). `patterns=` filters to specific diagnostic labels and accepts either a single string or an iterable. Each panel is a scatter of the candidate column versus the target, titled with the column name, pattern, and key metric values. When fewer than `n` variables match, the unused grid slots are hidden; an empty filter yields a placeholder figure rather than raising.
@@ -386,7 +397,7 @@ The object returned by `scan_target()`.
 - [Interpretation Guide](https://github.com/mbagalman/CorrSleuth/blob/main/docs/interpretation-guide.md) — meaning, typical metric pattern, common examples, recommended next steps, and caveats for every diagnostic label, plus topic notes on Pearson misleads, monotonicity, leverage, ties, and performance modes.
 - [Thresholds and Rationale](https://github.com/mbagalman/CorrSleuth/blob/main/docs/thresholds-and-rationale.md) — every cut point that drives a label or warning, with its value, location, justification, and how to override the label-driving ones.
 - [Nonlinear Metrics Design Note](https://github.com/mbagalman/CorrSleuth/blob/main/docs/nonlinear-metrics-design.md) — why Chatterjee's ξ was chosen over HSIC, MGC, MIC, and Hoeffding's D for `mode="deep"`.
-- [Shape Diagnostics Design Note](https://github.com/mbagalman/CorrSleuth/blob/main/docs/shape-diagnostics-design.md) — why `bin_lof_r2_gain` and `sq_corr` were added to catch smooth monotonic curves, step functions, and circular/radial dependence.
+- [Shape Diagnostics Design Note](https://github.com/mbagalman/CorrSleuth/blob/main/docs/shape-diagnostics-design.md) — the design rationale for the first-generation shape diagnostics (`bin_lof_r2_gain`, `sq_corr`, and the bin-reversal periodicity closure); the later diagnostics (single-bend, `segment_jump_ratio`, the two-group cluster split, `oscillating_trend`) are documented in the thresholds note and interpretation guide.
 
 ## License
 

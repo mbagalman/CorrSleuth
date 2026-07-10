@@ -28,6 +28,7 @@ research that motivates particular metric choices, see
   - [When Pearson Can Be Misleading](#when-pearson-can-be-misleading)
   - [Monotonic vs Nonmonotonic Relationships](#monotonic-vs-nonmonotonic-relationships)
   - [Outlier-Sensitive Correlations](#outlier-sensitive-correlations)
+  - ["Dependence may be understated" in a scan](#dependence-may-be-understated-in-a-scan)
   - [Missing Data and Ties](#missing-data-and-ties)
   - [Performance Modes](#performance-modes)
 - [Further Reading](#further-reading)
@@ -80,9 +81,12 @@ signs, both at least moderate): that is a leverage signature, so it is routed to
 3. `possible_outlier_or_leverage` — when Pearson is strong, materially
    stronger than the rank metrics, and a trimmed-Pearson sensitivity check
    says Pearson is leverage-driven (or sensitivity could not be computed).
-4. `nonmonotonic_dependence` — when Pearson and Spearman are weak and either
-   distance correlation is high (`mode="standard"`) or `|corr((X−x̄)², (Y−ȳ)²)|` is
-   high (`sq_corr`, no mode gate).
+4. `nonmonotonic_dependence` — via any of four routes: distance correlation high
+   (`mode="standard"`), `|corr((X−x̄)², (Y−ȳ)²)|` high (`sq_corr`, no mode gate), a
+   single robust bin-mean reversal with a large lack-of-fit gain (a V/off-center
+   U), or a repeated bin-mean oscillation (a sinusoid). The first three require
+   Pearson and Spearman both weak (`< 0.25`); the oscillation route tolerates a
+   moderate trend (up to 0.50).
 5. `monotonic_nonlinear` — when Spearman is meaningfully stronger than
    Pearson, or the bin lack-of-fit diagnostic (`bin_lof_r2_gain`, no mode
    gate) finds real curvature a small Spearman-Pearson gap misses.
@@ -147,11 +151,15 @@ absolute gap between Pearson and Spearman is below `0.15`. If
 not well summarized by a straight line. Spearman captures the monotonic
 trend that Pearson is missing.
 
-**Typical metric pattern.** `|spearman| > 0.50` and either `|spearman| -
-|pearson| > 0.20`, or the bin lack-of-fit diagnostic `bin_lof_r2_gain > 0.05`
-(see [shape-diagnostics-design.md](shape-diagnostics-design.md)). The second
-route catches smooth monotonic curves and step functions whose Pearson stays
-close enough to Spearman that the gap alone misses them — no mode gate, so it
+**Typical metric pattern.** Either `|spearman| > 0.50` with `|spearman| −
+|pearson| > 0.20` (the rank-gap route), or the bin lack-of-fit diagnostic
+`bin_lof_r2_gain > 0.05` (see
+[shape-diagnostics-design.md](shape-diagnostics-design.md)) on a *strong*
+monotone relationship. "Strong" here means `|spearman| > 0.50`, **or**
+`max(|pearson|, |spearman|) > 0.50` with a moderate rank trend (`|spearman| ≥
+0.20`) when the robust leave-one-bin-out gain also clears the floor — the second
+case catches a flat-middle/steep-tail curve (a cubic) whose compressed middle
+ranks pull Spearman below Pearson. The lack-of-fit route has no mode gate, so it
 applies in `lite` mode too. Kendall tau-b usually agrees with Spearman.
 
 **Common examples.**
@@ -195,18 +203,23 @@ scattered around a circle). Pearson and Spearman both miss it; distance
 correlation, the `sq_corr` shape diagnostic, or the bin-reversal oscillation
 gate flags it. Check `dependence_type` for which kind it is.
 
-**Typical metric pattern.** `|pearson| < 0.25`, `|spearman| < 0.25`, and any
-of three routes: `distance_correlation > 0.35` (`mode="standard"` only);
-`|corr((X−x̄)², (Y−ȳ)²)| > 0.35` (`sq_corr`, no mode gate — computed in every mode);
-or `bin_reversal_count ≥ 2` together with `bin_lof_r2_gain > 0.15` (the
-oscillation gate, also no mode gate — see
-[shape-diagnostics-design.md](shape-diagnostics-design.md)). The second route
-exists because distance correlation itself is structurally capped around ~0.2
-for a true circular/radial relationship, even noiseless; the third because an
-oscillating relationship (a sinusoid) keeps distance correlation only
-marginally above its floor and has no magnitude signature for `sq_corr`. In
-`mode="deep"`, Chatterjee's ξ usually shows the same story asymmetrically
-(`ξ(X → Y)` is high; `ξ(Y → X)` may be lower).
+**Typical metric pattern.** Any of **four** routes. The first three require both
+monotone metrics weak (`|pearson| < 0.25`, `|spearman| < 0.25`):
+`distance_correlation > 0.35` (`mode="standard"` only);
+`|corr((X−x̄)², (Y−ȳ)²)| > 0.35` (`sq_corr`, no mode gate) with its robust value
+`sq_corr_robust > 0.20`; or a **single bend** — `bin_reversal_count ≥ 1` with
+`bin_lof_r2_gain > 0.30` (raw **and** leave-one-bin-out robust), the lite-mode
+route for a V or off-center U whose arm geometry defeats `sq_corr`. The
+**fourth**, the oscillation gate — `bin_reversal_count ≥ 2` with
+`bin_lof_r2_gain > 0.15` (raw **and** robust) — tolerates a *moderate* trend
+(`max(|pearson|, |spearman|) < 0.50`, not the 0.25 the other routes use), so a
+skew-tilted sinusoid still resolves; see
+[shape-diagnostics-design.md](shape-diagnostics-design.md). The `sq_corr` route
+exists because distance correlation is structurally capped around ~0.2 for a
+true circular/radial relationship even noiseless; the oscillation route because a
+sinusoid keeps distance correlation only marginally above its floor and has no
+magnitude signature for `sq_corr`. In `mode="deep"`, Chatterjee's ξ usually shows
+the same story asymmetrically (`ξ(X → Y)` is high; `ξ(Y → X)` may be lower).
 
 **Common examples.**
 
@@ -293,16 +306,22 @@ set on the result.
 **Meaning.** Little to no evidence of pairwise association under the
 metrics that were available.
 
-**Typical metric pattern.** `|pearson| < 0.20`, `|spearman| < 0.20`, and
-either `distance_correlation < 0.20` or distance correlation was not
-computed.
+**Typical metric pattern.** `|pearson| < 0.20`, `|spearman| < 0.20`, either
+`distance_correlation < 0.20` or distance correlation was not computed, **and**
+the robust squared-value correlation `|sq_corr_robust| < 0.20` (or it was not
+computable). The last condition uses the *robust* value, so a surviving
+magnitude signal — a genuine U/circle — holds the pair out of "no relationship,"
+while a heavy-tailed variable's spurious `sq_corr` that collapses when its few
+extreme squared points are dropped does not.
 
 **Common examples.**
 
 - Truly independent variables.
-- A nonlinear relationship that the available metrics couldn't see (most
-  often: a nonmonotonic relationship in `lite` mode where distance
-  correlation isn't available).
+- A nonlinear relationship that the available metrics couldn't see — in `lite`
+  mode this means a nonmonotonic shape **outside** the families lite mode does
+  catch (`sq_corr` magnitude/radial, the bin-reversal oscillation route, and the
+  single-bend V route); a shape those cover is labeled `nonmonotonic_dependence`
+  instead.
 - A relationship that is conditional on a third variable — e.g., income
   and spending are weakly correlated overall but tightly correlated
   *within* age groups (Simpson's paradox).
@@ -318,7 +337,8 @@ computed.
 **Caveats.**
 
 - "Weak under these metrics" ≠ "no relationship." A nonmonotonic
-  relationship in `lite` mode can land here.
+  relationship in `lite` mode can land here if its shape falls outside the
+  `sq_corr` / oscillation / single-bend families lite mode detects.
 - The label cascade does not consult Chatterjee's ξ, so even in
   `mode="deep"` a strongly nonmonotonic pair can land here. When that
   happens (ξ above 0.35 with a weak or ambiguous label), CorrSleuth adds a
@@ -480,7 +500,8 @@ Notes on the less-obvious values:
   residual). It is detected *before* the smooth-vs-step split, which would
   otherwise force one breakpoint onto the wave and misread it as a step. Both the
   primary cascade's oscillation route and the `dependence_type` oscillation gate
-  require a *weak* trend, so a wave riding on a strong trend reaches neither;
+  require a below-strong trend (`max(|pearson|, |spearman|) < 0.50`), so a wave
+  riding on a *strong* trend (`|spearman| ≥ 0.50`) reaches neither;
   `oscillating_trend` (and a companion "compound trend-plus-wave" warning) is the
   one place this pattern surfaces. A pure sinusoid or U-shape (weak Spearman)
   does not qualify — it stays `curved` with `dependence_type` = `oscillating`.
@@ -563,14 +584,17 @@ Notes on the less-obvious values:
 - **`dependence_type = two_group_shift`** — the pooled correlation is carried
   almost entirely by the separation between **two well-separated groups of
   rows**, with the association *collapsed inside each group*. Detected from the
-  two-group split diagnostics (`metrics/mixture.py`, lite-computable): the best
-  two-group split of the association-axis projection explains most of its
-  variance (`cluster_split_r2 > 0.70` — a unimodal elliptical cloud is capped
-  near 0.64), the band around the split boundary is nearly empty
-  (`cluster_valley_share < 0.03` — "no points bridging the gap"), the smaller
-  group is a real subpopulation (`cluster_min_share ≥ 0.10`, distinguishing it
-  from a leverage handful), and the within-group `|Pearson|` has collapsed to
-  under 40% of the pooled value (`pearson_within_cluster`). Reported in
+  two-group split diagnostics (`metrics/mixture.py`, lite-computable), all **five**
+  gating jointly: the best two-group split of the association-axis projection
+  explains most of its variance (`cluster_split_r2 > 0.70` — a unimodal
+  elliptical cloud is asymptotically capped near 0.64 (2/π) but reaches ~0.72 in
+  finite samples, which is why the valley gate below is a required backstop), the
+  band around the split boundary is nearly empty (`cluster_valley_share < 0.03` —
+  "no points bridging the gap"), the smaller group is a real subpopulation
+  (`cluster_min_share ≥ 0.10`, distinguishing it from a leverage handful), the
+  within-group `|Pearson|` has collapsed to under 40% of the pooled value
+  (`pearson_within_cluster`), and the pooled `|Pearson|` is itself at least 0.35
+  (there must be a correlation for the split to be *carrying* it). Reported in
   preference to the generic `monotone`, and paired with a warning: the pooled
   correlation describes the *group separation*, not a continuous x-y trend —
   the classic lurking-grouping-variable / mixture situation (and the
@@ -579,7 +603,7 @@ Notes on the less-obvious values:
   effect* (a step of a continuous variable with no within-segment slope) are
   the same joint distribution, so the warning presents both readings; a step
   that keeps a within-segment slope keeps a high `pearson_within_cluster` and
-  is *not* flagged. All four numbers live on `result.diagnostics`; thresholds
+  is *not* flagged. All four cluster numbers live on `result.diagnostics`; thresholds
   were calibrated in `validation/cluster_split_sweep.py` (0 fires in 680
   negative trials across bivariate normals, skewed/heavy-tailed links, curves,
   sloped steps, heteroscedastic fans, leverage, and sparse subgroups).
@@ -828,11 +852,16 @@ Notes:
   correlation and mutual information (slower).
 - Distance correlation downsamples to 20 000 rows by default
   (`max_n_for_dcor=20000`). The downsample is seeded for reproducibility.
-- The shape diagnostics (`bin_lof_r2_gain`, `bin_reversal_count`, `sq_corr` —
+- The shape diagnostics (`bin_lof_r2_gain`(`_robust`), `bin_reversal_count`,
+  `sq_corr`(`_robust`) —
   see [shape-diagnostics-design.md](shape-diagnostics-design.md);
-  `segment_gain`, `segment_stepness`, `breakpoint_x`), the heteroscedasticity diagnostics (`bp_pvalue`,
+  `segment_gain`, `segment_stepness`, `segment_jump_ratio`, `breakpoint_x`), the
+  two-group / mixture diagnostics (`cluster_split_r2`, `cluster_valley_share`,
+  `cluster_min_share`, `pearson_within_cluster` — what makes `two_group_shift`
+  reachable in lite mode), the heteroscedasticity diagnostics (`bp_pvalue`,
   `gq_ratio`, `bowtie_ratio`), and the influence diagnostics (`max_cook_distance`,
-  `n_influential_points`) run in every mode, including `lite`. They feed the
+  `n_influential_points`) run in every mode, including `lite` (all pure
+  numpy/scipy, no optional dependency). They feed the
   `monotonic_nonlinear` / `nonmonotonic_dependence` labels and the secondary
   axes but never appear in the metrics table; they show up under
   `result.diagnostics`.

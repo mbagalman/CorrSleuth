@@ -5,7 +5,7 @@ All notable changes to CorrSleuth are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] - 2026-06-28
+## [0.2.0] - Unreleased
 
 ### Fixed
 - **Complex-valued columns are now rejected instead of silently truncated.**
@@ -567,5 +567,5 @@ Initial release.
   each replicate resamples that many rows (an m-out-of-n bootstrap); the
   resulting intervals are conservative (wider) and the emitted warning says so.
 
-[0.2.0]: https://github.com/mbagalman/CorrSleuth/releases/tag/v0.2.0
+[0.2.0]: https://github.com/mbagalman/CorrSleuth/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/mbagalman/CorrSleuth/releases/tag/v0.1.0

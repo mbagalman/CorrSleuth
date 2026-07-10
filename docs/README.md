@@ -22,11 +22,15 @@ User-facing documentation for the CorrSleuth package. Start with the
   — why Chatterjee's ξ was chosen for `mode="deep"` over HSIC, MGC, MIC,
   and Hoeffding's D. Useful if you want to know *why* a particular
   dependence measure was added to the package.
-- [Shape Diagnostics Design Note](shape-diagnostics-design.md) — why
+- [Shape Diagnostics Design Note](shape-diagnostics-design.md) — the design
+  rationale for the **first generation** of shape diagnostics: why
   `bin_lof_r2_gain` and `sq_corr` were added to catch smooth monotonic
   curves, step functions, and circular/radial dependence, and how the
   originally-deferred periodic/cyclical case was later closed with
-  `bin_reversal_count` (see the amendment in that note).
+  `bin_reversal_count`. Later shape/structure diagnostics (single-bend V,
+  `segment_jump_ratio`/`discontinuous_jump`, the two-group `cluster_split`
+  family, `oscillating_trend`) are documented in the thresholds note and the
+  interpretation guide rather than here (see the scope banner in that note).
 
 ## For contributors and maintainers
 
