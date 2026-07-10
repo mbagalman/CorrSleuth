@@ -117,21 +117,93 @@ def test_mutual_information_discreteness_policy():
     assert compute_mutual_information(cont_pair, mode="standard").value is not None
 
 
-def test_looks_discrete_requires_repetition_not_integer_values():
-    """Discreteness detection is cardinality/repetition-based: rescaled
-    categories still count as discrete, while a small all-distinct continuous
-    sample (n <= 20 but no repeats) must fall back to the continuous path."""
-    from corrsleuth.metrics.optional import _looks_discrete
+def test_discreteness_three_state_classification():
+    """Discreteness detection is cardinality/repetition-based and three-state:
+    rescaled categories still count as discrete, a small all-distinct continuous
+    sample falls back to the continuous path, and low-cardinality data with
+    singleton levels is unestimable (neither estimator is defensible)."""
+    from corrsleuth.metrics.optional import _discreteness
 
     rng = np.random.default_rng(2)
     levels = rng.integers(0, 20, 200).astype(float)
-    assert _looks_discrete(levels)
-    assert _looks_discrete(levels / 10.0)  # non-integer encoding, same categories
+    assert _discreteness(levels) == "discrete"
+    # Non-integer encoding, same categories.
+    assert _discreteness(levels / 10.0) == "discrete"
     # 15 continuous draws: 15 distinct values with no repeats — not discrete,
     # even though the cardinality alone is under the 20-level cap.
-    assert not _looks_discrete(rng.normal(size=15))
+    assert _discreteness(rng.normal(size=15)) == "continuous"
     # High-cardinality integers (ages, counts) stay continuous.
-    assert not _looks_discrete(rng.integers(0, 90, 400).astype(float))
+    assert _discreteness(rng.integers(0, 90, 400).astype(float)) == "continuous"
+    # 19 singleton levels + one level repeated 21x: passes the *average*
+    # repetition test (20 distinct, n=40) but the singleton levels would be
+    # silently discarded by the discrete estimator — unestimable, not discrete.
+    singletons = np.concatenate([np.arange(1, 20, dtype=float), np.full(21, 0.0)])
+    assert _discreteness(singletons) == "unestimable"
+
+
+def test_mutual_information_withheld_for_singleton_level_column():
+    """Regression for the reviewer's edge case: 19 singleton levels + one level
+    repeated 21x classified as 'discrete' under the average-repetition test, and
+    scikit-learn's discrete-continuous estimator discards singleton-level rows —
+    reporting MI ~ 2e-16 for a pair with Pearson ~ 1. MI must be withheld with a
+    warning instead of reported as (near) zero."""
+    pytest.importorskip("sklearn")
+    rng = np.random.default_rng(0)
+    label = np.concatenate([np.arange(1, 20, dtype=float), np.full(21, 0.0)])
+    rng.shuffle(label)
+    partner = label + rng.normal(scale=1e-6, size=label.size)
+
+    pair = validate_pair(pd.DataFrame({"x": label, "y": partner}), "x", "y")
+    res = compute_mutual_information(pair, mode="standard")
+    assert res.value is None
+    assert any("levels observed only once" in w for w in pair.warnings)
+
+    # Symmetric: the swapped orientation withholds too.
+    swapped = validate_pair(pd.DataFrame({"x": partner, "y": label}), "x", "y")
+    assert compute_mutual_information(swapped, mode="standard").value is None
+
+
+def test_bootstrap_holds_mi_discreteness_fixed_across_replicates(monkeypatch):
+    """The estimator choice is a property of the variables: it is classified
+    once on the original data and passed into every replicate, never re-inferred
+    from a (smaller) resample — re-inference would mix two different estimators
+    in one bootstrap distribution (a balanced 20-level variable at n=100 reads
+    discrete on ~44% of 30-row resamples and continuous on the rest). Verified
+    by counting the classifier calls made through compute_mutual_information:
+    the profile-level MI classifies its two columns once; the 25 replicates
+    (which receive precomputed states) must add none."""
+    pytest.importorskip("dcor")
+    pytest.importorskip("sklearn")
+    import corrsleuth.metrics.optional as optional_mod
+    from corrsleuth.api import profile_pair
+
+    rng = np.random.default_rng(3)
+    x = np.repeat(np.arange(20, dtype=float), 5)
+    rng.shuffle(x)
+    df = pd.DataFrame({"x": x, "y": x * 0.5 + rng.normal(0, 1.0, 100)})
+
+    calls = 0
+    real = optional_mod._discreteness
+
+    def counting(values):
+        nonlocal calls
+        calls += 1
+        return real(values)
+
+    # Patch the name compute_mutual_information resolves at call time; the
+    # bootstrap's own one-time classification is a separate import-time binding
+    # in bootstrap.py, deliberately outside this count.
+    monkeypatch.setattr(optional_mod, "_discreteness", counting)
+    profile_pair(
+        df,
+        "x",
+        "y",
+        mode="standard",
+        bootstrap=25,
+        bootstrap_metrics="standard",
+        max_n_for_bootstrap=30,
+    )
+    assert calls == 2
 
 
 def test_optional_metrics_downsampling_override():

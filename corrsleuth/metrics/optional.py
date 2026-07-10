@@ -18,20 +18,33 @@ from corrsleuth.validation.input import CleanPair
 _MI_DISCRETE_MAX_CARDINALITY = 20
 
 
-def _looks_discrete(values: np.ndarray) -> bool:
-    """True when ``values`` has at most :data:`_MI_DISCRETE_MAX_CARDINALITY`
-    distinct levels *and* each level repeats at least twice on average
-    (``n_distinct * 2 <= n``) — the low-cardinality case the continuous MI
-    estimator misestimates. The repetition requirement keeps a small continuous
-    sample (whose draws are almost surely all distinct) from being misread as
-    categorical; heuristic detection cannot recover true measurement type, so a
-    borderline column falls back to the continuous estimator (the pre-policy
-    behavior) rather than guessing discrete."""
+def _discreteness(values: np.ndarray) -> str:
+    """Classify a column for the MI estimator: ``"discrete"``, ``"continuous"``,
+    or ``"unestimable"``.
+
+    ``"discrete"`` requires at most :data:`_MI_DISCRETE_MAX_CARDINALITY` distinct
+    levels, each level repeating at least twice on average (``n_distinct * 2 <=
+    n``, so a small continuous sample — whose draws are almost surely all
+    distinct — is not misread as categorical), **and no singleton level**:
+    scikit-learn's discrete-continuous estimator silently *discards* observations
+    whose level appears only once, so with singletons present the "discrete"
+    estimate can read a near-deterministic relationship as MI ≈ 0. A
+    low-cardinality column that has repeats but also singleton levels is
+    ``"unestimable"``: the discrete estimator would drop the singleton rows and
+    the continuous KSG estimator misestimates heavily tied data (the original
+    reason this policy exists), so neither estimate is trustworthy and the
+    caller withholds MI with a warning. Everything else — many levels, or too
+    few repeats to look categorical — is ``"continuous"``. Heuristic detection
+    cannot recover true measurement type; the boundaries here only decide which
+    estimator (if any) is defensible."""
     finite = values[np.isfinite(values)]
     if finite.size == 0:
-        return False
-    n_distinct = np.unique(finite).size
-    return n_distinct <= _MI_DISCRETE_MAX_CARDINALITY and n_distinct * 2 <= finite.size
+        return "continuous"
+    counts = np.unique(finite, return_counts=True)[1]
+    n_distinct = counts.size
+    if n_distinct > _MI_DISCRETE_MAX_CARDINALITY or n_distinct * 2 > finite.size:
+        return "continuous"
+    return "discrete" if counts.min() >= 2 else "unestimable"
 
 
 def compute_distance_correlation(
@@ -90,6 +103,9 @@ def compute_mutual_information(
     pair: CleanPair,
     mode: str = "lite",
     random_state: int = 42,
+    *,
+    x_discreteness: str | None = None,
+    y_discreteness: str | None = None,
 ) -> MetricResult:
     """Compute mutual information using scikit-learn's KSG estimator.
 
@@ -102,24 +118,40 @@ def compute_mutual_information(
 
     **Discreteness policy.** The continuous k-NN (KSG) estimator misestimates
     low-cardinality data unless told otherwise, so each column is classified by
-    :func:`_looks_discrete` (cardinality + repetition; deliberately *not*
+    :func:`_discreteness` (cardinality + repetition; deliberately *not*
     value-based, so any bijective re-encoding of the same categories gives the
-    same estimate) and the computation dispatches to the matching estimator:
-    ``mutual_info_regression`` when Y is continuous (with a discrete X declared
-    via ``discrete_features``), ``mutual_info_classif`` on the integer-coded
-    levels when Y is discrete. Both mixed cases run scikit-learn's same
-    discrete–continuous (Ross 2014) estimator, so — like MI itself — the result
-    is symmetric in X and Y. Discreteness detection is heuristic: a column with
-    few repeating levels that is *conceptually* continuous is still estimated
-    on its level structure, which is the better-calibrated choice for such data.
+    same estimate) into three states, and the computation dispatches:
+
+    - ``"continuous"`` / ``"discrete"`` — ``mutual_info_regression`` when Y is
+      continuous (with a discrete X declared via ``discrete_features``),
+      ``mutual_info_classif`` on the integer-coded levels when Y is discrete.
+      Both mixed cases run scikit-learn's same discrete–continuous (Ross 2014)
+      estimator, so — like MI itself — the result is symmetric in X and Y.
+    - ``"unestimable"`` (low-cardinality with singleton levels) — MI is
+      *withheld* with a warning: the discrete estimator silently discards
+      singleton-level observations (which can read a near-deterministic
+      relationship as MI ≈ 0) and the continuous estimator misestimates heavily
+      tied data, so no defensible estimate exists.
+
+    Discreteness detection is heuristic: a column with few repeating levels
+    that is *conceptually* continuous is still estimated on its level
+    structure, which is the better-calibrated choice for such data. Callers
+    that recompute MI on resamples of the same variables (the bootstrap) pass
+    ``x_discreteness`` / ``y_discreteness`` — states precomputed once by
+    :func:`_discreteness` on the *original* data — so the estimator choice is a
+    property of the variable, held fixed across replicates, rather than
+    re-inferred from each resample (which would mix two different estimators
+    in one bootstrap distribution). When ``None`` (the default), the state is
+    inferred from the data.
 
     In ``mode='standard'`` or ``'deep'`` (both need the ``[standard]`` extras),
     raises :class:`OptionalDependencyError` if ``scikit-learn`` is not installed.
     In ``mode='lite'`` returns an unavailable
     :class:`MetricResult` instead. ``random_state`` is forwarded to the
     scikit-learn estimator for reproducibility.
-    Returns ``value=None`` when either column is constant or when
-    ``pair.n_used <= 3`` (too few observations for the estimator).
+    Returns ``value=None`` when either column is constant, when
+    ``pair.n_used <= 3`` (too few observations for the estimator), or when a
+    column is unestimable (see the discreteness policy above).
     """
     try:
         from sklearn.feature_selection import (
@@ -148,15 +180,35 @@ def compute_mutual_information(
     x_arr = pair.x.to_numpy()
     y_arr = pair.y.to_numpy()
 
-    # Dispatch by detected discreteness (see the docstring's discreteness
-    # policy). mutual_info_regression assumes a continuous target, so a discrete
-    # Y goes through mutual_info_classif instead, on integer level codes — MI is
-    # invariant under bijective relabeling, so coding the levels changes nothing
-    # while satisfying the classifier's label requirements. Either mixed case
-    # runs the same discrete-continuous estimator internally, keeping the
-    # reported MI symmetric in X and Y.
-    x_discrete = _looks_discrete(x_arr)
-    y_discrete = _looks_discrete(y_arr)
+    # Dispatch by discreteness state (see the docstring's discreteness policy),
+    # precomputed by the caller (bootstrap: held fixed across replicates) or
+    # inferred here. mutual_info_regression assumes a continuous target, so a
+    # discrete Y goes through mutual_info_classif instead, on integer level
+    # codes — MI is invariant under bijective relabeling, so coding the levels
+    # changes nothing while satisfying the classifier's label requirements.
+    # Either mixed case runs the same discrete-continuous estimator internally,
+    # keeping the reported MI symmetric in X and Y.
+    x_state = x_discreteness if x_discreteness is not None else _discreteness(x_arr)
+    y_state = y_discreteness if y_discreteness is not None else _discreteness(y_arr)
+
+    if "unestimable" in (x_state, y_state):
+        which = " and ".join(
+            name
+            for name, state in (("x", x_state), ("y", y_state))
+            if state == "unestimable"
+        )
+        pair.warnings.append(
+            f"Mutual information is not computed: {which} is low-cardinality but "
+            "has levels observed only once, so the discrete estimator would "
+            "silently discard those observations (it can read a "
+            "near-deterministic relationship as MI = 0) and the continuous "
+            "estimator misestimates heavily tied data. Rely on the other "
+            "dependence measures here."
+        )
+        return MetricResult.no_value("mutual_information")
+
+    x_discrete = x_state == "discrete"
+    y_discrete = y_state == "discrete"
 
     try:
         if y_discrete:
