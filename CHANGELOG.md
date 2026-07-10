@@ -30,17 +30,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   low-cardinality data, so each column is classified into three states (a
   cardinality/repetition test, deliberately not a whole-number test, so the same
   categories encoded `0…19` or `0.0…1.9` give the same MI). **Discrete** — at
-  most 20 distinct levels, each repeating at least twice on average, no level
-  observed only once — dispatches to the matching scikit-learn estimator:
+  most 20 distinct levels, every observed level appearing at least twice —
+  dispatches to the matching scikit-learn estimator:
   `mutual_info_regression` with `discrete_features` for a discrete feature,
   `mutual_info_classif` on integer-coded levels for a discrete target; both
   mixed cases run the same discrete–continuous estimator, so the reported MI is
-  symmetric in X and Y (as MI must be). **Unestimable** — low-cardinality but
-  with singleton levels — withholds MI with a warning: the discrete estimator
-  silently discards singleton-level observations (it could read a
-  near-deterministic relationship as MI ≈ 0) and the continuous estimator
-  misestimates heavily tied data. **Continuous** — everything else, including
-  high-cardinality integers like ages — is unaffected. In the bootstrap the
+  symmetric in X and Y (as MI must be). **Unestimable** — low-cardinality
+  mixing repeated and singleton levels — withholds MI with a warning: the
+  discrete estimator silently discards singleton-level observations (it could
+  read a near-deterministic relationship as MI ≈ 0) and the continuous
+  estimator misestimates tied data (its estimate there is not even
+  relabeling-invariant). **Continuous** — everything else, including
+  high-cardinality integers like ages and small all-distinct samples — is
+  unaffected. In the bootstrap the
   classification is made once on the full original data and held fixed across
   replicates, so one bootstrap distribution never mixes two different
   estimators.
