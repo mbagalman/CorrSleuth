@@ -100,6 +100,40 @@ def test_metric_is_invariant_to_joint_row_permutation(metric, data):
     assert _approx_equal(original, permuted)
 
 
+# Shape diagnostics were historically excluded from permutation checks because
+# the old position-based binning split tied X across bins by input order. With
+# tie-safe binning they are now invariant, so this closes that gap.
+_SHAPE_DIAG_KEYS = (
+    ("bin_lof", "bin_lof_r2_gain"),
+    ("bin_lof", "bin_reversal_count"),
+    ("bin_lof", "bin_lof_r2_gain_robust"),
+    ("seg", "segment_gain"),
+    ("seg", "segment_stepness"),
+)
+
+
+@_SETTINGS
+@given(data=paired_xy(min_size=60, max_size=160))
+def test_shape_diagnostics_invariant_to_joint_row_permutation(data):
+    """The bin-lof and segmentation shape diagnostics must not change when the
+    rows of (x, y) are permuted together — including when Hypothesis generates
+    ties in X (which the previous position-based binning made order-dependent).
+    Withheld (None) results must stay withheld under permutation too."""
+    from corrsleuth.metrics.shape import compute_bin_lof, compute_segmentation
+
+    x, y = data
+    rng = np.random.default_rng(0)
+    perm = rng.permutation(len(x))
+
+    def diagnostics(pair):
+        return {"bin_lof": compute_bin_lof(pair), "seg": compute_segmentation(pair)}
+
+    base = diagnostics(_pair(x, y))
+    permuted = diagnostics(_pair(x[perm], y[perm]))
+    for group, key in _SHAPE_DIAG_KEYS:
+        assert _approx_equal(base[group][key].value, permuted[group][key].value)
+
+
 @pytest.mark.parametrize("metric", ALL_METRICS, ids=lambda m: m.__name__)
 @_SETTINGS
 @given(
